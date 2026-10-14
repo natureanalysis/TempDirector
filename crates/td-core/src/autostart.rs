@@ -1,0 +1,346 @@
+//! 开机自启：注册一个**用户级登录任务**（不需要管理员权限）。
+//!
+//! ## 为什么不放进 `HKCU\Run`
+//!
+//! 我们要跑在目标软件之前。`HKCU\Run` 里的条目由 Explorer 依次拉起，顺序不可控，
+//! 而任务计划的登录触发器会在 Run 键之前派发，并且可以用 `<Priority>` 提前。
+//!
+//! ## 为什么不用注册表/服务
+//!
+//! * 服务（SYSTEM）：要管理员安装，而且要在用户上下文里建目录得再套一层令牌，
+//!   属于 M4 的范畴；本轮先给出**今天就能用**的方案。
+//! * 用户级任务：`InteractiveToken` + `LeastPrivilege`，
+//!   注册/查询/删除都不需要提权（已实测），而且只在该用户登录时跑，最贴合场景。
+//!
+//! ## 已知边界
+//!
+//! * debug 构建的 exe 带控制台，登录时那一下会闪一个黑窗；
+//!   release 构建 `windows_subsystem = "windows"`，完全静默。
+//! * 本任务只是"尽早"，不保证 100% 早于所有自启软件。真正的强保证（登录事件 + 用户令牌）
+//!   在 M4 的服务里。做不到时也不会静默失败 —— 重建结果会落库并在界面顶部提示。
+
+use std::path::Path;
+use std::process::Command;
+
+use serde::Serialize;
+
+use crate::error::{TdError, TdResult};
+
+/// 任务名（平铺，不带文件夹 —— 避免 `schtasks` 里 `\` 路径的引号地狱）。
+pub const TASK_NAME: &str = "TempDirector-BootRebuild";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AutostartStatus {
+    pub registered: bool,
+    pub task_name: String,
+    /// 从任务里读回来的命令行（`<Command>` + `<Arguments>`）。
+    pub command: String,
+    pub message: String,
+}
+
+fn no_window(cmd: &mut Command) -> &mut Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW)
+}
+
+/// 调用 `schtasks`。返回 `(exit_code, 合并输出)`。
+fn schtasks(args: &[&str]) -> TdResult<(i32, String)> {
+    let mut cmd = Command::new("schtasks");
+    cmd.args(args);
+    no_window(&mut cmd);
+    let out = cmd
+        .output()
+        .map_err(|e| TdError::Other(format!("调用 schtasks 失败：{e}")))?;
+    let mut bytes = out.stdout.clone();
+    bytes.extend_from_slice(&out.stderr);
+    Ok((out.status.code().unwrap_or(-1), decode(&bytes)))
+}
+
+/// `schtasks /XML` 可能输出 UTF-16LE，普通查询输出 OEM 码页 —— 两种都要能解。
+fn decode(bytes: &[u8]) -> String {
+    let has_bom = bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE;
+    let utf16_like =
+        bytes.len() >= 4 && (has_bom || (bytes[1] == 0x00 && bytes[3] == 0x00));
+    if utf16_like {
+        // 必须跳过 BOM，否则解出来的字符串会以一个不可见的 U+FEFF 开头
+        let start = if has_bom { 2 } else { 0 };
+        let u16s: Vec<u16> = bytes[start..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&u16s)
+    } else {
+        String::from_utf8_lossy(bytes).to_string()
+    }
+}
+
+fn encode_utf16le_bom(text: &str) -> Vec<u8> {
+    let mut out = vec![0xFF, 0xFE];
+    for u in text.encode_utf16() {
+        out.extend_from_slice(&u.to_le_bytes());
+    }
+    out
+}
+
+/// 当前用户（`DOMAIN\user`）。拿不到时返回 `None`，任务会退化成"任意用户登录"。
+fn current_user_id() -> Option<String> {
+    let user = std::env::var("USERNAME").ok().filter(|s| !s.is_empty())?;
+    match std::env::var("USERDOMAIN") {
+        Ok(domain) if !domain.is_empty() => Some(format!("{domain}\\{user}")),
+        _ => Some(user),
+    }
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// 生成任务 XML。`extra_args` 会追加在 `boot-rebuild` 之后（用于便携模式带上数据目录）。
+fn task_xml(exe: &Path, extra_args: &str) -> TdResult<String> {
+    let exe_s = exe.to_string_lossy();
+    if exe_s.trim().is_empty() {
+        return Err(TdError::InvalidPath("开机自启需要一个可执行文件路径".into()));
+    }
+    let user = current_user_id();
+    let user_el = match &user {
+        Some(u) => format!("<UserId>{}</UserId>", xml_escape(u)),
+        None => String::new(),
+    };
+    let args = if extra_args.trim().is_empty() {
+        "boot-rebuild".to_string()
+    } else {
+        format!("boot-rebuild {}", extra_args.trim())
+    };
+    Ok(format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>TempDirector：登录时重建 RAM 盘上的缓存目录，保证软链接始终有效。</Description>
+    <Author>{author}</Author>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      {user_el}
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      {user_el}
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
+    <Priority>4</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{exe}</Command>
+      <Arguments>{args}</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"#,
+        author = xml_escape(&user.clone().unwrap_or_else(|| "-".into())),
+        exe = xml_escape(&exe_s),
+        args = xml_escape(&args),
+    ))
+}
+
+/// 查询当前是否已注册。
+pub fn status() -> AutostartStatus {
+    let mut st = AutostartStatus {
+        registered: false,
+        task_name: TASK_NAME.to_string(),
+        command: String::new(),
+        message: String::new(),
+    };
+
+    let (code, _) = match schtasks(&["/Query", "/TN", TASK_NAME]) {
+        Ok(v) => v,
+        Err(e) => {
+            st.message = e.to_string();
+            return st;
+        }
+    };
+    if code != 0 {
+        st.message = "未注册（登录时不会自动重建）".into();
+        return st;
+    }
+    st.registered = true;
+
+    // 用 /XML 取命令行：不依赖系统语言（文本查询的字段名是本地化的）
+    if let Ok((0, xml)) = schtasks(&["/Query", "/TN", TASK_NAME, "/XML"]) {
+        let cmd = extract_tag(&xml, "Command").unwrap_or_default();
+        let args = extract_tag(&xml, "Arguments").unwrap_or_default();
+        st.command = format!("{} {}", cmd, args).trim().to_string();
+    }
+    st.message = if st.command.is_empty() {
+        "已注册".into()
+    } else {
+        format!("已注册：{}", st.command)
+    };
+    st
+}
+
+fn extract_tag(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&close)? + start;
+    Some(xml[start..end].trim().to_string())
+}
+
+/// 注册（幂等覆盖）。`extra_args` 追加在 `boot-rebuild` 之后（便携模式带数据目录用）。
+/// 返回注册后的命令行描述。
+pub fn enable(exe: &Path, extra_args: &str) -> TdResult<String> {
+    crate::paths::ensure_dirs()
+        .map_err(|e| TdError::Other(format!("创建数据目录失败：{e}")))?;
+    let xml = task_xml(exe, extra_args)?;
+    let xml_path = crate::paths::data_dir().join("boot-rebuild.task.xml");
+    std::fs::write(&xml_path, encode_utf16le_bom(&xml))
+        .map_err(|e| TdError::Other(format!("写入任务定义失败：{e}")))?;
+
+    let xml_arg = xml_path.to_string_lossy().to_string();
+    let (code, text) = schtasks(&["/Create", "/TN", TASK_NAME, "/XML", &xml_arg, "/F"])?;
+    let _ = std::fs::remove_file(&xml_path);
+
+    if code != 0 {
+        return Err(TdError::Other(format!(
+            "注册开机任务失败（schtasks 退出码 {code}）：{}",
+            text.trim()
+        )));
+    }
+    Ok(if extra_args.trim().is_empty() {
+        format!("{} boot-rebuild", exe.display())
+    } else {
+        format!("{} boot-rebuild {}", exe.display(), extra_args.trim())
+    })
+}
+
+/// 取消注册。
+pub fn disable() -> TdResult<String> {
+    let (code, text) = schtasks(&["/Delete", "/TN", TASK_NAME, "/F"])?;
+    if code != 0 {
+        // 本来就不存在也算成功（幂等）
+        if text.contains("cannot find") || text.contains("找不到") {
+            return Ok("该任务本来就没有注册".into());
+        }
+        return Err(TdError::Other(format!(
+            "删除开机任务失败（schtasks 退出码 {code}）：{}",
+            text.trim()
+        )));
+    }
+    Ok("已取消开机自启".into())
+}
+
+/// 立刻手动触发一次（等价于"登录时那次"），用于验证任务是否配好。
+pub fn run_now() -> TdResult<String> {
+    let (code, text) = schtasks(&["/Run", "/TN", TASK_NAME])?;
+    if code != 0 {
+        return Err(TdError::Other(format!(
+            "触发任务失败（schtasks 退出码 {code}）：{}",
+            text.trim()
+        )));
+    }
+    Ok("已触发一次开机重建任务".into())
+}
+
+/// 挑一个合适的可执行文件去注册：优先同目录下的 GUI（release 下无控制台窗口），
+/// 其次自己。
+pub fn preferred_exe() -> std::path::PathBuf {
+    if let Ok(me) = std::env::current_exe() {
+        if let Some(dir) = me.parent() {
+            let gui = dir.join("tempdirector-gui.exe");
+            if gui.is_file() {
+                return gui;
+            }
+        }
+        return me;
+    }
+    std::path::PathBuf::from("tempdirector-gui.exe")
+}
+
+/// 便携模式（数据目录来自 `TEMPDIRECTOR_DATA_DIR`）下，登录任务**必须**显式带上数据目录。
+///
+/// 任务计划的动作不会继承我们 shell 里的环境变量（提权/计划任务都会重建环境块），
+/// 不带上就会变成"注册时用的是 A 库、登录时跑的是 B 库"。
+pub fn extra_args_from_env() -> String {
+    match std::env::var(crate::paths::DATA_DIR_ENV) {
+        Ok(v) if !v.trim().is_empty() => {
+            format!("--data-dir {}", crate::elevate::quote_arg(v.trim()))
+        }
+        _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_xml_contains_logon_trigger_and_action() {
+        let xml =
+            task_xml(Path::new(r"C:\Program Files\TempDirector\tempdirector-gui.exe"), "").unwrap();
+        assert!(xml.contains("<LogonTrigger>"));
+        assert!(xml.contains("<LogonType>InteractiveToken</LogonType>"));
+        assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
+        assert!(xml.contains(r"<Command>C:\Program Files\TempDirector\tempdirector-gui.exe</Command>"));
+        assert!(xml.contains("<Arguments>boot-rebuild</Arguments>"));
+    }
+
+    #[test]
+    fn task_xml_appends_extra_args() {
+        let xml = task_xml(Path::new(r"C:\x\gui.exe"), r#"--data-dir "D:\portable""#).unwrap();
+        // 引号在 XML 元素内容里不需要转义，schtasks 会原样作为命令行交给程序
+        assert!(
+            xml.contains(r#"<Arguments>boot-rebuild --data-dir "D:\portable"</Arguments>"#),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn task_xml_escapes_ampersand() {
+        let xml = task_xml(Path::new(r"C:\A & B\gui.exe"), "").unwrap();
+        assert!(xml.contains("A &amp; B"), "{xml}");
+        assert!(!xml.contains("A & B\\gui.exe"));
+    }
+
+    #[test]
+    fn xml_is_valid_utf16_with_bom() {
+        let xml = task_xml(Path::new(r"C:\x\gui.exe"), "").unwrap();
+        let bytes = encode_utf16le_bom(&xml);
+        assert_eq!(&bytes[..2], &[0xFF, 0xFE]);
+        assert_eq!(decode(&bytes), xml);
+    }
+
+    #[test]
+    fn extract_tag_works() {
+        let xml = "<Exec><Command>C:\\a\\b.exe</Command><Arguments>boot-rebuild</Arguments></Exec>";
+        assert_eq!(extract_tag(xml, "Command").unwrap(), r"C:\a\b.exe");
+        assert_eq!(extract_tag(xml, "Arguments").unwrap(), "boot-rebuild");
+        assert!(extract_tag(xml, "Missing").is_none());
+    }
+
+    #[test]
+    fn status_does_not_panic() {
+        let st = status();
+        assert_eq!(st.task_name, TASK_NAME);
+    }
+}

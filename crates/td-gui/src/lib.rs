@@ -11,6 +11,7 @@
 
 pub mod api;
 pub mod commands;
+pub mod submode;
 pub mod tray;
 
 use tauri::Manager;
@@ -19,6 +20,14 @@ use td_core::store::Store;
 
 /// 构建并运行应用。
 pub fn run() {
+    // ---- 0. 无界面子模式优先 ----
+    // `boot-rebuild`（登录任务）与 `elevated <job>`（提权 worker）都必须在这里拦下来，
+    // 不能让 Tauri 起来（否则登录任务会弹出一个窗口）。
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = submode::dispatch(&args) {
+        std::process::exit(code);
+    }
+
     // ---- 1. 规则库 ----
     let (store, init_error) = match Store::open_default() {
         Ok(s) => (s, None),
@@ -75,6 +84,11 @@ pub fn run() {
             commands::relink_rule,
             commands::check_locks,
             commands::boot_rebuild,
+            commands::autostart_status,
+            commands::autostart_enable,
+            commands::autostart_disable,
+            commands::autostart_run_now,
+            commands::run_elevated_job,
             commands::export_config,
             commands::import_config,
             commands::pick_folder,

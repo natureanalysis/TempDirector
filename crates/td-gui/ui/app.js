@@ -414,6 +414,9 @@ function renderDetail() {
   actions.className = 'detail-actions';
   host.appendChild(actions);
   actions.appendChild(mkBtn('应用（搬运 + 建链）', 'apply', rule.id, true));
+  if (rule.needs_elevation && rule.badge !== '✅') {
+    actions.appendChild(mkBtn('以管理员身份应用', 'apply-elevated', rule.id));
+  }
   actions.appendChild(mkBtn('恢复（拆链 + 搬回）', 'restore', rule.id));
   actions.appendChild(mkBtn('仅重建链接', 'relink', rule.id));
   actions.appendChild(mkBtn('检测占用', 'locks', rule.id));
@@ -453,6 +456,9 @@ function addRow(grid, key, value, plain) {
 // 弹窗
 // ---------------------------------------------------------------------------
 
+/** 需要"等用户选一个"的弹窗（✕ / Esc 也会 resolve 成 cancel，避免 Promise 悬挂）。 */
+let modalResolver = null;
+
 function openModal(opts) {
   $('modal-title').textContent = opts.title;
   const body = $('modal-body');
@@ -478,6 +484,43 @@ function openModal(opts) {
 function closeModal() {
   $('modal').classList.add('hidden');
   $('modal-body').textContent = '';
+  const r = modalResolver;
+  modalResolver = null;
+  if (r) r('cancel');
+}
+
+function askChoice(opts) {
+  return new Promise(function (resolve) {
+    let settled = false;
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      modalResolver = null;
+      $('modal').classList.add('hidden');
+      $('modal-body').textContent = '';
+      resolve(value);
+    }
+    modalResolver = finish;
+
+    const body = document.createElement('div');
+    (opts.lines || []).forEach(function (t) {
+      const p = document.createElement('div');
+      p.className = t.kind ? 'hint ' + t.kind : 'field';
+      p.textContent = t.text;
+      body.appendChild(p);
+    });
+    openModal({
+      title: opts.title,
+      body: body,
+      actions: (opts.actions || []).map(function (a) {
+        return {
+          label: a.label,
+          kind: a.kind,
+          onClick: function () { finish(a.value); },
+        };
+      }),
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -512,8 +555,79 @@ function requirePicked(what) {
   return true;
 }
 
+const OPTS_NORMAL = { dry_run: false, allow_merge: false, skip_lock_check: false, sha256: false };
+
+/** 走提权 worker（会弹一次 UAC）。 */
+async function runElevated(kind, ids) {
+  if (!ids.length) return;
+  state.busy = true;
+  showProgress('正在请求管理员权限…请在 UAC 弹窗上点「是」');
+  try {
+    const out = await invoke('run_elevated_job', { kind: kind, ids: ids, opts: OPTS_NORMAL });
+    hideProgress();
+    const ok = out.filter(function (o) { return o.ok; }).length;
+    const failed = out.length - ok;
+    out.forEach(function (o) {
+      if (!o.ok) toast('失败：#' + o.rule_id + ' ' + o.name, o.message, 'error');
+    });
+    toast(
+      kind === 'apply' ? '提权应用完成' : '提权恢复完成',
+      ok + ' 条成功' + (failed ? '，' + failed + ' 条失败' : ''),
+      failed ? 'warn' : 'ok'
+    );
+    await refresh(true);
+  } catch (e) {
+    hideProgress();
+    toast('提权执行失败', e.message, 'error');
+  } finally {
+    state.busy = false;
+  }
+}
+
+/** 选中项里有没有"需要管理员权限"的规则。 */
+function rulesNeedingElevation(ids) {
+  return ids.filter(function (id) {
+    const r = state.snap.rules.find(function (x) { return x.id === id; });
+    return r && r.needs_elevation;
+  });
+}
+
 async function runApply(ids, dryRun) {
   if (!ids.length) return;
+
+  if (!dryRun) {
+    const needElev = rulesNeedingElevation(ids);
+    if (needElev.length) {
+      const others = ids.length - needElev.length;
+      const choice = await askChoice({
+        title: '有规则需要管理员权限',
+        lines: [
+          { text: '选中的 ' + ids.length + ' 条里有 ' + needElev.length + ' 条位于受保护位置（Program Files / ProgramData / Windows 下），搬运与建链需要管理员权限。' },
+          {
+            text: '选择「以管理员身份执行」会弹出一次 UAC 授权窗口；授权后由一个一次性进程完成这次操作（它只认规则 id，不接受任意路径）。' +
+              (others ? '其余 ' + others + ' 条会一起在提权进程里处理。' : ''),
+            kind: '',
+          },
+        ],
+        actions: [
+          { label: '以管理员身份执行', kind: 'primary', value: 'elevate' },
+          { label: '只处理不需要权限的', value: 'partial' },
+          { label: '取消', value: 'cancel' },
+        ],
+      });
+      if (choice !== 'elevate' && choice !== 'partial') return;
+      if (choice === 'elevate') return runElevated('apply', ids);
+      if (choice === 'partial') {
+        const rest = ids.filter(function (id) { return needElev.indexOf(id) < 0; });
+        if (!rest.length) {
+          toast('没有可处理的规则', '选中的都需要管理员权限', 'warn');
+          return;
+        }
+        ids = rest;
+      }
+    }
+  }
+
   state.busy = true;
   showProgress((dryRun ? '预演：' : '') + '正在处理 ' + ids.length + ' 条规则…');
   try {
@@ -739,6 +853,9 @@ async function openSettings() {
   });
   body.appendChild(info);
 
+  // ---- 开机自启（M3）----
+  await appendAutostartSection(body, snap);
+
   const rootField = document.createElement('div');
   rootField.className = 'field';
   const rootLabel = document.createElement('label');
@@ -842,6 +959,102 @@ function mkInput(placeholder) {
   i.className = 'input';
   i.placeholder = placeholder;
   return i;
+}
+
+function mkSmallBtn(label, onClick, kind) {
+  const b = document.createElement('button');
+  b.className = 'btn' + (kind ? ' ' + kind : ' ghost');
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+/** 设置页里的「开机自启」区块。 */
+async function appendAutostartSection(body, snap) {
+  let auto = null;
+  try {
+    auto = await invoke('autostart_status');
+  } catch (e) {
+    auto = null;
+  }
+
+  const field = document.createElement('div');
+  field.className = 'field';
+  const label = document.createElement('label');
+  label.textContent = '开机自启（登录时自动重建目标目录）';
+  field.appendChild(label);
+
+  const box = document.createElement('div');
+  box.className = 'log-list';
+  const row = document.createElement('div');
+  row.className = 'log-item';
+  const kind = document.createElement('div');
+  kind.className = 'log-kind';
+  kind.textContent = !auto ? '❔ 未知' : auto.registered ? '✅ 已启用' : '❌ 未启用';
+  const msg = document.createElement('div');
+  msg.className = 'log-msg';
+  msg.textContent = auto ? auto.message : '读取任务状态失败';
+  row.appendChild(kind);
+  row.appendChild(msg);
+  box.appendChild(row);
+  field.appendChild(box);
+
+  const actions = document.createElement('div');
+  actions.className = 'detail-actions';
+  actions.appendChild(
+    mkSmallBtn('启用', async function () {
+      try {
+        const cmd = await invoke('autostart_enable');
+        toast('已启用开机自启', cmd, 'ok');
+        closeModal();
+        await openSettings();
+      } catch (e) {
+        toast('启用失败', e.message, 'error');
+      }
+    }, 'primary')
+  );
+  actions.appendChild(
+    mkSmallBtn('停用', async function () {
+      try {
+        const msg2 = await invoke('autostart_disable');
+        toast('已停用', msg2, 'ok');
+        closeModal();
+        await openSettings();
+      } catch (e) {
+        toast('停用失败', e.message, 'error');
+      }
+    })
+  );
+  actions.appendChild(
+    mkSmallBtn('立即运行一次', async function () {
+      try {
+        const msg2 = await invoke('autostart_run_now');
+        toast('已触发', msg2, 'ok');
+        setTimeout(function () { refresh(true); }, 3000);
+      } catch (e) {
+        toast('触发失败', e.message, 'error');
+      }
+    })
+  );
+  field.appendChild(actions);
+
+  const hint = document.createElement('div');
+  hint.className = 'hint';
+  if (auto) {
+    const parts = [
+      '注册的是用户级登录任务（' + auto.task_name + '），不需要管理员权限，只在你登录时运行。',
+      '命令：' + (auto.command || auto.recommended_exe + ' boot-rebuild'),
+      '当前进程身份：' + (auto.elevated ? '管理员' : '普通用户') + '。',
+    ];
+    if (auto.extra_args) {
+      parts.push('已把数据目录写进任务参数（便携模式）：' + auto.extra_args);
+    }
+    hint.textContent = parts.join(' ');
+  } else {
+    hint.textContent = '';
+  }
+  field.appendChild(hint);
+  body.appendChild(field);
 }
 
 function mkPickButton(label, onClick) {
@@ -1118,6 +1331,7 @@ document.addEventListener('click', async function (ev) {
       return;
     }
     if (act === 'apply') { await runApply([id], false); return; }
+    if (act === 'apply-elevated') { await runElevated('apply', [id]); return; }
     if (act === 'restore') { await runRestore([id]); return; }
     if (act === 'relink') { await doRelink(id); return; }
     if (act === 'locks') { await doLocks(id); return; }
@@ -1430,6 +1644,30 @@ function createMockBackend() {
             warnings: ['Photoshop 暂存盘：源路径已变回真实目录（可能被软件更新覆盖），未自动处理，请在界面上重新应用'],
             failed: [], elapsed_ms: 37,
           });
+        case 'autostart_status':
+          return Promise.resolve({
+            registered: true,
+            task_name: 'TempDirector-BootRebuild',
+            command: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild',
+            message: '已注册：C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild',
+            elevated: false,
+            data_dir: 'C:\\ProgramData\\TempDirector',
+            extra_args: '',
+            recommended_exe: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe',
+          });
+        case 'autostart_enable': return Promise.resolve('C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild');
+        case 'autostart_disable': return Promise.resolve('已取消开机自启');
+        case 'autostart_run_now': return Promise.resolve('已触发一次开机重建任务');
+        case 'run_elevated_job': {
+          const out = [];
+          (args.ids || []).forEach(function (id) {
+            const r = find(id);
+            if (!r) return;
+            r.badge = '✅'; r.label = '链接正常'; r.needs_attention = false;
+            out.push({ rule_id: id, name: r.name, ok: true, action: 'moved_and_linked', message: '（提权）跨卷复制：120 个文件 / 4.0 MB；已建链', elapsed_ms: 88 });
+          });
+          return Promise.resolve(out);
+        }
         case 'export_config': return Promise.resolve([1, rules.length]);
         case 'import_config': return Promise.resolve({ roots_reused: 1, roots_created: 0, rules_created: 5, rules_skipped: 2, errors: ['第 3 条规则「Photoshop 暂存盘」未导入：已存在指向同一路径的规则'], dry_run: false });
         case 'pick_folder': return Promise.resolve(null);

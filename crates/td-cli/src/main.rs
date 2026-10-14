@@ -867,35 +867,50 @@ fn cmd_volume(p: &Parsed) -> TdResult<()> {
 
 /// 当前进程是否已提权。
 fn is_elevated() -> bool {
-    // 用一个必然需要管理员权限的对象来探测：`\\.\PHYSICALDRIVE0` 的写打开。
-    // 更轻量的做法是查 token 的 elevation 标志，但这里用文件系统语义更直观，
-    // 也顺便验证了"能不能对受保护路径动手"。
-    #[cfg(windows)]
-    unsafe {
-        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-        use windows_sys::Win32::Storage::FileSystem::CreateFileW;
-        const GENERIC_WRITE: u32 = 0x4000_0000;
-        const OPEN_EXISTING: u32 = 3;
-        let name: Vec<u16> = "\\\\.\\PHYSICALDRIVE0\0".encode_utf16().collect();
-        let h = CreateFileW(
-            name.as_ptr(),
-            GENERIC_WRITE,
-            0,
-            std::ptr::null(),
-            OPEN_EXISTING,
-            0,
-            std::ptr::null_mut(),
-        );
-        if h == INVALID_HANDLE_VALUE {
-            false
-        } else {
-            CloseHandle(h);
-            true
+    td_core::elevate::is_elevated()
+}
+
+fn cmd_autostart(p: &Parsed) -> TdResult<()> {
+    use td_core::autostart;
+    match p.pos(0).unwrap_or("status") {
+        "status" => {
+            let st = autostart::status();
+            println!(
+                "{} 任务名：{}",
+                if st.registered { "✅ 已注册" } else { "❌ 未注册" },
+                st.task_name
+            );
+            println!("   {}", st.message);
+            if st.registered {
+                println!("   触发：用户登录时（InteractiveToken / 最低权限）");
+                println!("   说明：任务里只跑 `boot-rebuild`，失败结果会落库并在界面顶部提示");
+            }
+            Ok(())
         }
-    }
-    #[cfg(not(windows))]
-    {
-        false
+        "enable" => {
+            let exe = match p.value("exe") {
+                Some(v) => PathBuf::from(v),
+                None => autostart::preferred_exe(),
+            };
+            let cmd = autostart::enable(&exe, &autostart::extra_args_from_env())?;
+            println!("✅ 已注册开机自启");
+            println!("   任务名：{}", autostart::TASK_NAME);
+            println!("   命令：{cmd}");
+            println!("   立即验证一次：tempdirector autostart run");
+            Ok(())
+        }
+        "disable" => {
+            println!("{}", autostart::disable()?);
+            Ok(())
+        }
+        "run" => {
+            println!("{}", autostart::run_now()?);
+            println!("（任务在后台跑，几秒后可用 `tempdirector ops` 或界面「运维日志」查看结果）");
+            Ok(())
+        }
+        other => Err(TdError::Other(format!(
+            "未知的 autostart 子命令：{other}（可用：status / enable / disable / run）"
+        ))),
     }
 }
 
@@ -932,6 +947,16 @@ fn run() -> TdResult<()> {
         return cmd_version();
     }
 
+    // 提权 worker 模式：必须在打开数据库之前处理 —— 退出码要精确
+    // （0 成功 / 2 部分失败 / 1 致命），而且它自己开库、自己写结果文件。
+    if cmd == "elevated" {
+        let job = argv
+            .get(1)
+            .ok_or_else(|| TdError::Other("用法：tempdirector elevated <job.json>".into()))?;
+        let code = td_core::worker::run_job_to_exit_code(std::path::Path::new(job));
+        std::process::exit(code);
+    }
+
     paths::ensure_dirs().map_err(|e| TdError::Other(format!("创建数据目录失败：{e}")))?;
     let store = Store::open_default()?;
 
@@ -949,6 +974,7 @@ fn run() -> TdResult<()> {
         "relink" => cmd_relink(&store, &p),
         "boot-rebuild" => cmd_boot_rebuild(&store, &p),
         "volume" => cmd_volume(&p),
+        "autostart" => cmd_autostart(&p),
         "export" => cmd_export(&store, &p),
         "import" => cmd_import(&store, &p),
         "events" => cmd_events(&store, &p),
@@ -995,6 +1021,13 @@ fn print_help() {
 
 === 开机重建 ===
   boot-rebuild [--json]
+  autostart status                           查看"登录时自动重建"任务是否已注册
+  autostart enable [--exe <路径>]            注册（用户级，不需要管理员权限）
+  autostart disable
+  autostart run                              立刻手动触发一次，验证配置
+
+=== 提权 worker（一般不需要手动调）===
+  elevated <job.json>                        以管理员身份执行一份 job（只认规则 id，不认路径）
 
 === 配置迁移 ===
   export <文件.json>
@@ -1013,6 +1046,7 @@ fn print_help() {
   tempdirector apply --all --dry-run
   tempdirector apply 1
   tempdirector restore 1
+  tempdirector autostart enable
 "#
     );
 }

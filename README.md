@@ -15,13 +15,14 @@
 |---|---|---|
 | **M1** | 链接引擎内核 + 安全搬运 + 规则库 + 开机重建 + CLI | ✅ 已完成并通过真机端到端验证 |
 | **M2** | Tauri 2 桌面界面（列表 / 搜索 / 筛选 / 多选 / 弹窗 / 详情面板 / 托盘 / 进度） | ✅ 已完成并真机启动验证 |
-| M3 | 按需提权 worker + 托盘通知 | 待做 |
-| M4 | Windows 服务（登录事件触发重建 + 巡检自愈）+ 命名管道 IPC | 待做 |
-| M5 | 内置预设规则库（百款软件模板）+ NSIS 安装包 | 待做 |
+| **M3** | 开机自启（登录任务）+ 按需提权 worker + 结果持久化提示 | ✅ 已完成并真机验证（任务真的跑起来了） |
+| M4 | Windows 服务（登录事件 + 用户令牌 + 巡检自愈）+ 命名管道 IPC | 待做 |
+| M5 | 内置预设规则库（百款软件模板）+ NSIS 安装包 + 系统通知 | 待做 |
 
-M1 的产出是 `td-core`（内核库）与 `tempdirector`（CLI / 未来的提权 worker / 开机重建执行体）；
-M2 的产出是 `td-gui`（`tempdirector-gui.exe`，界面），它**不含任何链接逻辑**，
-只是一层薄壳，所有业务逻辑都从 `td-core` 来。
+M1 的产出是 `td-core`（内核库）与 `tempdirector`（CLI）；
+M2 的产出是 `td-gui`（`tempdirector-gui.exe`，界面）；
+M3 把"登录时自动重建"接上，并让受保护路径的操作能按需提权。
+三个二进制共用同一份 `td-core`，界面层不含任何链接逻辑。
 
 ---
 
@@ -57,6 +58,49 @@ scripts\cargo.cmd build -p td-gui --release  # 发行版（无控制台窗口）
 
 ---
 
+## 开机自启与提权
+
+### 登录时自动重建
+
+```powershell
+tempdirector autostart status     # 看是否已注册
+tempdirector autostart enable     # 注册（用户级任务，不需要管理员权限）
+tempdirector autostart run        # 立刻触发一次，验证配置
+tempdirector autostart disable
+```
+
+界面「设置」里也有同样的开关。
+
+* 注册的是**当前用户的登录任务**（`InteractiveToken` + `LeastPrivilege` + `Priority 4`），
+  注册/查询/删除都不需要提权（已实测）。
+* 任务动作是 `<GUI 路径> boot-rebuild`，而 GUI 在 release 下是
+  `windows_subsystem = "windows"`，所以**登录时不会闪控制台窗口**。
+* 便携模式（数据目录由 `TEMPDIRECTOR_DATA_DIR` 指定）下，注册时会把
+  `--data-dir "<目录>"` 一并写进任务 —— 任务计划不会继承你 shell 里的环境变量，
+  不带上就会变成"注册时用 A 库、登录时跑 B 库"。
+* **失败不会静默**：重建报告会落库（`settings.last_boot_report`）+ 写
+  `logs/boot-rebuild.log`，界面下次打开时在顶部横幅提示。
+
+### 需要管理员权限时
+
+目录 Junction 本身免特权，但写 `C:\Program Files` / `C:\ProgramData` / `C:\Windows`
+下的缓存需要管理员权限。这类规则在界面上会带「需要管理员权限」标记，批量应用时会问你要不要提权。
+
+提权走**一次性 worker**：写一份只含 `rule id` 的 job 文件 → `ShellExecuteExW(runas)` 拉起自己 →
+worker 重跑全部安全校验 → 写回结果文件 → 源进程读结果。三条约束：
+
+1. **job 里没有路径，只有规则 id** —— 即使有人伪造一份 job，也只能触发规则库里本来就合法的动作。
+2. **job 必须位于 `<数据目录>\jobs\` 之内**，否则直接拒绝（已实测：放到别处会以退出码 1 被拒）。
+3. worker 里重跑与 GUI/CLI 完全相同的校验路径（黑名单、自环、占用检测），不做任何豁免。
+
+命令行也能直接用：
+
+```powershell
+tempdirector elevated <job.json>     # 一般不需要手动调，GUI 会自己拉起
+```
+
+---
+
 ## 已实测验证的行为
 
 以下都在本机用真实文件系统跑过（不是单元测试的 mock）：
@@ -73,6 +117,9 @@ scripts\cargo.cmd build -p td-gui --release  # 发行版（无控制台窗口）
 | 规则库导出 / 导入 | JSON 往返正确，中文规则名与路径无损 |
 | 审计 | `ops` 有完整操作流水，`events` 有事件时间线 |
 | **GUI 真机启动** | 窗口正常打开，内嵌前端加载、样式生效（CSP 未拦截）、IPC 通（显示真实库的 ✅/⚠️/❌ 三种状态）、托盘就位 |
+| **登录任务真跑** | `autostart enable` 后 `schtasks /Query /XML` 独立核验命令与参数；`autostart run` 触发后**目标目录被真实创建**、无 GUI 窗口残留、日志落盘 |
+| **提权 worker（正例）** | 手写只含 rule id 的 job → 退出码 0、结果文件写出、源目录变联接（`fsutil` 核验 `0xa0000003`）、通过链接可读 |
+| **提权 worker（反例）** | 把 job 放到 `jobs\` 之外 → 退出码 1、结果文件写明拒绝原因、磁盘未被改动 |
 
 ---
 
@@ -140,6 +187,13 @@ tempdirector restore --all
 
 开机重建
   boot-rebuild [--json]
+  autostart status                           查看"登录时自动重建"任务是否已注册
+  autostart enable [--exe <路径>]            注册（用户级，不需要管理员权限）
+  autostart disable
+  autostart run                              立刻手动触发一次，验证配置
+
+提权 worker（一般不需要手动调）
+  elevated <job.json>                        以管理员身份执行一份 job（只认规则 id，不认路径）
 
 配置迁移
   export <文件.json>
@@ -174,13 +228,20 @@ tempdirector restore --all
 
 ## 开机守护怎么接
 
-M1 提供执行体 `tempdirector boot-rebuild`，触发方式推荐：
+M3 之后，推荐做法就是一句话：
 
-* **推荐**：后台服务（M4）监听 `WTS_SESSION_LOGON`，用该用户的令牌执行 ——
-  这样 `%APPDATA%` 展开正确、目录继承的 ACL 也对，而且**早于 `HKCU\Run` 里的软件启动**。
-* **过渡**：任务计划程序，触发器「登录时」，操作 `tempdirector.exe boot-rebuild`。
-* 等不到 RAM 盘就绪时，命令会按配置的超时（默认 90s）轮询并最终**报错退出**，
-  而不是静默失败 —— 让用户能立刻发现问题，而不是第二天面对一堆报错的软件。
+```powershell
+tempdirector autostart enable     # 注册用户级登录任务，之后每次登录自动重建
+```
+
+任务细节、便携模式的处理、失败如何不静默，见上面「开机自启与提权」。
+如果以后要更早、更可控（真正的"早于所有自启软件"），就是 M4 的服务 + 登录事件 + 用户令牌那套。
+
+排查的时候：
+
+* `tempdirector autostart status` —— 任务在不在、跑的是什么命令
+* `%PROGRAMDATA%\TempDirector\logs\boot-rebuild.log` —— 静默任务的执行流水
+* 界面顶部横幅 —— 上次重建有没有需要留意的地方
 
 ---
 
@@ -196,12 +257,16 @@ crates/
     src/engine.rs          编排：决策树 → 搬运 → 建链 → 回滚 → 落库
     src/store/             SQLite schema / 迁移 / DAO / 操作流水
     src/boot/              等待卷就绪、开机批量重建、DACL 回灌
+    src/autostart.rs       登录任务的注册 / 查询 / 取消（schtasks + 任务 XML）
+    src/elevate.rs         提权状态判定、以管理员身份拉起进程并等待
+    src/worker.rs          提权 worker 的 job 协议与执行体（信任锚在这里）
     src/portable.rs        配置导入导出
   td-cli/                  tempdirector.exe（管理 / 提权 worker / 开机重建）
   td-gui/                  tempdirector-gui.exe（Tauri 2 界面）
     src/api.rs             业务层：只吃 &Store、吐 serde 结构体（可脱离窗口单测）
     src/commands.rs        #[tauri::command] 薄转发 + 进度事件 + 目录选择框
-    src/lib.rs             入口：降级到内存库 + mark_stale_ops + 注册命令
+    src/submode.rs         无界面子模式：boot-rebuild / elevated（在 Tauri 之前拦下）
+    src/lib.rs             入口：子模式 → 降级内存库 → mark_stale_ops → 注册命令
     src/tray.rs            托盘菜单（显示窗口 / 立即重建 / 退出）
     ui/                    index.html / style.css / app.js（静态文件，编译时内嵌）
 docs/ARCHITECTURE.md       架构与边界条件
@@ -216,7 +281,7 @@ scripts/make_icon.py       应用图标生成（纯 PIL 绘制，可重跑）
 
 ```powershell
 scripts\cargo.cmd check --workspace --all-targets
-scripts\cargo.cmd test  --workspace          # 87 个单元测试（td-core 75 + td-gui 12）
+scripts\cargo.cmd test  --workspace          # 104 个单元测试（td-core 88 + td-gui 16）
 scripts\cargo.cmd build --release            # 两个 exe 一起出
 python scripts\make_icon.py                  # 需要改图标时重跑
 ```

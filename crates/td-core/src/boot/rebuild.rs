@@ -19,7 +19,7 @@
 
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::boot::acl;
 use crate::boot::volume::wait_for_volume;
@@ -30,7 +30,7 @@ use crate::link::create::{create_dir_link, ensure_dir};
 use crate::link::detect::{detect_link, LinkState};
 use crate::store::{Root, Rule, Store};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RootOutcome {
     pub root_id: i64,
     pub label: String,
@@ -40,7 +40,7 @@ pub struct RootOutcome {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BootReport {
     pub roots: Vec<RootOutcome>,
     pub rules_total: usize,
@@ -187,6 +187,13 @@ pub fn run_boot_rebuild(store: &Store) -> TdResult<BootReport> {
         "boot_rebuild",
         &report.one_line(),
     )?;
+
+    // 落盘一份结果：登录任务是无界面跑的，失败必须能在下次打开界面时看到，
+    // 而不是只躺在事件日志里等用户去翻。
+    if let Ok(json) = serde_json::to_string(&report) {
+        let _ = store.set_setting("last_boot_report", &json);
+        let _ = store.set_setting("last_boot_at", &store.now().unwrap_or_default());
+    }
     Ok(report)
 }
 

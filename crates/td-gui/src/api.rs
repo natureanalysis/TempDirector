@@ -208,6 +208,14 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
     let open_ops = store.list_open_ops()?;
     let mut banners: Vec<Banner> = Vec::new();
 
+    // 登录任务是静默跑的：它出问题必须在这里被看到，而不是躺在日志里
+    if let Some((at, summary)) = last_boot_problem(store) {
+        banners.push(Banner {
+            level: "warn",
+            text: format!("上次开机重建（{at}）有需要留意的地方：{summary}"),
+        });
+    }
+
     let roots_ready = roots.iter().filter(|r| r.state == "ready").count();
     if roots.is_empty() {
         banners.push(Banner {
@@ -683,6 +691,135 @@ pub struct TargetInspection {
     pub occupied: bool,
     pub state: String,
     pub unknown_vars: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// 开机自启 / 提权（M3）
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AutostartView {
+    pub registered: bool,
+    pub task_name: String,
+    pub command: String,
+    pub message: String,
+    /// 当前进程是否已提权（界面据此解释"为什么这次不用弹 UAC"）。
+    pub elevated: bool,
+    pub data_dir: String,
+    /// 便携模式下会写进任务的参数尾巴。
+    pub extra_args: String,
+    pub recommended_exe: String,
+}
+
+pub fn autostart_status() -> AutostartView {
+    let st = td_core::autostart::status();
+    AutostartView {
+        registered: st.registered,
+        task_name: st.task_name,
+        command: st.command,
+        message: st.message,
+        elevated: td_core::elevate::is_elevated(),
+        data_dir: paths::data_dir().display().to_string(),
+        extra_args: td_core::autostart::extra_args_from_env(),
+        recommended_exe: td_core::autostart::preferred_exe().display().to_string(),
+    }
+}
+
+pub fn autostart_enable() -> TdResult<String> {
+    let exe = td_core::autostart::preferred_exe();
+    td_core::autostart::enable(&exe, &td_core::autostart::extra_args_from_env())
+}
+
+pub fn autostart_disable() -> TdResult<String> {
+    td_core::autostart::disable()
+}
+
+pub fn autostart_run_now() -> TdResult<String> {
+    td_core::autostart::run_now()
+}
+
+/// 上一次开机重建是不是有问题（界面顶部提示用）。返回 `(时间, 摘要)`。
+pub fn last_boot_problem(store: &Store) -> Option<(String, String)> {
+    let json = store.get_setting("last_boot_report").ok().flatten()?;
+    let report: BootReport = serde_json::from_str(&json).ok()?;
+    if !report.has_problem() {
+        return None;
+    }
+    let at = store
+        .get_setting("last_boot_at")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    Some((at, report.one_line()))
+}
+
+/// 通过提权 worker 执行 apply / restore。
+///
+/// 父进程**不开新连接也不加锁**：worker 是独立进程、自己开库（WAL 下多连接没问题），
+/// 干完写一份 result.json，这里读回来转成界面用的结果。
+pub fn run_elevated_job(
+    store: &Store,
+    kind: &str,
+    ids: &[i64],
+    opts: &ApplyOpts,
+) -> TdResult<Vec<ItemOutcome>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    if opts.dry_run {
+        return Err(TdError::Other(
+            "预演不需要提权：请先直接预演（它只读不写）".into(),
+        ));
+    }
+
+    let job = td_core::worker::Job {
+        schema: td_core::worker::JOB_VERSION,
+        kind: kind.to_string(),
+        rules: ids.to_vec(),
+        dry_run: false,
+        allow_merge: opts.allow_merge,
+        sha256: opts.sha256,
+        origin_pid: std::process::id(),
+    };
+    let job_path = td_core::worker::write_job(&job)?;
+    let exe = std::env::current_exe()
+        .map_err(|e| TdError::Other(format!("取当前程序路径失败：{e}")))?;
+    let args = format!(
+        "elevated {}",
+        td_core::elevate::quote_arg(&job_path.to_string_lossy())
+    );
+
+    let code = td_core::elevate::run_elevated_wait(&exe, &args)?;
+    let result = td_core::worker::read_result(&job_path);
+    // 清理：job 与结果文件都是一次性的
+    let _ = std::fs::remove_file(&job_path);
+    let _ = std::fs::remove_file(td_core::worker::result_path_for(&job_path));
+
+    match result {
+        Some(r) => {
+            store.log_event(
+                None,
+                if r.ok { "info" } else { "warn" },
+                "elevated_job",
+                &format!("{kind}（提权）：{}", r.one_line()),
+            )?;
+            Ok(r
+                .items
+                .into_iter()
+                .map(|i| ItemOutcome {
+                    rule_id: i.rule_id,
+                    name: i.name,
+                    ok: i.ok,
+                    action: i.action,
+                    message: i.message,
+                    elapsed_ms: i.elapsed_ms,
+                })
+                .collect())
+        }
+        None => Err(TdError::Other(format!(
+            "提权进程没留下结果（退出码 {code}）。可能是它启动失败，或被安全软件拦下了。"
+        ))),
+    }
 }
 
 #[cfg(test)]

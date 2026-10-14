@@ -15,6 +15,9 @@
 //! | [`engine`] | 编排：检测 → 搬运 → 建链 → 回滚 → 落库 | 是 |
 //! | [`store`] | SQLite 规则库与操作流水 | 是 |
 //! | [`boot`] | 等待卷就绪、开机批量重建、ACL 回灌 | 是 |
+//! | [`autostart`] | 注册/取消"登录时自动重建"的用户级任务计划 | 否 |
+//! | [`worker`] | 提权 worker 的 job 协议与执行体 | 是 |
+//! | [`elevate`] | 判定提权状态、以管理员身份拉起进程 | 否 |
 //!
 //! ## 两条不可动摇的安全铁律
 //!
@@ -24,7 +27,9 @@
 //! 违反第 2 条会直接删掉 RAM 盘里的真实数据，因此本 crate 内**不存在**对
 //! 用户路径调用 `remove_dir_all` 的代码路径。
 
+pub mod autostart;
 pub mod boot;
+pub mod elevate;
 pub mod engine;
 pub mod error;
 pub mod fsops;
@@ -34,5 +39,6 @@ pub mod portable;
 pub mod safety;
 pub mod store;
 pub mod util;
+pub mod worker;
 
 pub use error::{TdError, TdResult};

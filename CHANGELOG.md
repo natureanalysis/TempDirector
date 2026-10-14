@@ -4,6 +4,48 @@
 
 ## 2026-10-14
 
+### 新增 —— M3：开机自启 + 按需提权 worker
+
+**开机自启（用户级登录任务）**
+* 用任务计划注册 `TempDirector-BootRebuild`：`LogonTrigger` + `InteractiveToken` +
+  `LeastPrivilege` + `Priority 4`，**注册/查询/删除都不需要管理员权限**（已实测）。
+* 任务动作是 `<GUI 路径> boot-rebuild` —— release 下 GUI 是 `windows_subsystem = "windows"`，
+  登录时不会闪控制台窗口；CLI 保留控制台版本供人手动跑。两者共用同一份 `boot::run_boot_rebuild`。
+* 便携模式（`TEMPDIRECTOR_DATA_DIR`）下注册时会把 `--data-dir "<目录>"` 写进任务参数：
+  任务计划不继承 shell 环境变量，不带上就会"注册时用 A 库、登录时跑 B 库"。
+* 重建报告落库（`settings.last_boot_report` / `last_boot_at`）+ 写 `logs/boot-rebuild.log`；
+  界面下次启动时在顶部横幅提示「上次开机重建有需要留意的地方」——静默任务失败不会没人知道。
+
+**提权 worker**
+* `td-core/worker.rs`：job 协议（只含 rule id，**没有任何路径字段**）+ 执行体 + 结果文件。
+  信任锚是 `validate_job_location`：job 必须在 `<数据目录>\jobs\` 之内，否则拒绝执行。
+* `td-core/elevate.rs`：查令牌判提权状态；`ShellExecuteExW(runas)` 拉起自己并等退出码；
+  用户点 UAC「否」翻译成明确中文提示（`ERROR_CANCELLED` → "提权被取消"）。
+* CLI 与 GUI 都支持 `elevated <job>`；GUI 还在 Tauri 之前拦下 `boot-rebuild` / `elevated`
+  两个子模式（`submode.rs`），保证登录任务不会拉起一个窗口。
+* 界面：需要提权的规则带标记，批量应用时弹窗问「以管理员身份执行 / 只处理不需要权限的 / 取消」；
+  详情面板也加了「以管理员身份应用」。
+
+**修复（M3 过程中被测试与实测抓出的问题）**
+
+* `validate_job_location` 忘了剥 `\\?\` 前缀：verbatim 路径与规范路径永远匹配不上，
+  会导致 **worker 把自己写的合法 job 全部拒掉**（单元测试直接抓到）。
+* `autostart::decode` 解 UTF-16LE 时没跳 BOM，解出来的字符串会以不可见的 U+FEFF 开头。
+* `BootReport` / `RootOutcome` 只有 `Serialize`，界面要读回上次报告必须补 `Deserialize`。
+* `submode` 里对已经是 `&str` 的变量再调 `.as_str()`，撞上未稳定的 `str_as_str`。
+* 结果文件里的时间戳原来是 `unix:1791979173` —— 改成从库里取的本地时间（结果文件是给人看的）。
+
+### 验证
+
+* 104 个单元测试全绿（td-core 88 + td-gui 16）。
+* 开机自启真机验证：`autostart enable` → `schtasks /Query /XML` 独立核验命令与参数 →
+  `autostart run` 触发 → **目标目录被真实创建**、`logs/boot-rebuild.log` 落盘、
+  **没有残留的界面进程**（证明子模式真的在 Tauri 之前被拦下）。
+* 提权 worker 真机验证（非提权环境即可覆盖同一条代码路径）：
+  正例 job → 退出码 0、结果文件写出、源目录变联接（`fsutil` 核验 `0xa0000003`）、通过链接可读；
+  反例（job 放在 `jobs\` 之外）→ 退出码 1、结果文件写明拒绝原因、磁盘未被改动。
+* 界面：无头 Edge 截图核验设置页新增的「开机自启」区块。
+
 ### 新增 —— M2：Tauri 2 桌面界面
 
 `td-gui`（`tempdirector-gui.exe`）。**内含零链接逻辑** —— 全部走 `td-core`，

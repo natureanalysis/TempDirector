@@ -338,6 +338,50 @@ pub fn quit_app(app: AppHandle) -> R<()> {
 }
 
 // ---------------------------------------------------------------------------
+// 开机自启 / 提权（M3）
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn autostart_status() -> api::AutostartView {
+    api::autostart_status()
+}
+
+#[tauri::command]
+pub fn autostart_enable() -> R<String> {
+    api::autostart_enable().map_err(map_err)
+}
+
+#[tauri::command]
+pub fn autostart_disable() -> R<String> {
+    api::autostart_disable().map_err(map_err)
+}
+
+#[tauri::command]
+pub fn autostart_run_now() -> R<String> {
+    api::autostart_run_now().map_err(map_err)
+}
+
+/// 走提权 worker 执行 apply / restore（会弹一次 UAC）。
+#[tauri::command]
+pub fn run_elevated_job(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    kind: String,
+    ids: Vec<i64>,
+    opts: api::ApplyOpts,
+) -> R<Vec<api::ItemOutcome>> {
+    let guard = lock_store(&state)?;
+    let out = api::run_elevated_job(&guard, &kind, &ids, &opts).map_err(map_err)?;
+    let ok = out.iter().filter(|o| o.ok).count();
+    let failed = out.len() - ok;
+    let _ = app.emit(
+        EV_DONE,
+        serde_json::json!({ "kind": kind, "ok": ok, "failed": failed, "elevated": true }),
+    );
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
 // 进度事件的小工具
 // ---------------------------------------------------------------------------
 

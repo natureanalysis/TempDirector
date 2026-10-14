@@ -77,6 +77,13 @@ impl Store {
         Ok(self.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?)
     }
 
+    /// 当前本地时间（`YYYY-MM-DD HH:MM:SS`）。用于给人看的"上次做了某事"。
+    pub fn now(&self) -> TdResult<String> {
+        Ok(self
+            .conn
+            .query_row("SELECT datetime('now', 'localtime')", [], |r| r.get(0))?)
+    }
+
     fn migrate(&mut self) -> TdResult<()> {
         let current = self.user_version()?;
         if current < 1 {
