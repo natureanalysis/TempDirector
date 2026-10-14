@@ -110,6 +110,14 @@ pub struct ItemOutcome {
     pub elapsed_ms: u128,
 }
 
+/// 新增/编辑规则的表单。
+///
+/// ⚠️ **线格式统一用 snake_case，两个方向一致**（读视图 `RuleView` 也是 snake_case）。
+/// 这里不要加 `rename_all = "camelCase"`：Tauri 只把**命令参数名**从 camelCase
+/// 转成 snake_case（`rootId` → `root_id`），**嵌套结构体的字段不转**。
+/// 一旦前端发 `sourceTemplate` 而这里要 `source_template`，界面保存就会报
+/// `missing field source_template` —— 而这种错在 mock 后端里看不出来
+/// （mock 不校验形状）。`rule_form_wire_contract` 测试钉住这个约定。
 #[derive(Debug, Clone, Deserialize)]
 pub struct RuleForm {
     pub name: String,
@@ -146,6 +154,7 @@ impl RuleForm {
     }
 }
 
+/// 应用/恢复的选项。字段同样是 snake_case（约定见 [`RuleForm`]）。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ApplyOpts {
     #[serde(default)]
@@ -872,6 +881,49 @@ mod tests {
             rebuild_on_boot: true,
             notes: None,
         }
+    }
+
+    #[test]
+    fn rule_form_wire_contract_is_snake_case() {
+        // 这段 JSON 就是前端 app.js 里实际发出来的形状（与读视图同一种命名）。
+        // 字段名一旦对不上，界面点「保存」就会报 missing field ...，
+        // 而这在 mock 后端里完全测不出来（mock 不校验形状）——
+        // 所以这条测试专门钉住"线上真实线格式"。
+        let json = r#"{
+            "name": "Chrome 缓存",
+            "category": "browser",
+            "source_template": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache",
+            "target_root_id": 1,
+            "target_subpath": "browsers\\chrome-cache",
+            "link_type": "junction",
+            "want_enabled": true,
+            "rebuild_on_boot": true,
+            "notes": null
+        }"#;
+        let form: RuleForm =
+            serde_json::from_str(json).expect("前端发送的表单必须能反序列化");
+        assert_eq!(form.name, "Chrome 缓存");
+        assert_eq!(form.category, "browser");
+        assert_eq!(form.target_root_id, 1);
+        assert_eq!(form.target_subpath, r"browsers\chrome-cache");
+        assert_eq!(form.link_type, "junction");
+        assert!(form.want_enabled);
+        assert!(form.rebuild_on_boot);
+        assert!(form.notes.is_none());
+    }
+
+    #[test]
+    fn apply_opts_wire_contract_is_snake_case() {
+        let json = r#"{"dry_run":true,"allow_merge":false,"skip_lock_check":true,"sha256":false}"#;
+        let opts: ApplyOpts = serde_json::from_str(json).expect("选项字段名必须一致");
+        assert!(opts.dry_run);
+        assert!(!opts.allow_merge);
+        assert!(opts.skip_lock_check);
+        assert!(!opts.sha256);
+
+        // 缺字段时应有默认值（前端只传关心的那几个）
+        let opts: ApplyOpts = serde_json::from_str("{}").unwrap();
+        assert!(!opts.dry_run && !opts.allow_merge && !opts.skip_lock_check && !opts.sha256);
     }
 
     #[test]

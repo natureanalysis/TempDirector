@@ -1289,15 +1289,19 @@ async function openRuleForm(id) {
         label: rule ? '保存' : '添加',
         kind: 'primary',
         onClick: async function () {
+          // ⚠️ 字段名必须是 snake_case：Tauri 只把「命令参数名」从 camelCase 转
+          // 成 snake_case（如 rootId→root_id），嵌套结构体的字段名原样反序列化。
+          // 这里发 sourceTemplate 而 Rust RuleForm 要 source_template，就会报
+          // `missing field source_template`（真机才暴露，mock 校验形状能拦住）。
           const form = {
             name: nameInput.value,
             category: catSelect.value,
-            sourceTemplate: srcInput.value,
-            targetRootId: Number(rootSelect.value),
-            targetSubpath: subInput.value,
-            linkType: linkSelect.value,
-            wantEnabled: onCheck.checked,
-            rebuildOnBoot: bootCheck.checked,
+            source_template: srcInput.value,
+            target_root_id: Number(rootSelect.value),
+            target_subpath: subInput.value,
+            link_type: linkSelect.value,
+            want_enabled: onCheck.checked,
+            rebuild_on_boot: bootCheck.checked,
             notes: notes.value || null,
           };
           try {
@@ -1530,6 +1534,20 @@ function createMockBackend() {
 
   const find = function (id) { return rules.find(function (r) { return r.id === id; }); };
 
+  /** 校验前端发来的表单形状。
+   * 为什么 mock 要做这件事：字段名对不上时真机是"保存失败：missing field xxx"，
+   * 而 mock 若不校验，就会一路绿灯把问题藏到用户手上（这正是一次真实教训）。 */
+  function assertFormShape(f) {
+    const need = ['name', 'category', 'source_template', 'target_root_id',
+      'target_subpath', 'link_type', 'want_enabled', 'rebuild_on_boot'];
+    const miss = need.filter(function (k) { return !(f && (k in f)); });
+    if (miss.length) {
+      throw new Error('mock 校验失败：表单缺少字段 ' + miss.join('、') +
+        '（前端发出去的字段名与 Rust 结构体对不上了）');
+    }
+    return f;
+  }
+
   return {
     invoke: function (name, args) {
       args = args || {};
@@ -1553,18 +1571,19 @@ function createMockBackend() {
         case 'delete_root':
           return Promise.resolve(null);
         case 'add_rule': {
-          const f = args.form;
+          const f = assertFormShape(args.form);
           const id = Math.max.apply(null, rules.map(function (r) { return r.id; })) + 1;
-          rules.push(mockRule(id, f.name, f.category, f.sourceTemplate, f.targetSubpath, '❌', 'plain_dir', '未链接（真实目录）', { want_enabled: f.wantEnabled }));
+          rules.push(mockRule(id, f.name, f.category, f.source_template, f.target_subpath, '❌', 'plain_dir', '未链接（真实目录）', { want_enabled: f.want_enabled }));
           return Promise.resolve(id);
         }
         case 'update_rule': {
           const r = find(args.id);
+          assertFormShape(args.form);
           if (r) {
             r.name = args.form.name; r.category = args.form.category;
-            r.source_template = args.form.sourceTemplate; r.target_subpath = args.form.targetSubpath;
-            r.source = args.form.sourceTemplate; r.target = 'R:\\' + args.form.targetSubpath;
-            r.want_enabled = args.form.wantEnabled; r.rebuild_on_boot = args.form.rebuildOnBoot;
+            r.source_template = args.form.source_template; r.target_subpath = args.form.target_subpath;
+            r.source = args.form.source_template; r.target = 'R:\\' + args.form.target_subpath;
+            r.want_enabled = args.form.want_enabled; r.rebuild_on_boot = args.form.rebuild_on_boot;
             r.notes = args.form.notes;
           }
           return Promise.resolve(null);
