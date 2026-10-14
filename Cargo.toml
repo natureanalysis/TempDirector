@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/td-core", "crates/td-cli"]
+members = ["crates/td-core", "crates/td-cli", "crates/td-gui"]
 
 [workspace.package]
 version = "0.1.0"

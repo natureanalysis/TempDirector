@@ -14,14 +14,46 @@
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | **M1** | 链接引擎内核 + 安全搬运 + 规则库 + 开机重建 + CLI | ✅ 已完成并通过真机端到端验证 |
-| M2 | Tauri 2 桌面 GUI（列表 / 搜索 / 多选 / 状态徽标） | 待做 |
-| M3 | 托盘常驻 + 桌面通知 + 按需提权 worker 串联 | 待做 |
+| **M2** | Tauri 2 桌面界面（列表 / 搜索 / 筛选 / 多选 / 弹窗 / 详情面板 / 托盘 / 进度） | ✅ 已完成并真机启动验证 |
+| M3 | 按需提权 worker + 托盘通知 | 待做 |
 | M4 | Windows 服务（登录事件触发重建 + 巡检自愈）+ 命名管道 IPC | 待做 |
 | M5 | 内置预设规则库（百款软件模板）+ NSIS 安装包 | 待做 |
 
-M1 的产出是 `td-core`（内核库）与 `tempdirector`（CLI / 提权 worker / 开机重建执行体）。
-GUI 之所以排在后面：**所有危险代码都在内核层**（重解析点、跨卷搬运、占用检测、ACL），
-先把这一层用真实文件系统验证透，GUI 才是薄薄一层。
+M1 的产出是 `td-core`（内核库）与 `tempdirector`（CLI / 未来的提权 worker / 开机重建执行体）；
+M2 的产出是 `td-gui`（`tempdirector-gui.exe`，界面），它**不含任何链接逻辑**，
+只是一层薄壳，所有业务逻辑都从 `td-core` 来。
+
+---
+
+## 桌面界面
+
+![主界面](docs/screenshots/main-window.png)
+
+* **列表**：状态徽标（✅ 正常 / ⚠️ 断链或目标空 / ❌ 未链接 / 🚫 外来重解析点）、
+  需要处理的原因直接标在名称下方、源路径与目标路径并排、期望开关与开机重建两列指示灯。
+* **检索**：搜索框（名称 / 源路径 / 目标子目录）、分类筛选、只看已开启、只看需处理、全选当前结果。
+* **批量**：勾选后一键「应用 / 恢复 / 开启 / 关闭 / 检测占用 / 仅重建链接 / 删除」。
+* **详情面板**：选中一行展开完整信息（源模板与展开后路径、链接类型、警告、上次应用时间与规模），
+  并给出该条目的单条操作按钮。
+* **添加 / 编辑规则**：实时校验（路径展开结果、是否缺环境变量、是否受保护位置、目标位置是否已有内容），
+  源目录可直接用系统目录选择框挑。
+* **进度浮层**：批量应用时按条显示进度（来自后端 `td-progress` 事件），不会出现"点了没反应"。
+* **运维日志**：事件时间线 + 操作流水两个标签页，含失败原因。
+* **托盘**：显示主窗口 / 立即执行开机重建 / 退出（关闭窗口即退出，常驻形态在 M3）。
+
+![添加规则](docs/screenshots/add-rule.png)
+
+### 构建与运行
+
+```powershell
+scripts\cargo.cmd build -p td-gui            # 调试版（带控制台，方便看日志）
+scripts\cargo.cmd build -p td-gui --release  # 发行版（无控制台窗口）
+# 产物：target\release\tempdirector-gui.exe
+```
+
+界面是**静态文件**（`crates/td-gui/ui/`，编译时内嵌进 exe），**不需要 npm / 不需要打包器**。
+想单独看界面（不启动 Tauri）可以直接在浏览器里打开 `crates/td-gui/ui/index.html?mock=1`，
+会挂上一套内存假数据；加 `&progress=1` 看进度浮层，`&modal=1` / `&settings=1` / `&ops=1` 看各个弹窗。
 
 ---
 
@@ -40,6 +72,7 @@ GUI 之所以排在后面：**所有危险代码都在内核层**（重解析点
 | 恢复（RAM 盘已空） | 拆链接 → 重建空的原目录；`fsutil` 确认已不是重解析点 |
 | 规则库导出 / 导入 | JSON 往返正确，中文规则名与路径无损 |
 | 审计 | `ops` 有完整操作流水，`events` 有事件时间线 |
+| **GUI 真机启动** | 窗口正常打开，内嵌前端加载、样式生效（CSP 未拦截）、IPC 通（显示真实库的 ✅/⚠️/❌ 三种状态）、托盘就位 |
 
 ---
 
@@ -165,8 +198,16 @@ crates/
     src/boot/              等待卷就绪、开机批量重建、DACL 回灌
     src/portable.rs        配置导入导出
   td-cli/                  tempdirector.exe（管理 / 提权 worker / 开机重建）
+  td-gui/                  tempdirector-gui.exe（Tauri 2 界面）
+    src/api.rs             业务层：只吃 &Store、吐 serde 结构体（可脱离窗口单测）
+    src/commands.rs        #[tauri::command] 薄转发 + 进度事件 + 目录选择框
+    src/lib.rs             入口：降级到内存库 + mark_stale_ops + 注册命令
+    src/tray.rs            托盘菜单（显示窗口 / 立即重建 / 退出）
+    ui/                    index.html / style.css / app.js（静态文件，编译时内嵌）
 docs/ARCHITECTURE.md       架构与边界条件
+docs/screenshots/          界面截图
 scripts/cargo.cmd          开发构建包装（自动补 MSVC + Rust 环境）
+scripts/make_icon.py       应用图标生成（纯 PIL 绘制，可重跑）
 ```
 
 ---
@@ -175,8 +216,9 @@ scripts/cargo.cmd          开发构建包装（自动补 MSVC + Rust 环境）
 
 ```powershell
 scripts\cargo.cmd check --workspace --all-targets
-scripts\cargo.cmd test  --workspace        # 75 个单元测试
-scripts\cargo.cmd build --release
+scripts\cargo.cmd test  --workspace          # 87 个单元测试（td-core 75 + td-gui 12）
+scripts\cargo.cmd build --release            # 两个 exe 一起出
+python scripts\make_icon.py                  # 需要改图标时重跑
 ```
 
 `scripts/cargo.cmd` 存在的理由：MSVC 工具链需要先跑 `vcvars64.bat`，
@@ -184,3 +226,14 @@ scripts\cargo.cmd build --release
 脚本会把环境补齐后再转发给 cargo。
 
 （该文件必须保持纯 ASCII —— `cmd.exe` 用 OEM 码页读批处理，中文注释会让它解析崩溃。）
+
+### 关于 tauri 版本：整个家族必须锁在同一代
+
+只写 `tauri = "2.11.5"` 是不够的。`tauri-codegen` / `tauri-macros` / `tauri-utils` /
+`tauri-runtime` 都是**范围依赖**，会各自解析到更新的版本，结果是
+`tauri-macros` 生成的重试码引用了 `tauri` 本体里不存在的错误变体，
+编译直接爆出 27 个 `no variant named UnexpectedMenuKind` 之类的错。
+解法是用 `cargo update -p <crate> --precise <ver>` 把锁文件对齐到一套已验证组合
+（`tauri 2.11.5 / tauri-build 2.6.3 / tauri-codegen 2.6.3 / tauri-macros 2.6.3 /
+tauri-plugin 2.6.3 / tauri-utils 2.9.3 / tauri-runtime 2.11.3 / tauri-runtime-wry 2.11.4 / wry 0.55.1`）。
+**升级 tauri 时要整套一起动，不要只改本体那一个版本号。**

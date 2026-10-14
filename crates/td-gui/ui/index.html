@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TempDirector —— 缓存目录重定向</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="banners" class="banners"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">TD</div>
+      <div class="brand-text">
+        <div class="brand-title">TempDirector</div>
+        <div class="brand-sub" id="root-summary">正在读取…</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span class="stat" id="stat-summary"></span>
+      <button id="btn-boot" class="btn">开机重建</button>
+      <button id="btn-ops" class="btn ghost">运维日志</button>
+      <button id="btn-settings" class="btn ghost">设置</button>
+      <button id="btn-refresh" class="btn ghost">刷新</button>
+    </div>
+  </header>
+
+  <section class="toolbar">
+    <button id="btn-add" class="btn primary">＋ 添加规则</button>
+    <button id="btn-apply" class="btn">应用选中</button>
+    <button id="btn-restore" class="btn">恢复选中</button>
+    <span class="divider"></span>
+    <button id="btn-enable" class="btn ghost">开启</button>
+    <button id="btn-disable" class="btn ghost">关闭</button>
+    <button id="btn-locks" class="btn ghost">检测占用</button>
+    <button id="btn-relink" class="btn ghost">仅重建链接</button>
+    <button id="btn-delete" class="btn danger ghost">删除</button>
+    <span class="spacer"></span>
+    <button id="btn-export" class="btn ghost">导出配置</button>
+    <button id="btn-import" class="btn ghost">导入配置</button>
+  </section>
+
+  <section class="filters">
+    <input id="search" class="input search" type="search" placeholder="搜索名称 / 源路径 / 目标子目录…">
+    <select id="filter-category" class="select"></select>
+    <label class="check"><input type="checkbox" id="only-enabled"> 只看已开启</label>
+    <label class="check"><input type="checkbox" id="only-attention"> 只看需处理</label>
+    <label class="check"><input type="checkbox" id="sel-all"> 全选当前结果</label>
+    <span class="spacer"></span>
+    <span class="muted" id="filter-summary"></span>
+  </section>
+
+  <main class="table-wrap">
+    <table class="rules">
+      <thead>
+        <tr>
+          <th class="col-check"></th>
+          <th class="col-badge">状态</th>
+          <th class="col-name">名称</th>
+          <th class="col-cat">分类</th>
+          <th class="col-source">源路径</th>
+          <th class="col-target">目标（RAM 盘）</th>
+          <th class="col-flag">开启</th>
+          <th class="col-flag">开机重建</th>
+          <th class="col-actions"></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" class="empty hidden"></div>
+  </main>
+
+  <section id="detail" class="detail hidden"></section>
+
+  <div id="progress" class="progress hidden">
+    <div class="progress-inner">
+      <div class="progress-title" id="progress-title">处理中…</div>
+      <div class="progress-bar"><div id="progress-fill"></div></div>
+      <div class="progress-detail" id="progress-detail"></div>
+    </div>
+  </div>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-card" id="modal-card">
+      <div class="modal-head">
+        <span id="modal-title">标题</span>
+        <button id="modal-close" class="icon-btn" title="关闭">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-foot" id="modal-foot"></div>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

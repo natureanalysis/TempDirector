@@ -1,0 +1,93 @@
+//! TempDirector 桌面端入口。
+//!
+//! 启动时做三件事（顺序有讲究）：
+//! 1. 打开规则库（失败则降级成内存库 + 在界面上报错，而不是静默退出）；
+//! 2. 清理上次崩溃留下的"进行中"操作流水（`mark_stale_ops`），
+//!    否则它们会永远挂在"待修复"列表里；
+//! 3. 装托盘。
+//!
+//! 界面本身是**静态文件**（`ui/` 目录，随二进制一起内嵌），不依赖 npm / 打包器 ——
+//! 这个工具的前端就是一张表格加几个弹窗，引入一整条前端工具链得不偿失。
+
+pub mod api;
+pub mod commands;
+pub mod tray;
+
+use tauri::Manager;
+
+use td_core::store::Store;
+
+/// 构建并运行应用。
+pub fn run() {
+    // ---- 1. 规则库 ----
+    let (store, init_error) = match Store::open_default() {
+        Ok(s) => (s, None),
+        Err(e) => {
+            // 降级到内存库：界面还能打开，并在顶部横幅显示真实原因，
+            // 总比"双击没反应"或者一闪而过要好。
+            let fallback = Store::open_in_memory()
+                .expect("连内存数据库都打不开，说明 SQLite 链接失败");
+            (fallback, Some(e.to_string()))
+        }
+    };
+
+    // ---- 2. 清理上次中断的操作 ----
+    if let Ok(n) = store.mark_stale_ops() {
+        if n > 0 {
+            let _ = store.log_event(
+                None,
+                "warn",
+                "stale_ops",
+                &format!("启动时发现 {n} 条上次中断的操作，已标记为失败"),
+            );
+        }
+    }
+
+    let state = commands::AppState::new(store, init_error);
+
+    tauri::Builder::default()
+        // 单实例：第二个实例把已有窗口叫到前面，而不是再开一套 DB 连接
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_dialog::init())
+        .manage(state)
+        .invoke_handler(tauri::generate_handler![
+            commands::ui_snapshot,
+            commands::recent_events,
+            commands::recent_ops,
+            commands::add_root,
+            commands::delete_root,
+            commands::add_rule,
+            commands::update_rule,
+            commands::delete_rules,
+            commands::set_rules_enabled,
+            commands::capture_acl,
+            commands::clear_acl,
+            commands::inspect_source,
+            commands::inspect_target,
+            commands::apply_rules,
+            commands::restore_rules,
+            commands::relink_rule,
+            commands::check_locks,
+            commands::boot_rebuild,
+            commands::export_config,
+            commands::import_config,
+            commands::pick_folder,
+            commands::pick_save_file,
+            commands::pick_open_file,
+            commands::reveal_in_explorer,
+            commands::show_main_window,
+            commands::quit_app,
+        ])
+        .setup(|app| {
+            tray::install(app.handle())?;
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("TempDirector 启动失败");
+}

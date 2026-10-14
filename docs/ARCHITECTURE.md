@@ -14,14 +14,37 @@
 | Rust + egui/slint | ~5 MB | ★★★★★ | 中 | UI 表现力弱，表格/多选/中文字体要自己搞 |
 | Electron / PyQt | 100 MB+ | 差 | 一般 | 一个文件系统工具背 100 MB 运行时没道理 |
 
-**一个 exe、多种模式**：`--gui`（M2，Tauri）、`--service`（M4）、`elevated <job>`（M3）、
+**一个 exe、多种模式**：`--gui`（M2，已落地）、`--service`（M4）、`elevated <job>`（M3）、
 以及当前的 CLI。理由：
 
 * 提权路径不应该拖上 WebView（攻击面更小、启动更快）；
 * 开机重建要能在没有界面的会话里跑；
 * **链接逻辑只有一份实现**，不会出现"GUI 和 CLI 行为不一致"这类最恶心的问题。
 
-当前 `td-cli` 承担 CLI 管理 + 未来的提权 worker / 开机重建执行体；`td-core` 是纯库，无 UI 依赖。
+当前分工：
+* `td-cli` → `tempdirector.exe`：人用的 CLI + 未来的提权 worker / 开机重建执行体；
+* `td-gui` → `tempdirector-gui.exe`：桌面界面（Tauri 2）；
+* `td-core`：纯库，无 UI 依赖，上面两个都只调它。
+
+### 界面层（M2）的两个刻意设计
+
+1. **`api.rs` 不依赖任何 Tauri 类型。** 业务函数的签名是 `fn(&Store, …) -> TdResult<serde 结构体>`，
+   `#[tauri::command]` 只是薄转发。好处是这一层能脱离窗口直接跑单元测试（现在有 12 个），
+   以后要接服务端或换 UI 也不用改逻辑。
+2. **前端不用 npm / 打包器。** 界面就是 `ui/` 下的三个静态文件，编译时内嵌进 exe。
+   这是一个"表格 + 几个弹窗"的界面，引一条前端工具链只会增加维护负担。
+   代价是拿不到插件的前端包，所以系统对话框这类能力走 Rust 侧的 `#[tauri::command]`。
+
+**CSP 与样式（踩过的坑）**：配置里写的是 `style-src 'self'`，
+这意味着**内联 `<style>` 和 `style="..."` 属性都会被拦掉**。
+所以：样式全部在外部 CSS；JS 里需要动态改样式时只走 CSSOM（`el.style.x = y`，不受 CSP 限制）；
+弹窗的 body 只接受 DOM 节点（不用 `innerHTML`，顺带堵住注入面）。
+
+**tauri 版本必须整套锁**：只 pin `tauri` 本体会导致 `tauri-codegen/macros/utils/runtime`
+各自升级，宏展开引用到本体不存在的错误变体，编译期炸出几十个错误。
+锁文件里这一套是验证过能编的：`tauri 2.11.5 / tauri-build 2.6.3 / tauri-codegen 2.6.3 /
+tauri-macros 2.6.3 / tauri-plugin 2.6.3 / tauri-utils 2.9.3 / tauri-runtime 2.11.3 /
+tauri-runtime-wry 2.11.4 / wry 0.55.1`。升级要整套一起动。
 
 ---
 
@@ -213,7 +236,7 @@ Windows 服务(SYSTEM) ──WTS_SESSION_LOGON──▶ 取用户令牌 ──�
 | # | 边界条件 | 状态 |
 |---|---|---|
 | D21 | 常规路径**完全不需要 UAC**（Junction 免特权） | ✅ |
-| D22 | 按需提权的一次性 worker + job 文件的防误用设计 | ⚠️ 标记与错误提示已就绪；worker 待 M3 |
+| D22 | 按需提权的一次性 worker + job 文件的防误用设计 | ⚠️ 标记与错误提示已就绪（界面会显示「需要管理员权限」徽标）；worker 待 M3 |
 
 ### E. 数据与多用户
 
@@ -234,16 +257,21 @@ Windows 服务(SYSTEM) ──WTS_SESSION_LOGON──▶ 取用户令牌 ──�
 
 ## 10. 测试策略
 
-* **单元测试 75 个**：路径归一化 / 黑名单 / 状态机 / 建链与拆链安全 / 搬运与核对 /
-  合并策略 / SQLite 迁移与 DAO / 导入导出 / 编排决策树 / 开机重建 / ACL 往返。
+* **单元测试 87 个**：路径归一化 / 黑名单 / 状态机 / 建链与拆链安全 / 搬运与核对 /
+  合并策略 / SQLite 迁移与 DAO / 导入导出 / 编排决策树 / 开机重建 / ACL 往返 /
+  界面业务层（快照统计、批量失败隔离、表单校验、ACL 模板、占用检测、导出导入往返）。
   关键安全性质都有专门断言：
   * 删链接不伤目标内容（`remove_dir_link_keeps_target_content`）
   * 拒绝递归删除重解析点（`delete_tree_refuses_reparse_root`）
   * 拒绝把含内容的真实目录直接覆盖成链接（`relink_refuses_contentful_plain_dir`）
   * 拒绝的 `apply` 什么都不改（`rejected_apply_does_not_touch_anything`）
+  * 同源路径的重复规则被拒（`duplicate_source_path_is_rejected`）
 * **真机端到端**（见 README 的验证表）：用真实目录充当 RAM 盘，覆盖
   同卷 / 跨卷 / RAM 盘重启 / 恢复 / 导入导出 / 审计，并用 `cmd dir /AL` 与
   `fsutil reparsepoint query` 做**独立于本程序**的交叉验证。
+* **界面验证**：无头 Edge 逐页截图（列表 / 进度 / 表单 / 设置 / 日志）；
+  最后用真实规则库启动 exe 并截取桌面，确认内嵌前端加载、CSP 未拦截、IPC 通。
+  单靠"能编译"是不能证明界面可用的 —— CSP 拦样式这类问题只在运行时暴露。
 
 ---
 
@@ -253,4 +281,9 @@ Windows 服务(SYSTEM) ──WTS_SESSION_LOGON──▶ 取用户令牌 ──�
 2. 仅目录级重定向。单文件（如 `pagefile.sys`、浏览器单个数据库文件）不支持。
 3. 不做"修复后自动重试"：占用检测失败会中止并告诉用户关哪个软件，而不是排队等它关闭。
 4. ACL 目前只做"继承 + 可选 SDDL 回灌"，不做完整 ACL 迁移。
-5. 巡检（`ReadDirectoryChangesW` 监听源目录变化）尚未实现，链接被外部破坏只能靠下次 `status` / 开机重建发现。
+5. 巡检（`ReadDirectoryChangesW` 监听源目录变化）尚未实现，链接被外部破坏只能靠下次
+   `status` / 开机重建发现（M4）。
+6. 界面目前关闭窗口即退出（托盘常驻形态在 M3）；状态不是实时刷新的，
+   需要点「刷新」或 Ctrl+R。
+7. 单进程串行：同一时刻只有一个数据库写操作在跑（长批量应用期间其它操作会排队）。
+   这是刻意的（避免并发写规则库），代价是界面在极端情况下会等一会儿。
