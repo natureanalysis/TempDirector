@@ -123,7 +123,65 @@ pub fn normalize_root_path(s: &str) -> String {
 }
 
 /// 路径所在的卷根（挂载点），形如 `c:\`。失败返回 `None`。
+///
+/// 三个必须注意的点：
+/// 1. 返回值是**可直接当路径用**的，且**保留尾部分隔符** —— `C:\` 与 `C:`
+///    在 Windows 上是两回事（后者是"C 盘当前目录"）。所以这里不能直接用
+///    `normalize_key`（它会因为长度 > 3 把尾部 `\` 去掉）。
+/// 2. `GetVolumePathNameW` 对 verbatim 输入会返回 verbatim 形式的卷根
+///    （`\\?\C:\`），必须先剥掉；对不存在的路径在部分环境下也会失败，
+///    所以逐级向上找到第一个存在的祖先更稳妥。
+/// 3. **有些 RAM 盘驱动压根不支持这个 API** —— 实测某款 RAM 盘上
+///    `GetVolumePathNameW("V:\")` 直接返回 `ERROR_INVALID_FUNCTION(1)`。
+///    这时退回"从路径语法上取盘符根"，否则 RAM 盘会被误判成"卷不存在"，
+///    开机重建会去傻等一个永远不来的目录。
 pub fn volume_root(p: &Path) -> Option<String> {
+    if let Some(root) = volume_root_via_api(p) {
+        return Some(root);
+    }
+    syntactic_root(&simplify(&to_verbatim(p))).map(|r| r.to_string_lossy().to_string())
+}
+
+fn volume_root_via_api(p: &Path) -> Option<String> {
+    let mut probe = simplify(&to_verbatim(p));
+    loop {
+        if let Some(root) = volume_root_exact(&probe) {
+            // 剥掉 verbatim 前缀，但保留尾部反斜杠
+            return Some(simplify(Path::new(&root)).to_string_lossy().to_string());
+        }
+        match probe.parent() {
+            // `parent()` 回到自身/空路径时退出，避免死循环
+            Some(parent) if parent.as_os_str().len() < probe.as_os_str().len() => {
+                probe = parent.to_path_buf();
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// 从路径语法上取卷根：`V:\a\b` → `V:\`；`\\srv\share\x` → `\\srv\share\`。
+/// 不查任何系统 API，纯粹按路径前缀判断（所以对"驱动不认 API"的卷也能用）。
+pub fn syntactic_root(p: &Path) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+    match p.components().next()? {
+        Component::Prefix(prefix) => match prefix.kind() {
+            Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+                Some(PathBuf::from(format!("{}:\\", letter as char)))
+            }
+            Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => Some(PathBuf::from(
+                format!(
+                    r"\\{}\{}",
+                    server.to_string_lossy(),
+                    share.to_string_lossy()
+                ),
+            )),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn volume_root_exact(p: &Path) -> Option<String> {
     let wide = to_wide(&to_verbatim(p).to_string_lossy());
     let mut buf = [0u16; 260];
     let ok = unsafe { GetVolumePathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
@@ -134,7 +192,7 @@ pub fn volume_root(p: &Path) -> Option<String> {
     if s.is_empty() {
         None
     } else {
-        Some(normalize_key(&s))
+        Some(s)
     }
 }
 
@@ -142,7 +200,8 @@ pub fn volume_root(p: &Path) -> Option<String> {
 /// 跨卷才需要"复制 → 校验 → 删除"三步。
 pub fn same_volume(a: &Path, b: &Path) -> bool {
     match (volume_root(a), volume_root(b)) {
-        (Some(x), Some(y)) => x == y,
+        // 比较时才做归一化（大小写不敏感、忽略尾部分隔符）
+        (Some(x), Some(y)) => normalize_key(&x) == normalize_key(&y),
         _ => false,
     }
 }
@@ -264,9 +323,33 @@ mod tests {
     }
 
     #[test]
+    fn syntactic_root_extracts_drive_and_unc() {
+        use std::path::PathBuf;
+        assert_eq!(
+            syntactic_root(Path::new(r"V:\a\b")).unwrap(),
+            PathBuf::from(r"V:\")
+        );
+        assert_eq!(
+            syntactic_root(Path::new(r"C:\")).unwrap(),
+            PathBuf::from(r"C:\")
+        );
+        assert_eq!(
+            syntactic_root(Path::new(r"\\srv\share\x\y")).unwrap(),
+            PathBuf::from(r"\\srv\share\")
+        );
+        assert!(syntactic_root(Path::new(r"relative\path")).is_none());
+    }
+
+    #[test]
+    fn volume_root_falls_back_to_syntax_for_paths() {
+        // 卷根必须是"能直接当路径用"的，且带尾部分隔符
+        let root = volume_root(Path::new(r"V:\some\maybe\missing")).expect("应有卷根");
+        assert!(root.ends_with('\\'), "卷根要保留尾部分隔符：{root}");
+        assert_eq!(root.len(), 3, "盘符根应该是 V:\\ 这样的 3 个字符：{root}");
+    }    #[test]
     fn trim_leading_and_trailing() {
         assert_eq!(from_wide_buf(&[65, 66, 0, 67]), "AB");
         assert_eq!(to_wide("A"), vec![65u16, 0]);
     }
-}
 
+}

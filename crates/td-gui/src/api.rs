@@ -216,7 +216,10 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
         });
     }
 
-    let roots_ready = roots.iter().filter(|r| r.state == "ready").count();
+    let roots_ready = roots
+        .iter()
+        .filter(|r| r.state == "ready" || r.state == "not_created")
+        .count();
     if roots.is_empty() {
         banners.push(Banner {
             level: "warn",
@@ -668,16 +671,18 @@ pub fn inspect_target(store: &Store, root_id: i64, subpath: &str) -> TdResult<Ta
     } else {
         base.join(sub)
     };
-    let state = detect_link(&target, None);
+    let target_state = detect_link(&target, None);
+    let root_state = probe_volume(&base).0;
     Ok(TargetInspection {
         target: target.display().to_string(),
-        root_ready: probe_volume(&base).0 == "ready",
+        // 卷在、根目录还没建（RAM 盘刚重启）也算"可用"——应用时会自动建出来
+        root_ready: root_state == "ready" || root_state == "not_created",
         exists: target.exists(),
         occupied: matches!(
-            state,
+            target_state,
             LinkState::PlainDir | LinkState::PlainFile | LinkState::ForeignReparse { .. }
         ),
-        state: describe_state(&state),
+        state: describe_state(&target_state),
         unknown_vars: unknown,
     })
 }

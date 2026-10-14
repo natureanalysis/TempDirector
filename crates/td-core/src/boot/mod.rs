@@ -5,4 +5,4 @@ pub mod rebuild;
 pub mod volume;
 
 pub use rebuild::{run_boot_rebuild, BootReport, RootOutcome};
-pub use volume::{is_volume_ready, probe_volume, wait_for_volume};
+pub use volume::{ensure_root_dir, is_volume_ready, probe_volume, wait_for_root, wait_for_volume};

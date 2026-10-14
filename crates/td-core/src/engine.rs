@@ -102,11 +102,10 @@ fn validate_ready(r: &Resolved) -> TdResult<()> {
         )));
     }
     let (root_path, _) = r.root.resolved_path();
-    if !root_path.exists() {
-        return Err(TdError::Other(format!(
-            "目标根不可用：{}（RAM 盘未挂载？请先创建并格式化该盘）",
-            root_path.display()
-        )));
+    if !root_path.is_dir() {
+        // 目标根可能是 RAM 盘下的子目录。RAM 盘刚重启时"盘在、根目录不在"是正常状态，
+        // 直接把它建出来即可 —— 不该让用户先去点一次「开机重建」才能应用规则。
+        crate::boot::ensure_root_dir(&root_path)?;
     }
     crate::safety::validate_rule(&r.source, &r.target)?;
     Ok(())

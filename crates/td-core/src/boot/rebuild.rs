@@ -22,7 +22,6 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::boot::acl;
-use crate::boot::volume::wait_for_volume;
 use crate::engine::{self, rule_link_type};
 use crate::error::TdResult;
 use crate::fsops::mover::Progress;
@@ -118,7 +117,9 @@ pub fn run_boot_rebuild(store: &Store) -> TdResult<BootReport> {
         }
 
         let timeout = Duration::from_millis(root.wait_timeout_ms.max(1000) as u64);
-        match wait_for_volume(&path, timeout, Duration::from_millis(500)) {
+        // wait_for_root（而不是 wait_for_volume）：目标根可能是 RAM 盘下的子目录，
+        // RAM 盘重启后它自己也消失了 —— 必须"等卷 + 建目录"，不能等目录自己出现。
+        match crate::boot::volume::wait_for_root(&path, timeout, Duration::from_millis(500)) {
             Ok(waited) => {
                 outcome.ready = true;
                 outcome.waited_ms = waited.as_millis();
@@ -349,6 +350,59 @@ mod tests {
         ));
 
         let _ = fs::remove_dir_all(&env.base);
+    }
+
+    #[test]
+    fn rebuild_recreates_subfolder_root_after_ram_loss() {
+        // 这个用例覆盖的是一条真会踩到的路径：目标根是 RAM 盘**下的子目录**
+        // （文档里就推荐 `R:\Redirect` 这种写法），RAM 盘重启后连根目录一起没了。
+        // 老实现只"等目录自己出现"，于是永远等不到、整条重建被跳过。
+        let base = std::env::temp_dir().join(format!("td_boot_subroot_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let source = base.join("cache");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("a.txt"), b"x").unwrap();
+
+        // "RAM 盘"用 base\ram2 代表，目标根是它下面的子目录 Redirect
+        fs::create_dir_all(base.join("ram2")).unwrap();
+        let root_path = base.join("ram2").join("Redirect");
+
+        let store = Store::open_in_memory().unwrap();
+        let root_id = store
+            .insert_root("RAM", &root_path.to_string_lossy(), true, 3000)
+            .unwrap();
+        let rule_id = store
+            .insert_rule(&NewRule {
+                name: "子目录根".into(),
+                category: "dev".into(),
+                source_template: source.to_string_lossy().into_owned(),
+                target_root_id: root_id,
+                target_subpath: "dev\\cache".into(),
+                link_type: "junction".into(),
+                want_enabled: true,
+                rebuild_on_boot: true,
+                notes: None,
+            })
+            .unwrap();
+
+        // 1) 根目录还不存在 → apply 应该顺手建出来，而不是报"目标根不可用"
+        let rule = store.get_rule(rule_id).unwrap();
+        let mut noop = |_: Progress| {};
+        let out = apply_rule(&store, &rule, &ApplyOptions::default(), &mut noop).unwrap();
+        assert_eq!(out.action, "moved_and_linked");
+        assert!(root_path.is_dir(), "apply 应把不存在的目标根建出来");
+
+        // 2) 模拟 RAM 盘重启：整个 ram2 消失，然后盘回来、但根目录不在
+        fs::remove_dir_all(base.join("ram2")).unwrap();
+        fs::create_dir_all(base.join("ram2")).unwrap();
+
+        let report = run_boot_rebuild(&store).unwrap();
+        assert!(root_path.is_dir(), "开机重建必须把根目录建出来，不能干等");
+        assert!(root_path.join("dev").join("cache").is_dir());
+        assert_eq!(report.dirs_created, 1);
+        assert!(!report.has_problem(), "{}", report.one_line());
+
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
