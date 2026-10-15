@@ -1,0 +1,170 @@
+[
+  {
+    "name": "Chrome 网页缓存",
+    "category": "browser",
+    "source_template": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache",
+    "target_subpath": "browsers\\chrome-cache",
+    "note": null
+  },
+  {
+    "name": "Chrome Code Cache",
+    "category": "browser",
+    "source_template": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Code Cache",
+    "target_subpath": "browsers\\chrome-code-cache",
+    "note": "应用前建议先关闭 Chrome，否则文件被占用会被跳过"
+  },
+  {
+    "name": "Chrome GPU 缓存",
+    "category": "browser",
+    "source_template": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\GPUCache",
+    "target_subpath": "browsers\\chrome-gpu-cache",
+    "note": null
+  },
+  {
+    "name": "Edge 网页缓存",
+    "category": "browser",
+    "source_template": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache",
+    "target_subpath": "browsers\\edge-cache",
+    "note": null
+  },
+  {
+    "name": "Edge Code Cache",
+    "category": "browser",
+    "source_template": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Code Cache",
+    "target_subpath": "browsers\\edge-code-cache",
+    "note": "应用前建议先关闭 Edge，否则文件被占用会被跳过"
+  },
+  {
+    "name": "Edge GPU 缓存",
+    "category": "browser",
+    "source_template": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\GPUCache",
+    "target_subpath": "browsers\\edge-gpu-cache",
+    "note": null
+  },
+  {
+    "name": "npm 缓存",
+    "category": "dev",
+    "source_template": "%LOCALAPPDATA%\\npm-cache",
+    "target_subpath": "dev\\npm-cache",
+    "note": null
+  },
+  {
+    "name": "pip 缓存",
+    "category": "dev",
+    "source_template": "%LOCALAPPDATA%\\pip\\cache",
+    "target_subpath": "dev\\pip-cache",
+    "note": null
+  },
+  {
+    "name": "uv 缓存",
+    "category": "dev",
+    "source_template": "%LOCALAPPDATA%\\uv\\cache",
+    "target_subpath": "dev\\uv-cache",
+    "note": null
+  },
+  {
+    "name": "Cargo 下载缓存",
+    "category": "dev",
+    "source_template": "%USERPROFILE%\\.cargo\\registry",
+    "target_subpath": "dev\\cargo-registry",
+    "note": "只含源码与 .crate 下载缓存，不含已安装的工具链"
+  },
+  {
+    "name": "VS Code 缓存",
+    "category": "dev",
+    "source_template": "%APPDATA%\\Code\\Cache",
+    "target_subpath": "dev\\vscode-cache",
+    "note": null
+  },
+  {
+    "name": "VS Code Code Cache",
+    "category": "dev",
+    "source_template": "%APPDATA%\\Code\\Code Cache",
+    "target_subpath": "dev\\vscode-code-cache",
+    "note": null
+  },
+  {
+    "name": "VS Code GPU 缓存",
+    "category": "dev",
+    "source_template": "%APPDATA%\\Code\\GPUCache",
+    "target_subpath": "dev\\vscode-gpu-cache",
+    "note": null
+  },
+  {
+    "name": "JetBrains 缓存（PyCharm 等）",
+    "category": "dev",
+    "source_template": "%LOCALAPPDATA%\\JetBrains",
+    "target_subpath": "dev\\jetbrains",
+    "note": "含项目索引缓存，首次启动会重建索引（扫描大项目需要几分钟）"
+  },
+  {
+    "name": "用户 TEMP",
+    "category": "system",
+    "source_template": "%LOCALAPPDATA%\\Temp",
+    "target_subpath": "system\\user-temp",
+    "note": "体积最大也最容易被占用：应用时被占的文件会自动跳过，建议先关闭后台软件"
+  },
+  {
+    "name": "NVIDIA DX 着色器缓存",
+    "category": "system",
+    "source_template": "%LOCALAPPDATA%\\NVIDIA\\DXCache",
+    "target_subpath": "system\\nvidia-dx-cache",
+    "note": null
+  },
+  {
+    "name": "NVIDIA GL 着色器缓存",
+    "category": "system",
+    "source_template": "%LOCALAPPDATA%\\NVIDIA\\GLCache",
+    "target_subpath": "system\\nvidia-gl-cache",
+    "note": null
+  },
+  {
+    "name": "D3D 着色器缓存",
+    "category": "system",
+    "source_template": "%LOCALAPPDATA%\\D3DSCache",
+    "target_subpath": "system\\d3dscache",
+    "note": null
+  },
+  {
+    "name": "应用崩溃转储",
+    "category": "system",
+    "source_template": "%LOCALAPPDATA%\\CrashDumps",
+    "target_subpath": "system\\crash-dumps",
+    "note": "纯崩溃 dump，丢弃无影响"
+  },
+  {
+    "name": "Steam 网页缓存",
+    "category": "system",
+    "source_template": "%LOCALAPPDATA%\\Steam\\htmlcache",
+    "target_subpath": "system\\steam-htmlcache",
+    "note": null
+  },
+  {
+    "name": "微信网页缓存",
+    "category": "office",
+    "source_template": "%APPDATA%\\Tencent\\xwechat\\radium\\web",
+    "target_subpath": "office\\wechat-radium-web",
+    "note": "只迁这个子目录；整个 xwechat 里有聊天记录，切勿整体迁移"
+  },
+  {
+    "name": "百度网盘缓存",
+    "category": "office",
+    "source_template": "%APPDATA%\\baidu\\BaiduNetdisk",
+    "target_subpath": "office\\baidu-netdisk",
+    "note": null
+  },
+  {
+    "name": "WPS 缓存",
+    "category": "office",
+    "source_template": "%LOCALAPPDATA%\\Kingsoft\\WPS Office",
+    "target_subpath": "office\\wps",
+    "note": "内层按版本号分目录（如 12.1.0.29161），WPS 升级后会换新目录"
+  },
+  {
+    "name": "飞书缓存",
+    "category": "office",
+    "source_template": "%APPDATA%\\LarkShell",
+    "target_subpath": "office\\lark",
+    "note": null
+  }
+]

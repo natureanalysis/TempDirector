@@ -269,11 +269,35 @@ crates/
     src/lib.rs             入口：子模式 → 降级内存库 → mark_stale_ops → 注册命令
     src/tray.rs            托盘菜单（显示窗口 / 立即重建 / 退出）
     ui/                    index.html / style.css / app.js（静态文件，编译时内嵌）
+    presets.json           内置预设清单（常用软件缓存目录，编译时内嵌）
 docs/ARCHITECTURE.md       架构与边界条件
 docs/screenshots/          界面截图
 scripts/cargo.cmd          开发构建包装（自动补 MSVC + Rust 环境）
 scripts/make_icon.py       应用图标生成（纯 PIL 绘制，可重跑）
 ```
+
+## 预设规则（内置 + 自定义扩展）
+
+「添加规则」弹窗顶部的**常用预设**下拉来自两层合并：
+
+1. **内置**：`crates/td-gui/presets.json`，随二进制编译内嵌。收录标准：纯缓存/临时数据（丢弃后软件自行重建）、路径跨机器稳定、真机实测过存在性与体积。改这个文件需要重新编译。
+2. **用户外置**：`%PROGRAMDATA%\TempDirector\presets.json`（即数据目录，便携模式用 `TEMPDIRECTOR_DATA_DIR` 指向的目录）。格式与内置文件完全一致，**无需重新编译**：
+
+```json
+[
+  {
+    "name": "我的软件缓存",
+    "category": "dev",
+    "source_template": "%LOCALAPPDATA%\\MyApp\\Cache",
+    "target_subpath": "dev\\myapp-cache",
+    "note": "可选：给用户看的提示"
+  }
+]
+```
+
+合并规则：`source_template` 相同（忽略大小写）的用户条目**覆盖**内置条目（想改某条预设的默认子路径就这么干），其余**追加**。分类必须取 `browser / design / dev / system / media / office / game / other`。文件不存在 = 只有内置预设；语法错误或个别条目非法 = 只跳过坏条目，不影响其余预设。
+
+两层都只展示**本机实际存在源目录**的条目——没装的软件不会出现在下拉里。
 
 ---
 

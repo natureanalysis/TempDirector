@@ -618,199 +618,115 @@ pub fn import_config(
 // 内置预设（常用软件的缓存目录，M5 预设规则库的第一步）
 // ---------------------------------------------------------------------------
 
-/// 一条预设的定义。`source_template` 用 `%VAR%` 模板，跨机器可用。
-struct PresetDef {
-    name: &'static str,
-    category: &'static str,
-    source_template: &'static str,
+/// 一条预设。与 `presets.json` 的字段一一对应（serde 反序列化目标）。
+///
+/// `note` 可空：值得让用户看到的坑（版本号目录、占用频繁、索引重建等）。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PresetDef {
+    pub name: String,
+    pub category: String,
+    pub source_template: String,
     /// RAM 盘下的默认子路径（可被用户改写）。
-    target_subpath: &'static str,
-    /// 值得让用户看到的坑（版本号目录、占用频繁、索引重建等）。
-    note: Option<&'static str>,
+    pub target_subpath: String,
+    pub note: Option<String>,
 }
 
-/// 预设清单。
+/// 内置预设随二进制发布：改这个文件不需要动 Rust 代码，但要重新编译。
+/// 装机后的扩展走用户外置文件（见 [`user_presets_path`]），无需重编译。
+const PRESETS_JSON: &str = include_str!("../presets.json");
+
+/// 用户外置预设的位置：`%PROGRAMDATA%\TempDirector\presets.json`。
 ///
-/// 收录标准（2026-10 在真机上逐个实测过存在性与体积）：
-/// - 是**纯缓存/临时数据**，丢弃后软件自行重建，绝不碰用户数据（所以没有
-///   Docker Desktop 的 `%LOCALAPPDATA%\Docker`——里面是 ext4.vhdx 虚拟磁盘本体，
-///   也不是 Zotero 的数据目录）；
-/// - 目录位置跨机器稳定（官方固定路径，非随机/版本相关），个别例外在 note 里说明；
-/// - 明确排除系统保护路径（`C:\Windows` 等，会被 preflight 拦）。
-const PRESETS: &[PresetDef] = &[
-    // ---- 浏览器 ----
-    PresetDef {
-        name: "Chrome 网页缓存",
-        category: "browser",
-        source_template: r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Cache",
-        target_subpath: r"browsers\chrome-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "Chrome Code Cache",
-        category: "browser",
-        source_template: r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Code Cache",
-        target_subpath: r"browsers\chrome-code-cache",
-        note: Some("应用前建议先关闭 Chrome，否则文件被占用会被跳过"),
-    },
-    PresetDef {
-        name: "Chrome GPU 缓存",
-        category: "browser",
-        source_template: r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\GPUCache",
-        target_subpath: r"browsers\chrome-gpu-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "Edge 网页缓存",
-        category: "browser",
-        source_template: r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Cache",
-        target_subpath: r"browsers\edge-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "Edge Code Cache",
-        category: "browser",
-        source_template: r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Code Cache",
-        target_subpath: r"browsers\edge-code-cache",
-        note: Some("应用前建议先关闭 Edge，否则文件被占用会被跳过"),
-    },
-    PresetDef {
-        name: "Edge GPU 缓存",
-        category: "browser",
-        source_template: r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\GPUCache",
-        target_subpath: r"browsers\edge-gpu-cache",
-        note: None,
-    },
-    // ---- 开发 ----
-    PresetDef {
-        name: "npm 缓存",
-        category: "dev",
-        source_template: r"%LOCALAPPDATA%\npm-cache",
-        target_subpath: r"dev\npm-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "pip 缓存",
-        category: "dev",
-        source_template: r"%LOCALAPPDATA%\pip\cache",
-        target_subpath: r"dev\pip-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "uv 缓存",
-        category: "dev",
-        source_template: r"%LOCALAPPDATA%\uv\cache",
-        target_subpath: r"dev\uv-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "Cargo 下载缓存",
-        category: "dev",
-        source_template: r"%USERPROFILE%\.cargo\registry",
-        target_subpath: r"dev\cargo-registry",
-        note: Some("只含源码与 .crate 下载缓存，不含已安装的工具链"),
-    },
-    PresetDef {
-        name: "VS Code 缓存",
-        category: "dev",
-        source_template: r"%APPDATA%\Code\Cache",
-        target_subpath: r"dev\vscode-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "VS Code Code Cache",
-        category: "dev",
-        source_template: r"%APPDATA%\Code\Code Cache",
-        target_subpath: r"dev\vscode-code-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "VS Code GPU 缓存",
-        category: "dev",
-        source_template: r"%APPDATA%\Code\GPUCache",
-        target_subpath: r"dev\vscode-gpu-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "JetBrains 缓存（PyCharm 等）",
-        category: "dev",
-        source_template: r"%LOCALAPPDATA%\JetBrains",
-        target_subpath: r"dev\jetbrains",
-        note: Some("含项目索引缓存，首次启动会重建索引（扫描大项目需要几分钟）"),
-    },
-    // ---- 系统 ----
-    PresetDef {
-        name: "用户 TEMP",
-        category: "system",
-        source_template: r"%LOCALAPPDATA%\Temp",
-        target_subpath: r"system\user-temp",
-        note: Some("体积最大也最容易被占用：应用时被占的文件会自动跳过，建议先关闭后台软件"),
-    },
-    PresetDef {
-        name: "NVIDIA DX 着色器缓存",
-        category: "system",
-        source_template: r"%LOCALAPPDATA%\NVIDIA\DXCache",
-        target_subpath: r"system\nvidia-dx-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "NVIDIA GL 着色器缓存",
-        category: "system",
-        source_template: r"%LOCALAPPDATA%\NVIDIA\GLCache",
-        target_subpath: r"system\nvidia-gl-cache",
-        note: None,
-    },
-    PresetDef {
-        name: "D3D 着色器缓存",
-        category: "system",
-        source_template: r"%LOCALAPPDATA%\D3DSCache",
-        target_subpath: r"system\d3dscache",
-        note: None,
-    },
-    PresetDef {
-        name: "应用崩溃转储",
-        category: "system",
-        source_template: r"%LOCALAPPDATA%\CrashDumps",
-        target_subpath: r"system\crash-dumps",
-        note: Some("纯崩溃 dump，丢弃无影响"),
-    },
-    PresetDef {
-        name: "Steam 网页缓存",
-        category: "system",
-        source_template: r"%LOCALAPPDATA%\Steam\htmlcache",
-        target_subpath: r"system\steam-htmlcache",
-        note: None,
-    },
-    // ---- 办公/通讯 ----
-    PresetDef {
-        name: "微信网页缓存",
-        category: "office",
-        source_template: r"%APPDATA%\Tencent\xwechat\radium\web",
-        target_subpath: r"office\wechat-radium-web",
-        note: Some("只迁这个子目录；整个 xwechat 里有聊天记录，切勿整体迁移"),
-    },
-    PresetDef {
-        name: "百度网盘缓存",
-        category: "office",
-        source_template: r"%APPDATA%\baidu\BaiduNetdisk",
-        target_subpath: r"office\baidu-netdisk",
-        note: None,
-    },
-    PresetDef {
-        name: "WPS 缓存",
-        category: "office",
-        source_template: r"%LOCALAPPDATA%\Kingsoft\WPS Office",
-        target_subpath: r"office\wps",
-        note: Some("内层按版本号分目录（如 12.1.0.29161），WPS 升级后会换新目录"),
-    },
-    PresetDef {
-        name: "飞书缓存",
-        category: "office",
-        source_template: r"%APPDATA%\LarkShell",
-        target_subpath: r"office\lark",
-        note: None,
-    },
-];
+/// 格式与内置文件完全一致（JSON 数组）。**追加**新预设；与内置条目
+/// `source_template` 相同（忽略大小写）的会**覆盖**内置条目——比如想给
+/// 「用户 TEMP」换个子路径，不用改程序。文件不存在=只有内置预设；
+/// 文件有语法错误或个别条目非法=跳过那些条目，**绝不让整个预设列表失效**。
+pub fn user_presets_path() -> PathBuf {
+    paths::data_dir().join("presets.json")
+}
+
+/// 解析内置预设。文件随仓库走且有测试钉住（`builtin_presets_parse`），
+/// 走到 panic 说明发布流程出了问题，宁可大声失败也不静默缺预设。
+fn builtin_presets() -> &'static Vec<PresetDef> {
+    static CACHE: std::sync::OnceLock<Vec<PresetDef>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        serde_json::from_str(PRESETS_JSON)
+            .expect("内嵌 presets.json 解析失败——仓库文件坏了，修好再发布")
+    })
+}
+
+/// 读取用户外置预设。返回 `(有效条目, 跳过原因列表)`。
+/// 逐条校验（分类合法、字段非空），坏条目跳过而不是整个文件报废。
+fn load_user_presets(path: &Path) -> (Vec<PresetDef>, Vec<String>) {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(_) => return (Vec::new(), Vec::new()), // 没有=正常
+    };
+    let parsed: Vec<PresetDef> = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => return (Vec::new(), vec![format!("presets.json 解析失败，已忽略：{e}")]),
+    };
+    let mut ok = Vec::new();
+    let mut skipped = Vec::new();
+    for p in parsed {
+        match validate_preset(&p) {
+            Ok(()) => ok.push(p),
+            Err(e) => skipped.push(format!("预设「{}」已跳过：{e}", p.name)),
+        }
+    }
+    (ok, skipped)
+}
+
+fn validate_preset(p: &PresetDef) -> TdResult<()> {
+    if p.name.trim().is_empty() {
+        return Err(TdError::InvalidPath("名称不能为空".into()));
+    }
+    if !CATEGORIES.contains(&p.category.as_str()) {
+        return Err(TdError::InvalidPath(format!(
+            "未知分类 {}，可用：{}",
+            p.category,
+            CATEGORIES.join(" / ")
+        )));
+    }
+    if p.source_template.trim().is_empty() {
+        return Err(TdError::InvalidPath("源路径不能为空".into()));
+    }
+    if p.target_subpath.trim().is_empty() || p.target_subpath.contains(':') {
+        return Err(TdError::InvalidPath(
+            "目标子目录应为非空的相对路径".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// 内置 + 用户外置合并。用户条目按 `source_template`（忽略大小写）覆盖同源内置条目，
+/// 其余追加在后。内置条目本身若有重复也会在测试里被钉住（`builtin_presets_parse`）。
+fn merge_presets(builtin: &[PresetDef], user: &[PresetDef]) -> Vec<PresetDef> {
+    let mut out: Vec<PresetDef> = builtin.to_vec();
+    for u in user {
+        let key = u.source_template.to_lowercase();
+        if let Some(b) = out
+            .iter_mut()
+            .find(|b| b.source_template.to_lowercase() == key)
+        {
+            *b = u.clone();
+        } else {
+            out.push(u.clone());
+        }
+    }
+    out
+}
+
+/// 全量预设（内置 + 用户外置合并后）。跳过的坏条目原因打到 stderr，
+/// 桌面端没有控制台也不影响主流程。
+fn all_presets() -> Vec<PresetDef> {
+    let user_path = user_presets_path();
+    let (user, skipped) = load_user_presets(&user_path);
+    for s in skipped {
+        eprintln!("TempDirector 预设：{s}");
+    }
+    merge_presets(builtin_presets(), &user)
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PresetView {
@@ -828,16 +744,16 @@ pub struct PresetView {
 /// 返回内置预设，**只含本机实际存在源目录的条目**（软件没装的自动隐掉）。
 /// 逐条做 `is_dir` 探测，量级只有二十来个，无需缓存。
 pub fn preset_rules() -> Vec<PresetView> {
-    PRESETS
-        .iter()
+    all_presets()
+        .into_iter()
         .map(|p| {
-            let (expanded, unknown) = util::expand_path(p.source_template);
+            let (expanded, unknown) = util::expand_path(&p.source_template);
             PresetView {
-                name: p.name.to_string(),
-                category: p.category.to_string(),
-                source_template: p.source_template.to_string(),
-                target_subpath: p.target_subpath.to_string(),
-                note: p.note.map(|s| s.to_string()),
+                name: p.name,
+                category: p.category,
+                source_template: p.source_template,
+                target_subpath: p.target_subpath,
+                note: p.note,
                 source: expanded.display().to_string(),
                 exists: unknown.is_empty() && expanded.is_dir(),
             }
@@ -1384,37 +1300,94 @@ mod tests {
     // 内置预设
     // -----------------------------------------------------------------------
 
+    /// 造一条合法预设的捷径。
+    fn preset(name: &str, src: &str, sub: &str) -> PresetDef {
+        PresetDef {
+            name: name.into(),
+            category: "dev".into(),
+            source_template: src.into(),
+            target_subpath: sub.into(),
+            note: None,
+        }
+    }
+
     #[test]
-    fn preset_table_is_well_formed() {
+    fn builtin_presets_parse() {
+        // 内嵌 JSON 解析失败会在 builtin_presets() 里 panic，这里先显式解析拿到好报错。
+        let all: Vec<PresetDef> = serde_json::from_str(PRESETS_JSON)
+            .expect("presets.json 必须能解析");
+        assert!(all.len() >= 20, "预设清单不应莫名缩水：{}", all.len());
+
         // 分类合法、名字/模板/子路径非空且唯一 —— 这几条任何一条坏了，
         // 表单按预设填充后保存就会报错，或两条规则撞 UNIQUE 约束。
         let mut seen_src = std::collections::HashSet::new();
         let mut seen_sub = std::collections::HashSet::new();
-        for p in PRESETS {
-            assert!(!p.name.trim().is_empty(), "预设名不能为空");
-            assert!(
-                CATEGORIES.contains(&p.category),
-                "预设 {} 分类非法：{}",
-                p.name,
-                p.category
-            );
+        for p in &all {
+            validate_preset(p).unwrap_or_else(|e| panic!("内置预设「{}」非法：{e}", p.name));
             assert!(
                 p.source_template.starts_with('%'),
                 "预设 {} 应使用 %VAR% 模板以便跨机器：{}",
                 p.name,
                 p.source_template
             );
-            assert!(!p.target_subpath.trim().is_empty(), "预设 {} 子路径为空", p.name);
-            assert!(
-                !p.target_subpath.contains(':'),
-                "预设 {} 子路径应是相对路径：{}",
-                p.name,
-                p.target_subpath
-            );
             assert!(seen_src.insert(p.source_template.to_lowercase()), "预设 {} 源模板重复", p.name);
             assert!(seen_sub.insert(p.target_subpath.to_lowercase()), "预设 {} 子路径重复", p.name);
         }
-        assert!(PRESETS.len() >= 20, "预设清单不应莫名缩水：{}", PRESETS.len());
+        assert!(
+            all.iter().any(|p| p.source_template == r"%LOCALAPPDATA%\Temp"),
+            "任何 Windows 机器上都该有「用户 TEMP」预设兜底"
+        );
+    }
+
+    #[test]
+    fn merge_presets_overrides_by_source_and_appends() {
+        let builtin = vec![
+            preset("A", r"%LOCALAPPDATA%\A\cache", r"dev\a"),
+            preset("B", r"%LOCALAPPDATA%\B\cache", r"dev\b"),
+        ];
+        // 同源覆盖（改子路径/备注），新源追加
+        let user = vec![
+            preset("B 改", r"%LOCALAPPDATA%\B\Cache", r"dev\b2"), // 大小写不同也应命中
+            preset("C", r"%LOCALAPPDATA%\C\cache", r"dev\c"),
+        ];
+        let merged = merge_presets(&builtin, &user);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].name, "A");
+        assert_eq!(merged[1].name, "B 改");
+        assert_eq!(merged[1].target_subpath, r"dev\b2");
+        assert_eq!(merged[2].name, "C");
+    }
+
+    #[test]
+    fn load_user_presets_skips_bad_entries_not_whole_file() {
+        let dir = std::env::temp_dir().join(format!("td_gui_preset_user_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("presets.json");
+
+        // 文件不存在 → 空、无告警
+        let (ok, skipped) = load_user_presets(&file);
+        assert!(ok.is_empty() && skipped.is_empty());
+
+        // 一好一坏 → 好的留下，坏的跳过（不会整个文件报废）
+        fs::write(
+            &file,
+            r#"[{"name":"好","category":"dev","source_template":"%LOCALAPPDATA%\\X","target_subpath":"dev\\x","note":null},
+                {"name":"坏","category":"nonsense","source_template":"%LOCALAPPDATA%\\Y","target_subpath":"dev\\y","note":null}]"#,
+        )
+        .unwrap();
+        let (ok, skipped) = load_user_presets(&file);
+        assert_eq!(ok.len(), 1);
+        assert_eq!(ok[0].name, "好");
+        assert_eq!(skipped.len(), 1, "坏条目要有跳过原因：{skipped:?}");
+
+        // 整个文件语法坏 → 全部忽略，但不 panic
+        fs::write(&file, "{oops").unwrap();
+        let (ok, skipped) = load_user_presets(&file);
+        assert!(ok.is_empty());
+        assert_eq!(skipped.len(), 1);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1427,7 +1400,7 @@ mod tests {
         );
         // %LOCALAPPDATA%\Temp 在任何 Windows 上都有 —— 至少「用户 TEMP」会在
         assert!(
-            out.iter().any(|v| v.name == "用户 TEMP"),
+            out.iter().any(|v| v.source_template == r"%LOCALAPPDATA%\Temp"),
             "本机应至少命中「用户 TEMP」预设，实际命中 {} 条",
             out.len()
         );
