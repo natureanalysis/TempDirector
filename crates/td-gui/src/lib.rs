@@ -79,6 +79,7 @@ pub fn run() {
             commands::clear_acl,
             commands::inspect_source,
             commands::inspect_target,
+            commands::preset_rules,
             commands::apply_rules,
             commands::restore_rules,
             commands::relink_rule,

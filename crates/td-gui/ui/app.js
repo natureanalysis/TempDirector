@@ -1127,13 +1127,62 @@ async function openRuleForm(id) {
     return { field: f, hint: h };
   };
 
+  // 常用预设（仅新增时显示；后端已按本机实际存在过滤，没装的软件不会出现）
+  let nameInput = null;
+  let catSelect = null;
+  let srcInput = null;
+  let subInput = null;
+  if (!rule) {
+    let presets = [];
+    try { presets = await invoke('preset_rules', {}); } catch (e) { presets = []; }
+    if (presets.length) {
+      const presetSelect = document.createElement('select');
+      presetSelect.className = 'select';
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = '从常用预设选择（已按本机安装的软件过滤）…';
+      presetSelect.appendChild(placeholder);
+      const groups = {};
+      presets.forEach(function (p) {
+        (groups[p.category] = groups[p.category] || []).push(p);
+      });
+      Object.keys(groups).forEach(function (cat) {
+        const og = document.createElement('optgroup');
+        og.label = categoryLabel(cat);
+        groups[cat].forEach(function (p) {
+          const o = document.createElement('option');
+          o.value = p.source_template;
+          o.textContent = p.name;
+          og.appendChild(o);
+        });
+        presetSelect.appendChild(og);
+      });
+      const presetWrap = mk('常用预设（可选）', presetSelect,
+        '选中后自动填充名称、分类、源路径与目标子目录，可再修改');
+      const presetHint = document.createElement('div');
+      presetHint.className = 'hint';
+      presetWrap.field.appendChild(presetHint);
+      presetSelect.addEventListener('change', function () {
+        const p = presets.find(function (x) { return x.source_template === presetSelect.value; });
+        if (!p) { presetHint.textContent = ''; presetHint.className = 'hint'; return; }
+        if (nameInput) nameInput.value = p.name;
+        if (catSelect) catSelect.value = p.category;
+        if (srcInput) { srcInput.value = p.source_template; checkSource(); }
+        if (subInput) { subInput.value = p.target_subpath; checkTarget(); }
+        presetHint.textContent = (p.note ? '⚠ ' + p.note + ' · ' : '') + p.source;
+        presetHint.className = p.note ? 'hint warn' : 'hint';
+      });
+      body.appendChild(presetWrap.field);
+    }
+  }
+
   // 名称
-  const nameInput = mkInput('例如：Chrome 缓存');
+  nameInput = mkInput('例如：Chrome 缓存');
   nameInput.value = rule ? rule.name : '';
   body.appendChild(mk('规则名称', nameInput).field);
 
   // 分类
-  const catSelect = document.createElement('select');
+  catSelect = document.createElement('select');
   catSelect.className = 'select';
   snap.categories.forEach(function (c) {
     const o = document.createElement('option');
@@ -1152,7 +1201,7 @@ async function openRuleForm(id) {
   srcField.appendChild(srcLabel);
   const srcRow = document.createElement('div');
   srcRow.className = 'field-row';
-  const srcInput = mkInput('%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache');
+  srcInput = mkInput('%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache');
   srcInput.value = rule ? rule.source_template : '';
   srcInput.style.flex = '1';
   const srcPick = mkPickButton('选择目录…', async function () {
@@ -1178,7 +1227,7 @@ async function openRuleForm(id) {
   });
   rootSelect.value = String(rule ? rule.target_root_id : snap.roots[0].id);
 
-  const subInput = mkInput('例如：browsers\\chrome-cache');
+  subInput = mkInput('例如：browsers\\chrome-cache');
   subInput.value = rule ? rule.target_subpath : '';
 
   const targetRow = document.createElement('div');
@@ -1600,6 +1649,14 @@ function createMockBackend() {
           return Promise.resolve(args.ids.length);
         case 'capture_acl': { const r = find(args.id); if (r) r.has_acl = true; return Promise.resolve('D:(A;;FA;;;SY)'); }
         case 'clear_acl': { const r = find(args.id); if (r) r.has_acl = false; return Promise.resolve(null); }
+        case 'preset_rules':
+          return Promise.resolve([
+            { name: 'Chrome 网页缓存', category: 'browser', source_template: '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache', target_subpath: 'browsers\\chrome-cache', note: null, source: 'C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache', exists: true },
+            { name: 'Edge 网页缓存', category: 'browser', source_template: '%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache', target_subpath: 'browsers\\edge-cache', note: null, source: 'C:\\Users\\me\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Cache', exists: true },
+            { name: 'npm 缓存', category: 'dev', source_template: '%LOCALAPPDATA%\\npm-cache', target_subpath: 'dev\\npm-cache', note: null, source: 'C:\\Users\\me\\AppData\\Local\\npm-cache', exists: true },
+            { name: '用户 TEMP', category: 'system', source_template: '%LOCALAPPDATA%\\Temp', target_subpath: 'system\\user-temp', note: '体积最大也最容易被占用：应用时被占的文件会自动跳过', source: 'C:\\Users\\me\\AppData\\Local\\Temp', exists: true },
+            { name: '微信网页缓存', category: 'office', source_template: '%APPDATA%\\Tencent\\xwechat\\radium\\web', target_subpath: 'office\\wechat-radium-web', note: '只迁这个子目录；整个 xwechat 里有聊天记录，切勿整体迁移', source: 'C:\\Users\\me\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web', exists: true },
+          ]);
         case 'inspect_source': {
           const tpl = String(args.template || '');
           const expanded = tpl.replace('%LOCALAPPDATA%', 'C:\\Users\\me\\AppData\\Local').replace('%APPDATA%', 'C:\\Users\\me\\AppData\\Roaming');

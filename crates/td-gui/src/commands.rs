@@ -144,6 +144,12 @@ pub fn inspect_source(template: String) -> R<api::SourceInspection> {
     api::inspect_source(&template).map_err(map_err)
 }
 
+/// 内置预设（常用软件缓存目录），只返回本机实际存在的条目。
+#[tauri::command]
+pub fn preset_rules() -> Vec<api::PresetView> {
+    api::preset_rules()
+}
+
 #[tauri::command]
 pub fn inspect_target(state: State<'_, AppState>, root_id: i64, subpath: String) -> R<api::TargetInspection> {
     api::inspect_target(&*lock_store(&state)?, root_id, &subpath).map_err(map_err)

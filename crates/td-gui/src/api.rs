@@ -615,6 +615,238 @@ pub fn import_config(
 }
 
 // ---------------------------------------------------------------------------
+// 内置预设（常用软件的缓存目录，M5 预设规则库的第一步）
+// ---------------------------------------------------------------------------
+
+/// 一条预设的定义。`source_template` 用 `%VAR%` 模板，跨机器可用。
+struct PresetDef {
+    name: &'static str,
+    category: &'static str,
+    source_template: &'static str,
+    /// RAM 盘下的默认子路径（可被用户改写）。
+    target_subpath: &'static str,
+    /// 值得让用户看到的坑（版本号目录、占用频繁、索引重建等）。
+    note: Option<&'static str>,
+}
+
+/// 预设清单。
+///
+/// 收录标准（2026-10 在真机上逐个实测过存在性与体积）：
+/// - 是**纯缓存/临时数据**，丢弃后软件自行重建，绝不碰用户数据（所以没有
+///   Docker Desktop 的 `%LOCALAPPDATA%\Docker`——里面是 ext4.vhdx 虚拟磁盘本体，
+///   也不是 Zotero 的数据目录）；
+/// - 目录位置跨机器稳定（官方固定路径，非随机/版本相关），个别例外在 note 里说明；
+/// - 明确排除系统保护路径（`C:\Windows` 等，会被 preflight 拦）。
+const PRESETS: &[PresetDef] = &[
+    // ---- 浏览器 ----
+    PresetDef {
+        name: "Chrome 网页缓存",
+        category: "browser",
+        source_template: r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Cache",
+        target_subpath: r"browsers\chrome-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "Chrome Code Cache",
+        category: "browser",
+        source_template: r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Code Cache",
+        target_subpath: r"browsers\chrome-code-cache",
+        note: Some("应用前建议先关闭 Chrome，否则文件被占用会被跳过"),
+    },
+    PresetDef {
+        name: "Chrome GPU 缓存",
+        category: "browser",
+        source_template: r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\GPUCache",
+        target_subpath: r"browsers\chrome-gpu-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "Edge 网页缓存",
+        category: "browser",
+        source_template: r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Cache",
+        target_subpath: r"browsers\edge-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "Edge Code Cache",
+        category: "browser",
+        source_template: r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Code Cache",
+        target_subpath: r"browsers\edge-code-cache",
+        note: Some("应用前建议先关闭 Edge，否则文件被占用会被跳过"),
+    },
+    PresetDef {
+        name: "Edge GPU 缓存",
+        category: "browser",
+        source_template: r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\GPUCache",
+        target_subpath: r"browsers\edge-gpu-cache",
+        note: None,
+    },
+    // ---- 开发 ----
+    PresetDef {
+        name: "npm 缓存",
+        category: "dev",
+        source_template: r"%LOCALAPPDATA%\npm-cache",
+        target_subpath: r"dev\npm-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "pip 缓存",
+        category: "dev",
+        source_template: r"%LOCALAPPDATA%\pip\cache",
+        target_subpath: r"dev\pip-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "uv 缓存",
+        category: "dev",
+        source_template: r"%LOCALAPPDATA%\uv\cache",
+        target_subpath: r"dev\uv-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "Cargo 下载缓存",
+        category: "dev",
+        source_template: r"%USERPROFILE%\.cargo\registry",
+        target_subpath: r"dev\cargo-registry",
+        note: Some("只含源码与 .crate 下载缓存，不含已安装的工具链"),
+    },
+    PresetDef {
+        name: "VS Code 缓存",
+        category: "dev",
+        source_template: r"%APPDATA%\Code\Cache",
+        target_subpath: r"dev\vscode-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "VS Code Code Cache",
+        category: "dev",
+        source_template: r"%APPDATA%\Code\Code Cache",
+        target_subpath: r"dev\vscode-code-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "VS Code GPU 缓存",
+        category: "dev",
+        source_template: r"%APPDATA%\Code\GPUCache",
+        target_subpath: r"dev\vscode-gpu-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "JetBrains 缓存（PyCharm 等）",
+        category: "dev",
+        source_template: r"%LOCALAPPDATA%\JetBrains",
+        target_subpath: r"dev\jetbrains",
+        note: Some("含项目索引缓存，首次启动会重建索引（扫描大项目需要几分钟）"),
+    },
+    // ---- 系统 ----
+    PresetDef {
+        name: "用户 TEMP",
+        category: "system",
+        source_template: r"%LOCALAPPDATA%\Temp",
+        target_subpath: r"system\user-temp",
+        note: Some("体积最大也最容易被占用：应用时被占的文件会自动跳过，建议先关闭后台软件"),
+    },
+    PresetDef {
+        name: "NVIDIA DX 着色器缓存",
+        category: "system",
+        source_template: r"%LOCALAPPDATA%\NVIDIA\DXCache",
+        target_subpath: r"system\nvidia-dx-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "NVIDIA GL 着色器缓存",
+        category: "system",
+        source_template: r"%LOCALAPPDATA%\NVIDIA\GLCache",
+        target_subpath: r"system\nvidia-gl-cache",
+        note: None,
+    },
+    PresetDef {
+        name: "D3D 着色器缓存",
+        category: "system",
+        source_template: r"%LOCALAPPDATA%\D3DSCache",
+        target_subpath: r"system\d3dscache",
+        note: None,
+    },
+    PresetDef {
+        name: "应用崩溃转储",
+        category: "system",
+        source_template: r"%LOCALAPPDATA%\CrashDumps",
+        target_subpath: r"system\crash-dumps",
+        note: Some("纯崩溃 dump，丢弃无影响"),
+    },
+    PresetDef {
+        name: "Steam 网页缓存",
+        category: "system",
+        source_template: r"%LOCALAPPDATA%\Steam\htmlcache",
+        target_subpath: r"system\steam-htmlcache",
+        note: None,
+    },
+    // ---- 办公/通讯 ----
+    PresetDef {
+        name: "微信网页缓存",
+        category: "office",
+        source_template: r"%APPDATA%\Tencent\xwechat\radium\web",
+        target_subpath: r"office\wechat-radium-web",
+        note: Some("只迁这个子目录；整个 xwechat 里有聊天记录，切勿整体迁移"),
+    },
+    PresetDef {
+        name: "百度网盘缓存",
+        category: "office",
+        source_template: r"%APPDATA%\baidu\BaiduNetdisk",
+        target_subpath: r"office\baidu-netdisk",
+        note: None,
+    },
+    PresetDef {
+        name: "WPS 缓存",
+        category: "office",
+        source_template: r"%LOCALAPPDATA%\Kingsoft\WPS Office",
+        target_subpath: r"office\wps",
+        note: Some("内层按版本号分目录（如 12.1.0.29161），WPS 升级后会换新目录"),
+    },
+    PresetDef {
+        name: "飞书缓存",
+        category: "office",
+        source_template: r"%APPDATA%\LarkShell",
+        target_subpath: r"office\lark",
+        note: None,
+    },
+];
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PresetView {
+    pub name: String,
+    pub category: String,
+    pub source_template: String,
+    pub target_subpath: String,
+    pub note: Option<String>,
+    /// 展开后的源目录（展示用）。
+    pub source: String,
+    /// 本机是否真的存在这个目录 —— 不存在的说明软件没装，直接不返回给前端。
+    pub exists: bool,
+}
+
+/// 返回内置预设，**只含本机实际存在源目录的条目**（软件没装的自动隐掉）。
+/// 逐条做 `is_dir` 探测，量级只有二十来个，无需缓存。
+pub fn preset_rules() -> Vec<PresetView> {
+    PRESETS
+        .iter()
+        .map(|p| {
+            let (expanded, unknown) = util::expand_path(p.source_template);
+            PresetView {
+                name: p.name.to_string(),
+                category: p.category.to_string(),
+                source_template: p.source_template.to_string(),
+                target_subpath: p.target_subpath.to_string(),
+                note: p.note.map(|s| s.to_string()),
+                source: expanded.display().to_string(),
+                exists: unknown.is_empty() && expanded.is_dir(),
+            }
+        })
+        .filter(|v| v.exists)
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // 小工具（给 UI 展示用）
 // ---------------------------------------------------------------------------
 
@@ -1145,6 +1377,76 @@ mod tests {
         add_rule(&env.store, &form(&env, "第一条", "dev\\one")).unwrap();
         let err = add_rule(&env.store, &form(&env, "第二条", "dev\\two")).unwrap_err();
         assert!(err.to_string().contains("已存在指向同一路径的规则"), "{err}");
+        let _ = fs::remove_dir_all(&env.base);
+    }
+
+    // -----------------------------------------------------------------------
+    // 内置预设
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn preset_table_is_well_formed() {
+        // 分类合法、名字/模板/子路径非空且唯一 —— 这几条任何一条坏了，
+        // 表单按预设填充后保存就会报错，或两条规则撞 UNIQUE 约束。
+        let mut seen_src = std::collections::HashSet::new();
+        let mut seen_sub = std::collections::HashSet::new();
+        for p in PRESETS {
+            assert!(!p.name.trim().is_empty(), "预设名不能为空");
+            assert!(
+                CATEGORIES.contains(&p.category),
+                "预设 {} 分类非法：{}",
+                p.name,
+                p.category
+            );
+            assert!(
+                p.source_template.starts_with('%'),
+                "预设 {} 应使用 %VAR% 模板以便跨机器：{}",
+                p.name,
+                p.source_template
+            );
+            assert!(!p.target_subpath.trim().is_empty(), "预设 {} 子路径为空", p.name);
+            assert!(
+                !p.target_subpath.contains(':'),
+                "预设 {} 子路径应是相对路径：{}",
+                p.name,
+                p.target_subpath
+            );
+            assert!(seen_src.insert(p.source_template.to_lowercase()), "预设 {} 源模板重复", p.name);
+            assert!(seen_sub.insert(p.target_subpath.to_lowercase()), "预设 {} 子路径重复", p.name);
+        }
+        assert!(PRESETS.len() >= 20, "预设清单不应莫名缩水：{}", PRESETS.len());
+    }
+
+    #[test]
+    fn preset_rules_filters_by_existence() {
+        let out = preset_rules();
+        assert!(
+            out.iter().all(|v| v.exists),
+            "返回的预设必须全部存在：{:?}",
+            out.iter().filter(|v| !v.exists).map(|v| &v.name).collect::<Vec<_>>()
+        );
+        // %LOCALAPPDATA%\Temp 在任何 Windows 上都有 —— 至少「用户 TEMP」会在
+        assert!(
+            out.iter().any(|v| v.name == "用户 TEMP"),
+            "本机应至少命中「用户 TEMP」预设，实际命中 {} 条",
+            out.len()
+        );
+        // 每条预设都能直接走表单校验（预设→添加规则 这条链路不能断）
+        let env = setup("presets");
+        for v in &out {
+            let f = RuleForm {
+                name: v.name.clone(),
+                category: v.category.clone(),
+                source_template: v.source_template.clone(),
+                target_root_id: 1,
+                target_subpath: v.target_subpath.clone(),
+                link_type: "junction".into(),
+                want_enabled: true,
+                rebuild_on_boot: true,
+                notes: v.note.clone(),
+            };
+            validate_form(&f).unwrap_or_else(|e| panic!("预设 {} 没通过表单校验：{e}", v.name));
+        }
         let _ = fs::remove_dir_all(&env.base);
     }
 }
