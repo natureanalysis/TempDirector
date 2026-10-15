@@ -810,15 +810,7 @@ fn resolve_clean_dir(store: &Store, target: &CleanTarget) -> TdResult<(PathBuf, 
     match target {
         CleanTarget::Rule { id } => {
             let rule = store.get_rule(*id)?;
-            let resolved = engine::resolve(store, &rule)?;
-            let source_is_link = std::fs::symlink_metadata(&resolved.source)
-                .map(|m| m.file_type().is_symlink())
-                .unwrap_or(false);
-            let dir = if source_is_link {
-                resolved.target
-            } else {
-                resolved.source
-            };
+            let dir = engine::clean_dir_for_rule(store, &rule)?;
             Ok((dir, rule.name))
         }
         CleanTarget::Folder { path } => {

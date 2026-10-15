@@ -93,6 +93,23 @@ pub fn rule_link_type(rule: &Rule) -> TdResult<LinkType> {
         .ok_or_else(|| TdError::InvalidPath(format!("未知的链接类型：{}", rule.link_type)))
 }
 
+/// 一条规则**真正要清理的目录**：
+/// 源已是链接（联接/符号链接）→ 真实内容在 RAM 盘目标上，清目标；
+/// 否则（普通目录 / 尚未链接）→ 清源。
+///
+/// GUI 与 CLI 共用这一条判定，避免"清哪个目录"两处各写一份而漂移。
+pub fn clean_dir_for_rule(store: &Store, rule: &Rule) -> TdResult<PathBuf> {
+    let resolved = resolve(store, rule)?;
+    let source_is_link = std::fs::symlink_metadata(&resolved.source)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    Ok(if source_is_link {
+        resolved.target
+    } else {
+        resolved.source
+    })
+}
+
 /// 执行前的「环境就绪」校验。
 fn validate_ready(r: &Resolved) -> TdResult<()> {
     if !r.unknown_vars.is_empty() {
@@ -1102,5 +1119,26 @@ mod tests {
             }),
             "link_ok_empty"
         );
+    }
+
+    #[test]
+    fn clean_dir_follows_link_state() {
+        let env = setup("clean_dir");
+        let rule = env.store.get_rule(env.rule_id).unwrap();
+
+        // 未应用：源是普通目录 → 清理命中源
+        assert_eq!(clean_dir_for_rule(&env.store, &rule).unwrap(), env.source);
+
+        // 应用后：源变成指向 RAM 盘目标的联接 → 清理应命中真实内容所在的目标
+        let opts = ApplyOptions {
+            dry_run: false,
+            verify: VerifyMode::CountAndSize,
+            skip_lock_check: true,
+            allow_merge: false,
+        };
+        apply_rule(&env.store, &rule, &opts, &mut noop).unwrap();
+        assert_eq!(clean_dir_for_rule(&env.store, &rule).unwrap(), env.target);
+
+        let _ = fs::remove_dir_all(&env.base);
     }
 }
