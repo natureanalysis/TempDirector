@@ -2,6 +2,30 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-10-16
+
+### 新增 —— 一键全量重建脚本 + 桌面快捷方式
+
+* 根目录新增 `rebuild.bat`：`cargo clean` → `cargo build --release`（两个 exe 一起出）
+  → 校验产物 → （重）建桌面快捷方式。`rebuild.bat noclean` 可跳过 clean 做增量构建。
+* 复用 `scripts\cargo.cmd` 补 MSVC / cargo 环境（vcvars64、RUSTUP_HOME / CARGO_HOME 兜底），
+  自身保持纯 ASCII（cmd.exe 按 OEM 码页读批处理，中文注释会解析崩溃）。
+* 每次重建成功后（重）建 `%USERPROFILE%\Desktop\TempDirector.lnk`，指向新出炉的
+  `target\release\tempdirector-gui.exe`，带应用图标、工作目录为 `target\release`。
+  `cargo clean` 会清掉整个 `target\`，不刷新的话旧快捷方式会悬空。
+* 双击运行时窗口停留等按键（Explorer 经 `cmd /c` 启动时检测），从已有控制台调用则直接退出。
+
+### 验证
+
+* `rebuild.bat noclean`：参数解析、产物校验、失败路径（exit 1 + 提示）均符合预期。
+* 运行中 GUI 占用 `target\release` 时全量重建被明确拒绝（提示先托盘退出），
+  实测确认过 `cargo clean` 在该状态下会删掉 exe 文件却删不掉目录（os error 32）。
+* 桌面快捷方式创建实测通过：目标 / 工作目录 / 图标 / 描述四项属性均已写入 .lnk。
+* **未在会话内完成全量 clean 构建验证**：本会话沙箱把 `reg.exe` 列入程序黑名单，
+  而 `vcvars64.bat` 靠 `reg.exe` 查注册表定位 Windows SDK，被拦后 LIB 只剩 MSVC
+  一侧、链接报 LNK1181 `kernel32.lib`。属环境限制而非脚本问题（10-14 的构建在
+  普通终端正常）；脚本失败路径已带该排查提示。
+
 ## 2026-10-15
 
 ### 新增 —— M5 第一步：常用软件缓存目录预设（内置 + 外置覆盖）

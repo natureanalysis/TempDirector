@@ -274,6 +274,7 @@ docs/ARCHITECTURE.md       架构与边界条件
 docs/screenshots/          界面截图
 scripts/cargo.cmd          开发构建包装（自动补 MSVC + Rust 环境）
 scripts/make_icon.py       应用图标生成（纯 PIL 绘制，可重跑）
+rebuild.bat                一键全量重建（clean + release）并刷新桌面快捷方式
 ```
 
 ## 预设规则（内置 + 自定义扩展）
@@ -330,7 +331,15 @@ scripts\cargo.cmd check --workspace --all-targets
 scripts\cargo.cmd test  --workspace          # 104 个单元测试（td-core 88 + td-gui 16）
 scripts\cargo.cmd build --release            # 两个 exe 一起出
 python scripts\make_icon.py                  # 需要改图标时重跑
+rebuild.bat                                  # 全量重建：clean + release + 刷新桌面快捷方式
+rebuild.bat noclean                          # 跳过 clean，只做增量 release 构建
 ```
+
+`rebuild.bat` 做的事：`cargo clean` → `cargo build --release` → 在校验产物存在后
+（重）建桌面快捷方式 `%USERPROFILE%\Desktop\TempDirector.lnk`，指向刚出炉的
+`target\release\tempdirector-gui.exe`（带应用图标）。之所以每次重建都刷新快捷方式：
+`cargo clean` 会连 `target\` 一起清掉，重建前建的 .lnk 会悬空。
+双击运行时窗口会停住等按键（从已有控制台调用则直接退出），方便看构建结果。
 
 `scripts/cargo.cmd` 存在的理由：MSVC 工具链需要先跑 `vcvars64.bat`，
 而受限 shell 里 `PATH` 可能是空的、`RUSTUP_HOME` / `CARGO_HOME` 也可能没指对。
