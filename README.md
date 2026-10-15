@@ -299,6 +299,28 @@ scripts/make_icon.py       应用图标生成（纯 PIL 绘制，可重跑）
 
 两层都只展示**本机实际存在源目录**的条目——没装的软件不会出现在下拉里。
 
+### 覆盖一条内置预设（示例）
+
+想改掉内置「用户 TEMP」的默认目标子路径，就在外置文件里写一条 `source_template`
+**逐字相同**的条目——它会替换内置那条，而不是多出一条：
+
+```json
+[
+  {
+    "name": "用户 TEMP",
+    "category": "system",
+    "source_template": "%LOCALAPPDATA%\\Temp",
+    "target_subpath": "system\\temp-on-ram",
+    "note": "我自己改的目标子路径"
+  }
+]
+```
+
+落地位置：把上面的内容存成 `%PROGRAMDATA%\TempDirector\presets.json`（便携模式则是
+`TEMPDIRECTOR_DATA_DIR` 指向目录下的 `presets.json`），重开界面即可在「常用预设」下拉看到
+它已换成新的目标子路径。这条链路有集成测试 `crates/td-gui/tests/preset_override.rs`
+真实验证（写外置文件 → 指向数据目录 → 断言内置被覆盖、且该源只此一条）。
+
 ---
 
 ## 开发
