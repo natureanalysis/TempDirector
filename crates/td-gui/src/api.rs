@@ -763,6 +763,149 @@ pub fn preset_rules() -> Vec<PresetView> {
 }
 
 // ---------------------------------------------------------------------------
+// 文件夹清理（清空 / 按时间删除）
+// ---------------------------------------------------------------------------
+
+/// 清理对象：要么是一条规则（清它真正落地的目录），要么是一个任意文件夹。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CleanTarget {
+    Rule { id: i64 },
+    Folder { path: String },
+}
+
+/// 预演视图（执行前给用户确认用）。
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanPreviewView {
+    pub dir: String,
+    pub label: String,
+    pub files: u64,
+    pub bytes: u64,
+    pub bytes_text: String,
+    pub links_skipped: u64,
+    pub sample: Vec<td_core::fsops::clean::CleanSampleEntry>,
+    pub summary: String,
+}
+
+/// 执行结果视图。
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanResultView {
+    pub dir: String,
+    pub label: String,
+    pub deleted_files: u64,
+    pub deleted_bytes: u64,
+    pub deleted_bytes_text: String,
+    pub dirs_pruned: u64,
+    pub skipped: u64,
+    pub skip_examples: Vec<String>,
+    pub links_skipped: u64,
+    pub summary: String,
+}
+
+/// 解析出真正要清理的目录。
+///
+/// 规则：源目录若已是链接（联接/符号链接），真实内容在 RAM 盘目标上，清目标；
+/// 否则（普通目录 / 未链接）清源。文件夹：展开 `%VAR%` 后过一遍系统目录黑名单。
+fn resolve_clean_dir(store: &Store, target: &CleanTarget) -> TdResult<(PathBuf, String)> {
+    match target {
+        CleanTarget::Rule { id } => {
+            let rule = store.get_rule(*id)?;
+            let resolved = engine::resolve(store, &rule)?;
+            let source_is_link = std::fs::symlink_metadata(&resolved.source)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false);
+            let dir = if source_is_link {
+                resolved.target
+            } else {
+                resolved.source
+            };
+            Ok((dir, rule.name))
+        }
+        CleanTarget::Folder { path } => {
+            let (expanded, _unknown) = util::expand_path(path);
+            let pf = td_core::safety::preflight_source(&expanded);
+            if pf.is_blocked() {
+                return Err(TdError::SafetyBlocked(pf.blocking.join("；")));
+            }
+            let label = expanded.display().to_string();
+            Ok((expanded, label))
+        }
+    }
+}
+
+/// 预演：只算不删。目录不存在时返回空计划（而不是报错——清理一个还没内容的缓存是常见的）。
+pub fn clean_preview(
+    store: &Store,
+    target: &CleanTarget,
+    policy: &td_core::fsops::clean::CleanPolicy,
+) -> TdResult<CleanPreviewView> {
+    use td_core::fsops::clean;
+    let (dir, label) = resolve_clean_dir(store, target)?;
+    policy.validate()?;
+    let plan = if dir.is_dir() {
+        clean::plan(&dir, policy)?
+    } else {
+        clean::CleanPlan::default()
+    };
+    let summary = plan.summary();
+    let bytes_text = util::human_bytes(plan.bytes);
+    Ok(CleanPreviewView {
+        dir: dir.display().to_string(),
+        label,
+        files: plan.files,
+        bytes: plan.bytes,
+        bytes_text,
+        links_skipped: plan.links_skipped,
+        sample: plan.sample,
+        summary,
+    })
+}
+
+/// 执行清理。`dry_run` 走预演分支不写盘。完成后落一条事件流水。
+pub fn clean_run(
+    store: &Store,
+    target: &CleanTarget,
+    policy: &td_core::fsops::clean::CleanPolicy,
+    dry_run: bool,
+    on_progress: &mut dyn FnMut(&td_core::fsops::mover::Progress),
+) -> TdResult<CleanResultView> {
+    use td_core::fsops::clean;
+    let (dir, label) = resolve_clean_dir(store, target)?;
+    policy.validate()?;
+    let report = if dir.is_dir() {
+        let mut sink = |p: td_core::fsops::mover::Progress| on_progress(&p);
+        clean::run(&dir, policy, dry_run, &mut sink)?
+    } else {
+        clean::CleanReport::default()
+    };
+    let summary = report.summary();
+    let deleted_bytes_text = util::human_bytes(report.deleted_bytes);
+    if !dry_run && report.deleted_files > 0 {
+        store.log_event(
+            match target {
+                CleanTarget::Rule { id } => Some(*id),
+                CleanTarget::Folder { .. } => None,
+            },
+            "info",
+            "clean",
+            &format!("清理「{label}」：{summary}"),
+        )?;
+    }
+    Ok(CleanResultView {
+        dir: dir.display().to_string(),
+        label,
+        deleted_files: report.deleted_files,
+        deleted_bytes: report.deleted_bytes,
+        deleted_bytes_text,
+        dirs_pruned: report.dirs_pruned,
+        skipped: report.skipped,
+        skip_examples: report.skip_examples,
+        links_skipped: report.links_skipped,
+        summary,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // 小工具（给 UI 展示用）
 // ---------------------------------------------------------------------------
 
@@ -1420,6 +1563,85 @@ mod tests {
             };
             validate_form(&f).unwrap_or_else(|e| panic!("预设 {} 没通过表单校验：{e}", v.name));
         }
+        let _ = fs::remove_dir_all(&env.base);
+    }
+
+    // -----------------------------------------------------------------------
+    // 文件夹清理
+    // -----------------------------------------------------------------------
+
+    fn empty_policy() -> td_core::fsops::clean::CleanPolicy {
+        td_core::fsops::clean::CleanPolicy::Empty
+    }
+
+    #[test]
+    fn clean_preview_counts_folder_contents() {
+        let env = setup("cleanprev");
+        let dir = env.base.join("toclean");
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("a.bin"), b"12345").unwrap();
+        fs::write(dir.join("sub/b.bin"), b"678").unwrap();
+
+        let t = CleanTarget::Folder {
+            path: dir.to_string_lossy().into_owned(),
+        };
+        let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+        assert_eq!(pv.files, 2, "递归应数到子目录里的文件");
+        assert_eq!(pv.bytes, 8);
+        let _ = fs::remove_dir_all(&env.base);
+    }
+
+    #[test]
+    fn clean_run_empty_removes_files_but_keeps_root() {
+        let env = setup("cleanrun");
+        let dir = env.base.join("toclean");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.bin"), b"12345").unwrap();
+
+        let t = CleanTarget::Folder {
+            path: dir.to_string_lossy().into_owned(),
+        };
+        let r = clean_run(&env.store, &t, &empty_policy(), false, &mut |_| {}).unwrap();
+        assert_eq!(r.deleted_files, 1);
+        assert!(dir.is_dir(), "清理后根目录必须保留");
+        assert!(!dir.join("a.bin").exists());
+        // 事件流水留痕（清理是破坏性操作，必须可回溯）
+        let evs = recent_events(&env.store, 10).unwrap();
+        assert!(evs.iter().any(|e| e.kind == "clean"), "清理要落事件流水");
+        let _ = fs::remove_dir_all(&env.base);
+    }
+
+    #[test]
+    fn clean_blocks_system_folders() {
+        let env = setup("cleanblock");
+        let t = CleanTarget::Folder {
+            path: r"C:\Windows".into(),
+        };
+        let err = clean_preview(&env.store, &t, &empty_policy()).unwrap_err();
+        assert!(matches!(err, TdError::SafetyBlocked(_)), "{err}");
+        let _ = fs::remove_dir_all(&env.base);
+    }
+
+    #[test]
+    fn clean_rule_target_resolves_to_source_when_unlinked() {
+        let env = setup("cleanrule");
+        // setup 造的 env.source 是普通目录，含 1 个 1024 字节的 a.bin；规则未链接 → 清源
+        let id = add_rule(&env.store, &form(&env, "清理我", "dev\\clean")).unwrap();
+        let t = CleanTarget::Rule { id };
+        let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+        assert_eq!(pv.files, 1);
+        assert_eq!(pv.bytes, 1024);
+        let _ = fs::remove_dir_all(&env.base);
+    }
+
+    #[test]
+    fn clean_preview_on_missing_dir_is_empty_not_error() {
+        let env = setup("cleanmissing");
+        let t = CleanTarget::Folder {
+            path: env.base.join("never-existed").to_string_lossy().into_owned(),
+        };
+        let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+        assert_eq!(pv.files, 0, "清理一个还没内容的目录是常见的，不该报错");
         let _ = fs::remove_dir_all(&env.base);
     }
 }

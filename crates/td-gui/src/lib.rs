@@ -84,6 +84,8 @@ pub fn run() {
             commands::restore_rules,
             commands::relink_rule,
             commands::check_locks,
+            commands::clean_preview,
+            commands::clean_run,
             commands::boot_rebuild,
             commands::autostart_status,
             commands::autostart_enable,

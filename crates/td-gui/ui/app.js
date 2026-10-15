@@ -420,6 +420,7 @@ function renderDetail() {
   actions.appendChild(mkBtn('恢复（拆链 + 搬回）', 'restore', rule.id));
   actions.appendChild(mkBtn('仅重建链接', 'relink', rule.id));
   actions.appendChild(mkBtn('检测占用', 'locks', rule.id));
+  actions.appendChild(mkBtn('清理…', 'clean', rule.id));
   actions.appendChild(mkBtn('复制源路径', 'copy-source', rule.id));
   actions.appendChild(mkBtn('打开位置', 'reveal', rule.id));
   actions.appendChild(mkBtn('编辑', 'edit', rule.id));
@@ -1369,6 +1370,203 @@ async function openRuleForm(id) {
 }
 
 // ---------------------------------------------------------------------------
+// 文件夹清理（清空 / 按时间删除）
+// ---------------------------------------------------------------------------
+
+function nowSecs() { return Math.floor(Date.now() / 1000); }
+
+/** 「昨天及更早」的界点 = 今天 00:00（本地时区）。早于它的就是昨天或更早。 */
+function todayMidnightSecs() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000);
+}
+
+function toLocalInputValue(d) {
+  const p = function (n) { return String(n).padStart(2, '0'); };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+    'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/**
+ * 打开清理对话框。target 是 {kind:'rule', id} 或 {kind:'folder', path}。
+ * 破坏性操作，走「先预演、看到清单再点确认删除」两步，删除按钮在预演前禁用。
+ */
+async function openCleanDialog(target, headingText) {
+  const body = document.createElement('div');
+
+  const head = document.createElement('div');
+  head.className = 'field';
+  head.textContent = headingText;
+  body.appendChild(head);
+
+  const warn = document.createElement('div');
+  warn.className = 'hint warn';
+  warn.textContent = '清理会永久删除文件（不进回收站）。占用中的文件会自动跳过，删不掉的会如实汇报。';
+  body.appendChild(warn);
+
+  // 策略单选
+  const modes = [
+    ['empty', '清空全部文件'],
+    ['before_day', '昨天及更早修改的'],
+    ['before_hour', '1 小时前修改的（不含最近 1 小时）'],
+    ['between', '指定时间段内修改的'],
+  ];
+  const radios = [];
+  modes.forEach(function (m, i) {
+    const label = document.createElement('label');
+    label.className = 'inline-check';
+    const r = document.createElement('input');
+    r.type = 'radio';
+    r.name = 'cleanmode';
+    r.value = m[0];
+    if (i === 0) r.checked = true;
+    label.appendChild(r);
+    const s = document.createElement('span');
+    s.textContent = m[1];
+    label.appendChild(s);
+    body.appendChild(label);
+    radios.push(r);
+  });
+
+  // 时间段输入（仅 between 时显示）
+  const rangeWrap = document.createElement('div');
+  rangeWrap.className = 'field';
+  const row = document.createElement('div');
+  row.className = 'field-row';
+  const fromInput = document.createElement('input');
+  fromInput.type = 'datetime-local';
+  fromInput.className = 'input';
+  const toInput = document.createElement('input');
+  toInput.type = 'datetime-local';
+  toInput.className = 'input';
+  const yesterday = new Date();
+  yesterday.setHours(0, 0, 0, 0);
+  fromInput.value = toLocalInputValue(yesterday);
+  toInput.value = toLocalInputValue(new Date());
+  const fl = document.createElement('label');
+  fl.textContent = '从';
+  const tl = document.createElement('label');
+  tl.textContent = '到';
+  row.appendChild(fl); row.appendChild(fromInput);
+  row.appendChild(tl); row.appendChild(toInput);
+  rangeWrap.appendChild(row);
+  body.appendChild(rangeWrap);
+
+  function selectedMode() {
+    for (const r of radios) { if (r.checked) return r.value; }
+    return 'empty';
+  }
+  function syncRange() {
+    if (selectedMode() === 'between') rangeWrap.classList.remove('hidden');
+    else rangeWrap.classList.add('hidden');
+  }
+  radios.forEach(function (r) { r.addEventListener('change', syncRange); });
+  syncRange();
+
+  function buildPolicy() {
+    const mode = selectedMode();
+    if (mode === 'empty') return { mode: 'empty' };
+    if (mode === 'before_day') return { mode: 'before', cutoff: todayMidnightSecs() };
+    if (mode === 'before_hour') return { mode: 'before', cutoff: nowSecs() - 3600 };
+    const from = Math.floor(new Date(fromInput.value).getTime() / 1000);
+    const to = Math.floor(new Date(toInput.value).getTime() / 1000);
+    return { mode: 'between', from: from, to: to };
+  }
+
+  // 预演结果区
+  const previewHost = document.createElement('div');
+  previewHost.className = 'field';
+  body.appendChild(previewHost);
+
+  const btnRow = document.createElement('div');
+  btnRow.className = 'field-row';
+  const previewBtn = document.createElement('button');
+  previewBtn.className = 'btn';
+  previewBtn.textContent = '预演（看看会删哪些）';
+  const delBtn = document.createElement('button');
+  delBtn.className = 'btn danger';
+  delBtn.textContent = '确认删除';
+  delBtn.disabled = true;
+  btnRow.appendChild(previewBtn);
+  btnRow.appendChild(delBtn);
+  body.appendChild(btnRow);
+
+  function renderPreview(pv) {
+    previewHost.textContent = '';
+    const sum = document.createElement('div');
+    sum.className = pv.files ? 'hint' : 'hint ok';
+    sum.textContent = pv.files
+      ? ('将删除：' + pv.summary + '（目录：' + pv.dir + '）')
+      : ('没有符合条件的文件（目录：' + pv.dir + '）');
+    previewHost.appendChild(sum);
+    if (pv.links_skipped) {
+      const lk = document.createElement('div');
+      lk.className = 'hint warn';
+      lk.textContent = '注意：目录内有 ' + pv.links_skipped + ' 个链接，不会被删除或进入。';
+      previewHost.appendChild(lk);
+    }
+    (pv.sample || []).forEach(function (s) {
+      const line = document.createElement('div');
+      line.className = 'hint';
+      line.textContent = '· ' + s.path + '　' + humanBytes(s.bytes) + '　' +
+        new Date(s.mtime * 1000).toLocaleString();
+      previewHost.appendChild(line);
+    });
+    if (pv.files > 20) {
+      const more = document.createElement('div');
+      more.className = 'hint';
+      more.textContent = '…（仅列出前 20 条，共 ' + pv.files + ' 个）';
+      previewHost.appendChild(more);
+    }
+    delBtn.disabled = !pv.files;
+    delBtn.textContent = pv.files ? ('确认删除 ' + pv.files + ' 个文件') : '确认删除';
+  }
+
+  previewBtn.addEventListener('click', async function () {
+    try {
+      const pv = await invoke('clean_preview', { target: target, policy: buildPolicy() });
+      renderPreview(pv);
+    } catch (e) {
+      toast('预演失败', e.message, 'error');
+    }
+  });
+
+  delBtn.addEventListener('click', async function () {
+    delBtn.disabled = true;
+    try {
+      const r = await invoke('clean_run', { target: target, policy: buildPolicy(), dryRun: false });
+      closeModal();
+      toast('清理完成', r.summary, r.skipped ? 'warn' : 'ok');
+      await refresh(true);
+    } catch (e) {
+      toast('清理失败', e.message, 'error');
+      delBtn.disabled = false;
+    }
+  });
+
+  openModal({
+    title: '清理文件夹',
+    body: body,
+    wide: true,
+    actions: [{ label: '关闭', onClick: closeModal }],
+  });
+}
+
+/** 工具栏「清理文件夹」：先选目录，再打开对话框。 */
+async function openCleanFolderDialog() {
+  let path = null;
+  try {
+    path = await invoke('pick_folder', { title: '选择要清理的文件夹', defaultPath: '' });
+  } catch (e) {
+    toast('打开选择框失败', e.message, 'error');
+    return;
+  }
+  if (!path) return;
+  await openCleanDialog({ kind: 'folder', path: path }, '目标文件夹：' + path);
+}
+
+// ---------------------------------------------------------------------------
 // 事件绑定（事件委托）
 // ---------------------------------------------------------------------------
 
@@ -1388,6 +1586,11 @@ document.addEventListener('click', async function (ev) {
     if (act === 'restore') { await runRestore([id]); return; }
     if (act === 'relink') { await doRelink(id); return; }
     if (act === 'locks') { await doLocks(id); return; }
+    if (act === 'clean') {
+      const r = state.snap.rules.find(function (x) { return x.id === id; });
+      await openCleanDialog({ kind: 'rule', id: id }, '规则：' + (r ? r.name : ('#' + id)));
+      return;
+    }
     if (act === 'edit') { await openRuleForm(id); return; }
     if (act === 'copy-source') {
       const r = state.snap.rules.find(function (x) { return x.id === id; });
@@ -1420,6 +1623,8 @@ document.addEventListener('click', async function (ev) {
   } else if (el.id === 'btn-locks') {
     if (!requirePicked('检测')) return;
     await doLocks(pickedIds()[0]);
+  } else if (el.id === 'btn-clean') {
+    await openCleanFolderDialog();
   } else if (el.id === 'btn-relink') {
     if (!requirePicked('重建')) return;
     for (const id of pickedIds()) await doRelink(id);
@@ -1657,6 +1862,26 @@ function createMockBackend() {
             { name: '用户 TEMP', category: 'system', source_template: '%LOCALAPPDATA%\\Temp', target_subpath: 'system\\user-temp', note: '体积最大也最容易被占用：应用时被占的文件会自动跳过', source: 'C:\\Users\\me\\AppData\\Local\\Temp', exists: true },
             { name: '微信网页缓存', category: 'office', source_template: '%APPDATA%\\Tencent\\xwechat\\radium\\web', target_subpath: 'office\\wechat-radium-web', note: '只迁这个子目录；整个 xwechat 里有聊天记录，切勿整体迁移', source: 'C:\\Users\\me\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web', exists: true },
           ]);
+        case 'clean_preview': {
+          const t = args.target || {};
+          return Promise.resolve({
+            dir: t.kind === 'folder' ? t.path : 'R:\\dev\\vscode-cache',
+            label: '（模拟）VS Code 缓存',
+            files: 1280, bytes: 536870912, bytes_text: '512.0 MB', links_skipped: 0,
+            sample: [
+              { path: 'Cache\\f1', bytes: 1048576, mtime: Math.floor(Date.now() / 1000) - 86400 * 3 },
+              { path: 'Cache\\f2', bytes: 2097152, mtime: Math.floor(Date.now() / 1000) - 3600 * 5 },
+            ],
+            summary: '1280 个文件 / 512.0 MB',
+          });
+        }
+        case 'clean_run':
+          return Promise.resolve({
+            dir: 'R:\\dev\\vscode-cache', label: '（模拟）VS Code 缓存',
+            deleted_files: 1280, deleted_bytes: 536870912, deleted_bytes_text: '512.0 MB',
+            dirs_pruned: 3, skipped: 2, skip_examples: ['f3', 'f4'], links_skipped: 0,
+            summary: '已删除 1280 个文件 / 512.0 MB，剪除 3 个空目录；2 个文件被占用或无权限已跳过（例如：f3；f4）',
+          });
         case 'inspect_source': {
           const tpl = String(args.template || '');
           const expanded = tpl.replace('%LOCALAPPDATA%', 'C:\\Users\\me\\AppData\\Local').replace('%APPDATA%', 'C:\\Users\\me\\AppData\\Roaming');

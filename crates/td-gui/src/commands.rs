@@ -229,6 +229,46 @@ pub fn check_locks(
 }
 
 // ---------------------------------------------------------------------------
+// 文件夹清理（预演 / 执行）
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn clean_preview(
+    state: State<'_, AppState>,
+    target: api::CleanTarget,
+    policy: td_core::fsops::clean::CleanPolicy,
+) -> R<api::CleanPreviewView> {
+    api::clean_preview(&*lock_store(&state)?, &target, &policy).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn clean_run(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    target: api::CleanTarget,
+    policy: td_core::fsops::clean::CleanPolicy,
+    dry_run: bool,
+) -> R<api::CleanResultView> {
+    let guard = lock_store(&state)?;
+    let app2 = app.clone();
+    let out = api::clean_run(&guard, &target, &policy, dry_run, &mut move |p| {
+        let _ = app2.emit(
+            EV_PROGRESS,
+            serde_json::json!({
+                "index": 0, "total": 1, "name": "清理文件夹",
+                "phase": progress_phase(p), "detail": progress_detail(p),
+            }),
+        );
+    })
+    .map_err(map_err)?;
+    let _ = app.emit(
+        EV_DONE,
+        serde_json::json!({ "kind": "clean", "ok": out.deleted_files, "failed": out.skipped }),
+    );
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
 // 开机重建 / 迁移 / 其它
 // ---------------------------------------------------------------------------
 
