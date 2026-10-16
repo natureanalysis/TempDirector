@@ -23,6 +23,7 @@ use windows_sys::Win32::Storage::FileSystem::{
 use windows_sys::Win32::System::IO::DeviceIoControl;
 
 use crate::error::{io_ctx, TdError, TdResult};
+use crate::i18n::{t, tf};
 use crate::link::detect::LinkType;
 use crate::util;
 
@@ -62,7 +63,7 @@ pub fn read_reparse_tag(path: &Path) -> TdResult<Option<u32>> {
             return Err(io_ctx(
                 std::io::Error::from_raw_os_error(GetLastError() as i32),
                 path,
-                "打开重解析点",
+                t("io.action.open_reparse"),
             ));
         }
 
@@ -88,7 +89,7 @@ pub fn read_reparse_tag(path: &Path) -> TdResult<Option<u32>> {
                 Err(io_ctx(
                     std::io::Error::from_raw_os_error(code as i32),
                     path,
-                    "读取重解析标记",
+                    t("io.action.read_reparse_tag"),
                 ))
             }
         };
@@ -108,7 +109,7 @@ pub fn is_reparse_point(path: &Path) -> bool {
 
 /// 读取链接目标（去掉 Windows 内部 `\??\` 前缀）。
 pub fn read_link_target(link: &Path) -> TdResult<PathBuf> {
-    let raw = fs::read_link(link).map_err(|e| io_ctx(e, link, crate::i18n::t("io.action.read_link_target")))?;
+    let raw = fs::read_link(link).map_err(|e| io_ctx(e, link, t("io.action.read_link_target")))?;
     let s = raw.to_string_lossy();
     let cleaned = s.strip_prefix(r"\??\").unwrap_or(&s);
     Ok(util::simplify(Path::new(cleaned)))
@@ -118,42 +119,37 @@ pub fn read_link_target(link: &Path) -> TdResult<PathBuf> {
 pub fn preflight(link: &Path, target: &Path, kind: LinkType) -> TdResult<()> {
     // 1. 链接位置必须空着。symlink_metadata 对死链也能成功，所以两件事都要查。
     if link.exists() || fs::symlink_metadata(link).is_ok() {
-        return Err(TdError::SafetyBlocked(format!(
-            "链接位置已被占用（可能是上次失败残留），请先处理：{}",
-            link.display()
-        )));
+        return Err(TdError::SafetyBlocked(tf("link.slot_occupied", &[
+            ("path", &link.display().to_string()),
+        ])));
     }
     if let Some(parent) = link.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
-            return Err(TdError::InvalidPath(format!(
-                "源目录的父目录不存在，请先创建：{}",
-                parent.display()
-            )));
+            return Err(TdError::InvalidPath(tf("link.parent_missing", &[
+                ("path", &parent.display().to_string()),
+            ])));
         }
     }
 
     // 2. 目标必须已经存在、是目录、且自身不是链接（禁止套娃）。
     let tmd = fs::symlink_metadata(target).map_err(|e| {
         if e.raw_os_error() == Some(2) {
-            TdError::InvalidPath(format!(
-                "目标目录不存在，请先重建 RAM 盘目录结构：{}",
-                target.display()
-            ))
+            TdError::InvalidPath(tf("link.target_missing", &[
+                ("path", &target.display().to_string()),
+            ]))
         } else {
-            io_ctx(e, target, crate::i18n::t("io.action.check_target"))
+            io_ctx(e, target, t("io.action.check_target"))
         }
     })?;
     if !tmd.is_dir() {
-        return Err(TdError::InvalidPath(format!(
-            "目标不是目录：{}",
-            target.display()
-        )));
+        return Err(TdError::InvalidPath(tf("link.target_not_dir", &[
+            ("path", &target.display().to_string()),
+        ])));
     }
     if tmd.file_type().is_symlink() {
-        return Err(TdError::SafetyBlocked(format!(
-            "目标自身是链接，拒绝套娃：{}",
-            target.display()
-        )));
+        return Err(TdError::SafetyBlocked(tf("link.target_is_link", &[
+            ("path", &target.display().to_string()),
+        ])));
     }
 
     // 3. 自环 / 互为祖先。
@@ -162,15 +158,16 @@ pub fn preflight(link: &Path, target: &Path, kind: LinkType) -> TdResult<()> {
     // 4. Junction 不能指向网络位置。
     if kind == LinkType::Junction {
         let root = util::volume_root(target).ok_or_else(|| {
-            TdError::InvalidPath(format!("无法确定目标所在卷：{}", target.display()))
+            TdError::InvalidPath(tf("link.no_volume", &[
+                ("path", &target.display().to_string()),
+            ]))
         })?;
         let wide = util::to_wide(&root);
         let dt = unsafe { GetDriveTypeW(wide.as_ptr()) };
         if dt == DRIVE_REMOTE {
-            return Err(TdError::InvalidPath(format!(
-                "Junction 不支持网络/映射盘目标（{}），请改用目录符号链接或本地卷",
-                target.display()
-            )));
+            return Err(TdError::InvalidPath(tf("link.junction_no_remote", &[
+                ("path", &target.display().to_string()),
+            ])));
         }
     }
     Ok(())
@@ -188,20 +185,20 @@ pub fn create_dir_link(link: &Path, target: &Path, kind: LinkType) -> TdResult<(
             // ⚠️ junction crate 的参数顺序是 (target, junction) —— 目标目录在前，链接路径在后。
             // 传反了会得到 `os error 183`（它去已经存在的目标目录上又建了一次目录）。
             junction::create(&target_v, &link_v).map_err(|e| {
-                TdError::Other(format!(
-                    "创建 Junction 失败：{e}（{} → {}）",
-                    link.display(),
-                    target.display()
-                ))
+                TdError::Other(tf("link.junction_failed", &[
+                    ("err", &e.to_string()),
+                    ("link", &link.display().to_string()),
+                    ("target", &target.display().to_string()),
+                ]))
             })?;
         }
         LinkType::Symlink => {
             std::os::windows::fs::symlink_dir(&target_v, &link_v).map_err(|e| match e.raw_os_error()
             {
                 Some(code) if code as u32 == ERROR_PRIVILEGE_NOT_HELD => TdError::ElevationRequired(
-                    "创建目录符号链接需要管理员权限或已开启开发者模式（错误 1314）".into(),
+                    t("link.symlink_needs_elevation").into(),
                 ),
-                _ => io_ctx(e, link, crate::i18n::t("io.action.create_symlink")),
+                _ => io_ctx(e, link, t("io.action.create_symlink")),
             })?;
         }
     }
@@ -216,19 +213,19 @@ pub fn create_dir_link(link: &Path, target: &Path, kind: LinkType) -> TdResult<(
     };
     if tag != Some(expect) {
         let _ = fs::remove_dir(link);
-        return Err(TdError::VerifyFailed(format!(
-            "建链自检失败：重解析标记为 {tag:?}，期望 {expect:#010x}（{}）",
-            link.display()
-        )));
+        return Err(TdError::VerifyFailed(tf("link.verify_tag_mismatch", &[
+            ("tag", &format!("{tag:?}")),
+            ("expect", &format!("{expect:#010x}")),
+            ("path", &link.display().to_string()),
+        ])));
     }
     let actual = read_link_target(link)?;
     if !util::path_eq(&actual, target) {
         let _ = fs::remove_dir(link);
-        return Err(TdError::VerifyFailed(format!(
-            "建链自检失败：实际指向 {}，期望 {}",
-            actual.display(),
-            target.display()
-        )));
+        return Err(TdError::VerifyFailed(tf("link.verify_target_mismatch", &[
+            ("actual", &actual.display().to_string()),
+            ("target", &target.display().to_string()),
+        ])));
     }
     Ok(())
 }
@@ -240,27 +237,24 @@ pub fn create_dir_link(link: &Path, target: &Path, kind: LinkType) -> TdResult<(
 /// 就会把 RAM 盘里的真实缓存数据整个删掉。
 pub fn remove_dir_link(link: &Path) -> TdResult<PathBuf> {
     let md = fs::symlink_metadata(link)
-        .map_err(|e| io_ctx(e, link, crate::i18n::t("io.action.read_link_status")))?;
+        .map_err(|e| io_ctx(e, link, t("io.action.read_link_status")))?;
     if !md.file_type().is_symlink() {
-        return Err(TdError::SafetyBlocked(format!(
-            "拒绝操作：{} 不是链接，而是一个真实的{}。\
-             为防误删，请人工确认后再处理。",
-            link.display(),
-            if md.is_dir() { "目录" } else { "文件" }
-        )));
+        let key = if md.is_dir() { "link.not_a_link_dir" } else { "link.not_a_link_file" };
+        return Err(TdError::SafetyBlocked(tf(key, &[
+            ("path", &link.display().to_string()),
+        ])));
     }
     let target = read_link_target(link)?;
 
     fs::remove_dir(link).map_err(|e| match e.raw_os_error() {
-        Some(code) if code as u32 == ERROR_SHARING_VIOLATION => TdError::Busy(format!(
-            "链接被进程占用，无法删除（通常是某个程序的工作目录指向这里）：{}",
-            link.display()
+        Some(code) if code as u32 == ERROR_SHARING_VIOLATION => TdError::Busy(tf("link.busy", &[
+            ("path", &link.display().to_string()),
+        ])),
+        Some(code) if code as u32 == ERROR_ACCESS_DENIED => TdError::ElevationRequired(tf(
+            "link.delete_denied",
+            &[("path", &link.display().to_string())],
         )),
-        Some(code) if code as u32 == ERROR_ACCESS_DENIED => TdError::ElevationRequired(format!(
-            "删除链接被拒绝（需要管理员权限）：{}",
-            link.display()
-        )),
-        _ => io_ctx(e, link, crate::i18n::t("io.action.delete_link")),
+        _ => io_ctx(e, link, t("io.action.delete_link")),
     })?;
     Ok(target)
 }
@@ -270,7 +264,7 @@ pub fn ensure_dir(path: &Path) -> TdResult<bool> {
     if path.exists() {
         return Ok(false);
     }
-    fs::create_dir_all(util::to_verbatim(path)).map_err(|e| io_ctx(e, path, crate::i18n::t("io.action.create_dir")))?;
+    fs::create_dir_all(util::to_verbatim(path)).map_err(|e| io_ctx(e, path, t("io.action.create_dir")))?;
     Ok(true)
 }
 
