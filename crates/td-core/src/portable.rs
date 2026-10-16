@@ -13,6 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{TdError, TdResult};
+use crate::i18n::{t, tf};
 use crate::store::{NewRule, Store};
 
 pub const FORMAT_VERSION: i32 = 1;
@@ -91,15 +92,14 @@ pub struct ImportReport {
 
 impl ImportReport {
     pub fn one_line(&self) -> String {
-        format!(
-            "{}目标根：新建 {}，复用 {}；规则：新建 {}，跳过 {}，错误 {}",
-            if self.dry_run { "[预演] " } else { "" },
-            self.roots_created,
-            self.roots_reused,
-            self.rules_created,
-            self.rules_skipped,
-            self.errors.len()
-        )
+        tf("portable.summary", &[
+            ("prefix", if self.dry_run { t("portable.dry_prefix") } else { "" }),
+            ("roots_new", &self.roots_created.to_string()),
+            ("roots_reuse", &self.roots_reused.to_string()),
+            ("rules_new", &self.rules_created.to_string()),
+            ("rules_skip", &self.rules_skipped.to_string()),
+            ("errors", &self.errors.len().to_string()),
+        ])
     }
 }
 
@@ -165,10 +165,10 @@ pub fn import_bundle(
     dry_run: bool,
 ) -> TdResult<ImportReport> {
     if bundle.schema > FORMAT_VERSION {
-        return Err(TdError::Other(format!(
-            "配置版本 {} 高于本程序支持的版本 {FORMAT_VERSION}，请升级 TempDirector",
-            bundle.schema
-        )));
+        return Err(TdError::Other(tf("portable.version_too_high", &[
+            ("ver", &bundle.schema.to_string()),
+            ("max", &FORMAT_VERSION.to_string()),
+        ])));
     }
 
     let mut report = ImportReport {
@@ -184,7 +184,9 @@ pub fn import_bundle(
             _ => br.path.clone(),
         };
         if path.trim().is_empty() {
-            report.errors.push(format!("目标根 {} 的路径为空", br.root_ref));
+            report.errors.push(tf("portable.root_path_empty", &[
+                ("ref", &br.root_ref),
+            ]));
             continue;
         }
         let existing = store.list_roots()?.into_iter().find(|r| {
@@ -216,7 +218,10 @@ pub fn import_bundle(
             None => {
                 report
                     .errors
-                    .push(format!("规则「{}」引用了未知的目标根 {}", br.name, br.root_ref));
+                    .push(tf("portable.unknown_root", &[
+                        ("name", &br.name),
+                        ("ref", &br.root_ref),
+                    ]));
                 continue;
             }
         };
@@ -250,7 +255,11 @@ pub fn import_bundle(
                 report.rules_skipped += 1;
                 report
                     .errors
-                    .push(format!("第 {} 条规则「{}」未导入：{e}", idx + 1, br.name));
+                    .push(tf("portable.rule_import_failed", &[
+                        ("idx", &(idx + 1).to_string()),
+                        ("name", &br.name),
+                        ("err", &e.to_string()),
+                    ]));
             }
         }
     }

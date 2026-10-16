@@ -25,6 +25,7 @@ use crate::boot::acl;
 use crate::engine::{self, rule_link_type};
 use crate::error::TdResult;
 use crate::fsops::mover::Progress;
+use crate::i18n::{t, tf};
 use crate::link::create::{create_dir_link, ensure_dir};
 use crate::link::detect::{detect_link, LinkState};
 use crate::store::{Root, Rule, Store};
@@ -108,7 +109,7 @@ pub fn run_boot_rebuild(store: &Store) -> TdResult<BootReport> {
         };
 
         if !unknown.is_empty() {
-            let msg = format!("路径里的环境变量无法解析：{}", unknown.join("、"));
+            let msg = tf("boot.bad_path", &[("vars", &unknown.join("、"))]);
             outcome.error = Some(msg.clone());
             let _ = store.log_event(None, "error", "root_bad_path", &msg);
             report.roots.push(outcome);
@@ -127,7 +128,10 @@ pub fn run_boot_rebuild(store: &Store) -> TdResult<BootReport> {
                     None,
                     "info",
                     "root_ready",
-                    &format!("{} 就绪（等待 {:.1}s）", path.display(), waited.as_secs_f64()),
+                    &tf("boot.root_ready", &[
+                        ("path", &path.display().to_string()),
+                        ("secs", &format!("{:.1}", waited.as_secs_f64())),
+                    ]),
                 );
             }
             Err(e) => {
@@ -174,7 +178,10 @@ pub fn run_boot_rebuild(store: &Store) -> TdResult<BootReport> {
                 if created {
                     report.dirs_created += 1;
                 }
-                report.warnings.push(format!("{}：{w}", rule.name));
+                report.warnings.push(tf("boot.warning", &[
+                    ("name", &rule.name),
+                    ("msg", &w),
+                ]));
             }
             Err(e) => report.failed.push((rule.id, e.to_string())),
         }
@@ -203,17 +210,18 @@ fn rebuild_one(store: &Store, rule: &Rule, root: &Root) -> TdResult<(bool, Rebui
     if !r.unknown_vars.is_empty() {
         return Ok((
             false,
-            RebuildAction::NeedsAttention(format!(
-                "环境变量无法解析：{}（这条规则可能属于其他用户）",
-                r.unknown_vars.join("、")
-            )),
+            RebuildAction::NeedsAttention(tf("boot.unresolved_vars", &[
+                ("vars", &r.unknown_vars.join("、")),
+            ])),
         ));
     }
     let (root_path, _) = root.resolved_path();
     if !root_path.exists() {
         return Ok((
             false,
-            RebuildAction::NeedsAttention(format!("目标根不可用：{}", root_path.display())),
+            RebuildAction::NeedsAttention(tf("boot.root_unavailable", &[
+                ("path", &root_path.display().to_string()),
+            ])),
         ));
     }
 
@@ -223,7 +231,12 @@ fn rebuild_one(store: &Store, rule: &Rule, root: &Root) -> TdResult<(bool, Rebui
     // 需要提权的规则：把首次重定向时导出的 DACL 贴回去
     if let Some(sddl) = rule.acl_sddl.as_deref() {
         if let Err(e) = acl::apply_sddl(&r.target, sddl) {
-            store.log_event(Some(rule.id), "warn", "acl_failed", &format!("{}：{e}", rule.name))?;
+            store.log_event(
+                Some(rule.id),
+                "warn",
+                "acl_failed",
+                &tf("boot.acl_failed", &[("name", &rule.name), ("err", &e.to_string())]),
+            )?;
         }
     }
 
@@ -254,19 +267,19 @@ fn rebuild_one(store: &Store, rule: &Rule, root: &Root) -> TdResult<(bool, Rebui
             } else {
                 Ok((
                     created,
-                    RebuildAction::NeedsAttention("源目录及其父目录都不存在（软件可能未安装）".into()),
+                    RebuildAction::NeedsAttention(t("boot.source_and_parent_missing").into()),
                 ))
             }
         }
         LinkState::PlainDir => Ok((
             created,
-            RebuildAction::NeedsAttention(
-                "源路径已变回真实目录（可能被软件更新覆盖），未自动处理，请在界面上重新应用".into(),
-            ),
+            RebuildAction::NeedsAttention(t("boot.source_became_plain").into()),
         )),
         LinkState::ForeignReparse { tag } => Ok((
             created,
-            RebuildAction::NeedsAttention(format!("源路径是外来重解析点（tag {tag:#010x}）")),
+            RebuildAction::NeedsAttention(tf("boot.foreign_reparse", &[
+                ("tag", &format!("{tag:#010x}")),
+            ])),
         )),
         other => Ok((created, RebuildAction::NeedsAttention(other.label()))),
     }
