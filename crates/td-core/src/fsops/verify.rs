@@ -134,11 +134,11 @@ pub fn hash_tree(dir: &Path) -> TdResult<String> {
         hasher.update([0u8]);
         let abs = Path::new(dir).join(rel.replace('\\', "/"));
         let mut f = fs::File::open(util::to_verbatim(&abs))
-            .map_err(|e| io_ctx(e, &abs, "读取待哈希文件"))?;
+            .map_err(|e| io_ctx(e, &abs, crate::i18n::t("io.action.read_hash_file")))?;
         loop {
             let n = f
                 .read(&mut buf)
-                .map_err(|e| io_ctx(e, &abs, "读取待哈希文件"))?;
+                .map_err(|e| io_ctx(e, &abs, crate::i18n::t("io.action.read_hash_file")))?;
             if n == 0 {
                 break;
             }

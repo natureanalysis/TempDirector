@@ -108,7 +108,7 @@ pub fn is_reparse_point(path: &Path) -> bool {
 
 /// 读取链接目标（去掉 Windows 内部 `\??\` 前缀）。
 pub fn read_link_target(link: &Path) -> TdResult<PathBuf> {
-    let raw = fs::read_link(link).map_err(|e| io_ctx(e, link, "读取链接目标"))?;
+    let raw = fs::read_link(link).map_err(|e| io_ctx(e, link, crate::i18n::t("io.action.read_link_target")))?;
     let s = raw.to_string_lossy();
     let cleaned = s.strip_prefix(r"\??\").unwrap_or(&s);
     Ok(util::simplify(Path::new(cleaned)))
@@ -140,7 +140,7 @@ pub fn preflight(link: &Path, target: &Path, kind: LinkType) -> TdResult<()> {
                 target.display()
             ))
         } else {
-            io_ctx(e, target, "检查目标目录")
+            io_ctx(e, target, crate::i18n::t("io.action.check_target"))
         }
     })?;
     if !tmd.is_dir() {
@@ -201,7 +201,7 @@ pub fn create_dir_link(link: &Path, target: &Path, kind: LinkType) -> TdResult<(
                 Some(code) if code as u32 == ERROR_PRIVILEGE_NOT_HELD => TdError::ElevationRequired(
                     "创建目录符号链接需要管理员权限或已开启开发者模式（错误 1314）".into(),
                 ),
-                _ => io_ctx(e, link, "创建目录符号链接"),
+                _ => io_ctx(e, link, crate::i18n::t("io.action.create_symlink")),
             })?;
         }
     }
@@ -240,7 +240,7 @@ pub fn create_dir_link(link: &Path, target: &Path, kind: LinkType) -> TdResult<(
 /// 就会把 RAM 盘里的真实缓存数据整个删掉。
 pub fn remove_dir_link(link: &Path) -> TdResult<PathBuf> {
     let md = fs::symlink_metadata(link)
-        .map_err(|e| io_ctx(e, link, "读取链接状态（可能链接已不存在）"))?;
+        .map_err(|e| io_ctx(e, link, crate::i18n::t("io.action.read_link_status")))?;
     if !md.file_type().is_symlink() {
         return Err(TdError::SafetyBlocked(format!(
             "拒绝操作：{} 不是链接，而是一个真实的{}。\
@@ -260,7 +260,7 @@ pub fn remove_dir_link(link: &Path) -> TdResult<PathBuf> {
             "删除链接被拒绝（需要管理员权限）：{}",
             link.display()
         )),
-        _ => io_ctx(e, link, "删除链接"),
+        _ => io_ctx(e, link, crate::i18n::t("io.action.delete_link")),
     })?;
     Ok(target)
 }
@@ -270,7 +270,7 @@ pub fn ensure_dir(path: &Path) -> TdResult<bool> {
     if path.exists() {
         return Ok(false);
     }
-    fs::create_dir_all(util::to_verbatim(path)).map_err(|e| io_ctx(e, path, "创建目录"))?;
+    fs::create_dir_all(util::to_verbatim(path)).map_err(|e| io_ctx(e, path, crate::i18n::t("io.action.create_dir")))?;
     Ok(true)
 }
 

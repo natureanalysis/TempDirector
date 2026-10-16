@@ -109,7 +109,7 @@ pub fn apply_sddl(path: &Path, sddl: &str) -> TdResult<()> {
         LocalFree(sd);
         if applied == 0 {
             let e = std::io::Error::last_os_error();
-            return Err(io_ctx(e, path, "回灌目录权限"));
+            return Err(io_ctx(e, path, crate::i18n::t("io.action.restore_acl")));
         }
     }
     Ok(())

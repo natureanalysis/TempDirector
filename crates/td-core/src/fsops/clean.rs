@@ -183,7 +183,7 @@ fn walk_files(
     links_skipped: &mut u64,
     excluded_skipped: &mut u64,
 ) -> TdResult<Vec<Candidate>> {
-    let root_md = fs::symlink_metadata(dir).map_err(|e| io_ctx(e, dir, "读取目录"))?;
+    let root_md = fs::symlink_metadata(dir).map_err(|e| io_ctx(e, dir, crate::i18n::t("io.action.read_dir")))?;
     if root_md.file_type().is_symlink() {
         return Err(TdError::SafetyBlocked(format!(
             "该目录本身是链接（联接/符号链接），请清理它指向的真实目录：{}",

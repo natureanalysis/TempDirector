@@ -115,7 +115,7 @@ pub fn run_elevated_wait(exe: &Path, args: &str) -> TdResult<u32> {
             Some(1223) => Err(TdError::Other(
                 "提权被取消：你在 UAC 弹窗上点了「否」。这条操作需要管理员权限。".into(),
             )),
-            _ => Err(io_ctx(e, exe, "请求管理员权限")),
+            _ => Err(io_ctx(e, exe, crate::i18n::t("io.action.elev_request"))),
         };
     }
 

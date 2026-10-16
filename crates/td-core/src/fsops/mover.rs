@@ -90,7 +90,7 @@ pub fn free_space(path: &Path) -> TdResult<u64> {
         return Err(io_ctx(
             std::io::Error::last_os_error(),
             path,
-            "查询可用空间",
+            crate::i18n::t("io.action.query_free_space"),
         ));
     }
     Ok(free)
@@ -116,7 +116,7 @@ pub fn volume_space(path: &Path) -> TdResult<(u64, u64)> {
         return Err(io_ctx(
             std::io::Error::last_os_error(),
             path,
-            "查询卷容量",
+            crate::i18n::t("io.action.query_volume"),
         ));
     }
     Ok((total, free))
@@ -158,7 +158,7 @@ pub fn move_tree(
 ) -> TdResult<MoveReport> {
     let started = std::time::Instant::now();
 
-    let md = fs::symlink_metadata(src).map_err(|e| io_ctx(e, src, "读取源目录"))?;
+    let md = fs::symlink_metadata(src).map_err(|e| io_ctx(e, src, crate::i18n::t("io.action.read_source")))?;
     if md.file_type().is_symlink() {
         return Err(TdError::SafetyBlocked(format!(
             "源目录已经是链接，不需要搬运：{}",
@@ -190,7 +190,7 @@ pub fn move_tree(
         }
     } else if let Some(parent) = dst.parent() {
         fs::create_dir_all(util::to_verbatim(parent))
-            .map_err(|e| io_ctx(e, parent, "创建目标父目录"))?;
+            .map_err(|e| io_ctx(e, parent, crate::i18n::t("io.action.create_parent")))?;
     }
 
     // 预扫描：外来重解析点 → 立刻失败，此时什么都还没动。
@@ -215,14 +215,14 @@ pub fn move_tree(
         if dst.exists() {
             // 只删空目录，不用 remove_dir_all
             fs::remove_dir(util::to_verbatim(dst))
-                .map_err(|e| io_ctx(e, dst, "清理空目标目录"))?;
+                .map_err(|e| io_ctx(e, dst, crate::i18n::t("io.action.clean_empty_target")))?;
         }
         sink(Progress::Renaming {
             from: src.display().to_string(),
             to: dst.display().to_string(),
         });
         fs::rename(util::to_verbatim(src), util::to_verbatim(dst))
-            .map_err(|e| io_ctx(e, src, "同卷重命名"))?;
+            .map_err(|e| io_ctx(e, src, crate::i18n::t("io.action.rename")))?;
         sink(Progress::Done {
             files: stats.files,
             bytes: stats.bytes,
@@ -291,7 +291,7 @@ pub fn move_tree(
 pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<(u64, u64)> {
     let src_v = util::to_verbatim(src);
     let dst_v = util::to_verbatim(dst);
-    fs::create_dir_all(&dst_v).map_err(|e| io_ctx(e, dst, "创建目标目录"))?;
+    fs::create_dir_all(&dst_v).map_err(|e| io_ctx(e, dst, crate::i18n::t("io.action.create_target")))?;
 
     let mut files = 0u64;
     let mut bytes = 0u64;
@@ -349,13 +349,13 @@ pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdRe
         }
 
         if ft.is_dir() {
-            fs::create_dir_all(&to).map_err(|e| io_ctx(e, entry.path(), "创建子目录"))?;
+            fs::create_dir_all(&to).map_err(|e| io_ctx(e, entry.path(), crate::i18n::t("io.action.create_subdir")))?;
             continue;
         }
 
         if ft.is_file() {
             let n = fs::copy(entry.path(), &to)
-                .map_err(|e| io_ctx(e, entry.path(), "复制文件"))?;
+                .map_err(|e| io_ctx(e, entry.path(), crate::i18n::t("io.action.copy_file")))?;
             files += 1;
             bytes += n;
 
@@ -390,7 +390,7 @@ pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdRe
 /// * 子项是重解析点 → 只删链接条目本身，**不跟随**。
 /// * 只读文件先清掉只读属性再删（Windows 上只读文件无法直接删除）。
 pub fn delete_tree(dir: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<u64> {
-    let md = fs::symlink_metadata(dir).map_err(|e| io_ctx(e, dir, "读取待删除目录"))?;
+    let md = fs::symlink_metadata(dir).map_err(|e| io_ctx(e, dir, crate::i18n::t("io.action.read_delete_dir")))?;
     if md.file_type().is_symlink() {
         return Err(TdError::SafetyBlocked(format!(
             "拒绝递归删除重解析点（这是链接，请用删除链接的接口）：{}",
@@ -567,7 +567,7 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
         }
 
         if ft.is_dir() {
-            fs::create_dir_all(&to).map_err(|e| io_ctx(e, entry.path(), "创建子目录"))?;
+            fs::create_dir_all(&to).map_err(|e| io_ctx(e, entry.path(), crate::i18n::t("io.action.create_subdir")))?;
             continue;
         }
 
@@ -598,7 +598,7 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
             }
 
             let n = fs::copy(entry.path(), &to)
-                .map_err(|e| io_ctx(e, entry.path(), "合并文件"))?;
+                .map_err(|e| io_ctx(e, entry.path(), crate::i18n::t("io.action.merge_file")))?;
             report.bytes += n;
 
             if let Some(md) = src_md {
