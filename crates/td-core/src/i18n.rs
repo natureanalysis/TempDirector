@@ -292,6 +292,10 @@ fn zh(key: &str) -> &'static str {
         "preset.parse_failed" => "presets.json 解析失败，已忽略：{err}",
         "preset.skipped" => "预设「{name}」已跳过：{err}",
         "preset.warn_prefix" => "TempDirector 预设：{msg}",
+        "exclude.too_many" => "排除模式最多 {max} 条",
+        "exclude.empty" => "排除模式不能为空",
+        "exclude.too_long" => "排除模式过长（>{max} 字符）：{pat}",
+        "exclude.no_parent" => "排除模式里不允许 ..（模式只匹配相对路径）：{pat}",
         _ => "",
     }
 }
@@ -499,6 +503,10 @@ fn en(key: &str) -> &'static str {
         "preset.parse_failed" => "presets.json parse failed, ignored: {err}",
         "preset.skipped" => "Preset \"{name}\" skipped: {err}",
         "preset.warn_prefix" => "TempDirector preset: {msg}",
+        "exclude.too_many" => "At most {max} exclude patterns allowed",
+        "exclude.empty" => "Exclude pattern cannot be empty",
+        "exclude.too_long" => "Exclude pattern too long (>{max} chars): {pat}",
+        "exclude.no_parent" => ".. is not allowed in exclude patterns (patterns match relative paths only): {pat}",
         _ => "",
     }
 }

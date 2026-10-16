@@ -20,6 +20,7 @@
 //! 收窄到纯缓存子目录，而不是依赖排除。
 
 use crate::error::{TdError, TdResult};
+use crate::i18n::{t, tf};
 
 /// 单条模式的最大长度与单规则的模式数上限（防表单塞垃圾）。
 const MAX_PATTERN_LEN: usize = 120;
@@ -36,26 +37,27 @@ pub struct Excludes {
 impl Excludes {
     pub fn new(patterns: &[String]) -> TdResult<Self> {
         if patterns.len() > MAX_PATTERNS {
-            return Err(TdError::InvalidPath(format!(
-                "排除模式最多 {MAX_PATTERNS} 条"
-            )));
+            return Err(TdError::InvalidPath(tf("exclude.too_many", &[
+                ("max", &MAX_PATTERNS.to_string()),
+            ])));
         }
         let mut ex = Excludes::default();
         for p in patterns {
             let norm = p.trim().replace('\\', "/");
             if norm.is_empty() {
-                return Err(TdError::InvalidPath("排除模式不能为空".into()));
+                return Err(TdError::InvalidPath(t("exclude.empty").into()));
             }
             if norm.len() > MAX_PATTERN_LEN {
-                return Err(TdError::InvalidPath(format!(
-                    "排除模式过长（>{MAX_PATTERN_LEN} 字符）：{p}"
-                )));
+                return Err(TdError::InvalidPath(tf("exclude.too_long", &[
+                    ("max", &MAX_PATTERN_LEN.to_string()),
+                    ("pat", p),
+                ])));
             }
             let segs: Vec<&str> = norm.split('/').collect();
             if segs.contains(&"..") {
-                return Err(TdError::InvalidPath(format!(
-                    "排除模式里不允许 ..（模式只匹配相对路径）：{p}"
-                )));
+                return Err(TdError::InvalidPath(tf("exclude.no_parent", &[
+                    ("pat", p),
+                ])));
             }
             if segs.len() == 1 {
                 ex.names.push(norm);
