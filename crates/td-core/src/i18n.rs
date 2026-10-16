@@ -400,6 +400,10 @@ fn zh(key: &str) -> &'static str {
         "schedule.bad_rule_policy" => "规则「{name}」的自动清理策略不合法：{s}，已跳过（可用：empty / older:<秒>）",
         "schedule.log" => "定时清理：{n} 条预授权规则，删除 {files} 个文件 / {size}{failed}",
         "schedule.failed_suffix" => "，{n} 条失败",
+        "cli.elevated_usage" => "用法：tempdirector elevated <job.json>",
+        "cli.mkdir_failed" => "创建数据目录失败：{err}",
+        "cli.unknown_cmd" => "未知命令：{cmd}",
+        "cli.error_prefix" => "❌ {err}",
         _ => "",
     }
 }
@@ -715,6 +719,10 @@ fn en(key: &str) -> &'static str {
         "schedule.bad_rule_policy" => "Rule \"{name}\" has invalid auto-clean policy: {s}, skipped (valid: empty / older:<seconds>)",
         "schedule.log" => "Scheduled clean: {n} pre-authorized rules, deleted {files} files / {size}{failed}",
         "schedule.failed_suffix" => ", {n} failed",
+        "cli.elevated_usage" => "Usage: tempdirector elevated <job.json>",
+        "cli.mkdir_failed" => "Failed to create data directory: {err}",
+        "cli.unknown_cmd" => "Unknown command: {cmd}",
+        "cli.error_prefix" => "❌ {err}",
         _ => "",
     }
 }

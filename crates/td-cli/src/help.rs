@@ -1,6 +1,15 @@
 //! 帮助文本。
 
+use td_core::i18n::{locale, Locale};
+
 pub(crate) fn print_help() {
+    match locale() {
+        Locale::Zh => print_help_zh(),
+        Locale::En => print_help_en(),
+    }
+}
+
+fn print_help_zh() {
     println!(
         r#"TempDirector —— 把软件缓存目录重定向到 RAM 盘的软链接管理器
 
@@ -8,6 +17,7 @@ pub(crate) fn print_help() {
 
 全局参数：
   --data-dir <路径>          覆盖数据目录（等效环境变量 TEMPDIRECTOR_DATA_DIR）
+  --lang zh|en               界面语言（等效环境变量 TEMPDIRECTOR_LANG）
 
 === 概览 ===
   doctor                     环境自检：数据目录、链接能力、目标盘、水位、规则状态、待修复项
@@ -19,11 +29,11 @@ pub(crate) fn print_help() {
   roots rm <id>
   volume <R: 或 R:\Dir> [--timeout 毫秒]     探测 / 等待卷就绪
    water [--json]                             RAM 盘水位巡检（级别变化才落事件，
-                                              阈值默认 85%/95%，settings 的
-                                              water_warn_pct / water_critical_pct 可覆盖）
+                                               阈值默认 85%/95%，settings 的
+                                               water_warn_pct / water_critical_pct 可覆盖）
    water sweep <策略> [--yes]                 水位一键清理：全部规则按统一策略批量
-                                              预演/执行（策略与 clean 相同：
-                                              --empty / --yesterday / --older-than 1h …）
+                                               预演/执行（策略与 clean 相同：
+                                               --empty / --yesterday / --older-than 1h …）
 
 === 规则 ===
   rules list [--enabled] [--category 分类] [--search 关键词] [--json]
@@ -81,6 +91,93 @@ pub(crate) fn print_help() {
   tempdirector restore 1
   tempdirector clean 3 --older-than 1d          预演：规则#3 真实目录里 1 天前的文件
   tempdirector clean 3 --older-than 1d --yes    确认后执行删除
+  tempdirector autostart enable
+"#
+    );
+}
+
+fn print_help_en() {
+    println!(
+        r#"TempDirector — redirect software cache directories to a RAM disk via directory links
+
+Usage: tempdirector <command> [options] [--json]
+
+Global options:
+  --data-dir <path>          Override data directory (equivalent to env var TEMPDIRECTOR_DATA_DIR)
+  --lang zh|en               UI language (equivalent to env var TEMPDIRECTOR_LANG)
+
+=== Overview ===
+  doctor                     Environment self-check: data dir, link capability, target disk, water level, rule status, pending repairs
+  version                    Version information
+
+=== Target roots (RAM disk) ===
+  roots list
+  roots add <name> <path> [--timeout ms] [--hdd]
+  roots rm <id>
+  volume <R: or R:\Dir> [--timeout ms]        Probe / wait for volume to be ready
+   water [--json]                             RAM disk water level patrol (events only on level change;
+                                               thresholds default 85%/95%, overridable via settings
+                                               water_warn_pct / water_critical_pct)
+   water sweep <policy> [--yes]               One-click water cleanup: batch dry-run/execute all rules
+                                               with a unified policy (same as clean:
+                                               --empty / --yesterday / --older-than 1h …)
+
+=== Rules ===
+  rules list [--enabled] [--category cat] [--search keyword] [--json]
+  rules add <name> <source-template> <target-subpath> [--root id] [--category cat]
+            [--link-type junction|symlink_dir] [--enable] [--no-boot] [--notes note]
+            [--exclude pattern]                     Subdirs/files to skip during clean; can repeat
+                                                 e.g. --exclude sessions --exclude "logs\\old"
+            [--auto-clean policy]                  Pre-authorized cleanup when water hits critical (default 95%):
+                                                 empty (clear all) / older:<seconds> (only files modified before that),
+                                                 e.g. --auto-clean older:86400; default = no auto-clean
+  rules rm <id...>
+  rules enable|disable <id...|--all>
+
+=== Inspection & operations ===
+  status [--enabled|--all] [--category cat] [--search keyword] [--no-persist] [--json]
+  locks <rule-id|dir-path> [--json]          Detect occupancy and identify which process holds it
+  clean <rule-id|dir-path> <policy> [--yes] [--json]
+        Clean a folder (permanent deletion; dry-run by default, add --yes to execute)
+        Policy (pick one):
+          --empty                        Clear all files
+          --yesterday                    Modified yesterday or earlier (before local midnight)
+          --older-than <duration>        Older than a moment, e.g. 1h / 30m / 7d / today / Unix-seconds
+          --from <time> --to <time>      Time range [from,to), e.g. --from 7d --to 1d
+  apply <id...|--all> [--dry-run] [--merge] [--sha256] [--skip-lock-check]
+  restore <id...|--all> [--dry-run] [--sha256]
+  relink <id>                                Rebuild link only (no data movement)
+
+=== Boot rebuild ===
+  boot-rebuild [--json]
+  autostart status                           Check whether the "rebuild at logon" task is registered
+  autostart enable [--exe <path>]            Register (user-level, no administrator required)
+  autostart disable
+  autostart run                              Trigger manually once to verify configuration
+
+=== Elevated worker (usually not called manually) ===
+  elevated <job.json>                        Execute a job as administrator (rule IDs only, no paths)
+
+=== Config migration ===
+  export <file.json>
+  import <file.json> [--dry-run] [--ram-root R:]
+
+=== Audit ===
+  events [--limit N]
+  ops [--limit N]                            Operation log (including pending repairs)
+  stats [--json]                             Benefit stats: redirect scale / cumulative moves / cumulative cleans
+
+Category values: browser / design / dev / system / media / office / game / other
+
+Examples:
+  tempdirector roots add RAMDisk R:
+  tempdirector rules add "Chrome cache" "%LOCALAPPDATA%\Google\Chrome\User Data\Default\Cache" browsers\chrome-cache --category browser --enable
+  tempdirector status --all
+  tempdirector apply --all --dry-run
+  tempdirector apply 1
+  tempdirector restore 1
+  tempdirector clean 3 --older-than 1d          Dry-run: files older than 1 day in rule #3's real directory
+  tempdirector clean 3 --older-than 1d --yes    Confirm and execute deletion
   tempdirector autostart enable
 "#
     );

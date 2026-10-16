@@ -11,6 +11,7 @@
 
 use std::process::ExitCode;
 
+use td_core::i18n::{set_locale, t, tf, Locale};
 use td_core::paths;
 use td_core::store::Store;
 use td_core::{TdError, TdResult};
@@ -30,7 +31,8 @@ fn run() -> TdResult<()> {
         return Ok(());
     }
 
-    // `--data-dir` 允许放在任何位置：先扫一遍再决定数据根。
+    // `--data-dir` 和 `--lang` 允许放在任何位置：先扫一遍再决定数据根与语言。
+    let mut lang_seen = false;
     let mut i = 0;
     while i < argv.len() {
         if argv[i] == "--data-dir" {
@@ -39,8 +41,29 @@ fn run() -> TdResult<()> {
             }
         } else if let Some(v) = argv[i].strip_prefix("--data-dir=") {
             std::env::set_var(paths::DATA_DIR_ENV, v);
+        } else if argv[i] == "--lang" {
+            if let Some(v) = argv.get(i + 1) {
+                if let Some(lc) = Locale::parse(v) {
+                    set_locale(lc);
+                    lang_seen = true;
+                }
+            }
+        } else if let Some(v) = argv[i].strip_prefix("--lang=") {
+            if let Some(lc) = Locale::parse(v) {
+                set_locale(lc);
+                lang_seen = true;
+            }
         }
         i += 1;
+    }
+
+    // 环境变量 TEMPDIRECTOR_LANG 优先级低于 --lang，仅当未指定 --lang 时回退。
+    if !lang_seen {
+        if let Ok(v) = std::env::var("TEMPDIRECTOR_LANG") {
+            if let Some(lc) = Locale::parse(&v) {
+                set_locale(lc);
+            }
+        }
     }
 
     let cmd = argv[0].as_str();
@@ -57,12 +80,13 @@ fn run() -> TdResult<()> {
     if cmd == "elevated" {
         let job = argv
             .get(1)
-            .ok_or_else(|| TdError::Other("用法：tempdirector elevated <job.json>".into()))?;
+            .ok_or_else(|| TdError::Other(t("cli.elevated_usage").into()))?;
         let code = td_core::worker::run_job_to_exit_code(std::path::Path::new(job));
         std::process::exit(code);
     }
 
-    paths::ensure_dirs().map_err(|e| TdError::Other(format!("创建数据目录失败：{e}")))?;
+    paths::ensure_dirs()
+        .map_err(|e| TdError::Other(tf("cli.mkdir_failed", &[("err", &e.to_string())])))?;
     let store = Store::open_default()?;
 
     let rest: Vec<String> = argv[1..].to_vec();
@@ -89,7 +113,7 @@ fn run() -> TdResult<()> {
         "stats" => cmds::status::cmd_stats(&store, &p),
         other => {
             help::print_help();
-            Err(TdError::Other(format!("未知命令：{other}")))
+            Err(TdError::Other(tf("cli.unknown_cmd", &[("cmd", other)])))
         }
     }
 }
@@ -105,7 +129,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!();
-            eprintln!("❌ {e}");
+            eprintln!("{}", tf("cli.error_prefix", &[("err", &e.to_string())]));
             ExitCode::FAILURE
         }
     }
