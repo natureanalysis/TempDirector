@@ -125,6 +125,10 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// 探针 DACL：显式授予 Everyone 完全控制，`P` 标志切断继承。
+    /// 不引用具体账号 SID，测试不依赖运行身份。
+    const PROBE_SDDL: &str = "D:P(A;OICI;FA;;;WD)";
+
     #[test]
     fn export_apply_roundtrip() {
         let base = std::env::temp_dir().join(format!("td_acl_{}", std::process::id()));
@@ -134,18 +138,31 @@ mod tests {
         fs::create_dir_all(&src).unwrap();
         fs::create_dir_all(&dst).unwrap();
 
+        // %TEMP% 的继承链因机器而异：回灌不带 protected 标志时，父目录的
+        // 可继承 ACE 会并入回读结果，与原始 SDDL 差一份继承条目。先用探针
+        // DACL 把源目录切成"仅显式 ACE"，往返才有确定答案。
+        apply_sddl(&src, PROBE_SDDL).unwrap();
+
         let sddl = export_sddl(&src).unwrap();
         assert!(!sddl.is_empty(), "应能导出非空 DACL");
         assert!(sddl.starts_with('D'), "SDDL 应以 D: (DACL) 开头，实际 {sddl}");
 
-        // 贴到另一个目录上
-        apply_sddl(&dst, &sddl).unwrap();
+        // 贴到另一个目录上；同样以 protected 形式贴入，避免并入继承 ACE
+        apply_sddl(&dst, &ensure_dacl_protected(&sddl)).unwrap();
 
         // 回读应一致
         let again = export_sddl(&dst).unwrap();
         assert_eq!(normalize(&sddl), normalize(&again));
 
         let _ = fs::remove_dir_all(&base);
+    }
+
+    /// 给 `D:(...)` 形式的 SDDL 补上 `P`（protected）标志；已带标志则原样返回。
+    fn ensure_dacl_protected(sddl: &str) -> String {
+        match sddl.strip_prefix("D:(") {
+            Some(rest) => format!("D:P({rest}"),
+            None => sddl.to_string(),
+        }
     }
 
     #[test]
