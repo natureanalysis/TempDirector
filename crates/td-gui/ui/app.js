@@ -924,7 +924,7 @@ async function openOps() {
   // 放在运维弹窗里而不是首页 —— 它是"回顾"信息，不是"当前要处理"的信息。
   const strip = document.createElement('div');
   strip.className = 'savings-strip';
-  strip.textContent = '效益统计读取中…';
+  strip.textContent = t('ops.savings_loading');
   body.appendChild(strip);
   loadSavings(strip);
   const tabs = document.createElement('div');
@@ -937,10 +937,10 @@ async function openOps() {
   let mode = 'events';
   const btnEvents = document.createElement('button');
   btnEvents.className = 'btn active';
-  btnEvents.textContent = '事件';
+  btnEvents.textContent = t('ops.tab_events');
   const btnOps = document.createElement('button');
   btnOps.className = 'btn';
-  btnOps.textContent = '操作流水';
+  btnOps.textContent = t('ops.tab_ops');
   tabs.appendChild(btnEvents);
   tabs.appendChild(btnOps);
 
@@ -951,13 +951,13 @@ async function openOps() {
     try {
       if (mode === 'events') {
         const evs = await invoke('recent_events', { limit: 100 });
-        if (!evs.length) { list.textContent = '（暂无事件）'; return; }
+        if (!evs.length) { list.textContent = t('ops.no_events'); return; }
         evs.forEach(function (e) {
           list.appendChild(logRow(e.at, e.kind, e.message, e.level));
         });
       } else {
         const ops = await invoke('recent_ops', { limit: 100 });
-        if (!ops.length) { list.textContent = '（暂无操作流水）'; return; }
+        if (!ops.length) { list.textContent = t('ops.no_ops'); return; }
         ops.forEach(function (o) {
           const msg = '#' + o.id + ' rule=' + (o.rule_id === null ? '-' : o.rule_id) +
             ' files=' + (o.file_count || 0) + ' ' + (o.source_path || '') +
@@ -966,13 +966,13 @@ async function openOps() {
         });
       }
     } catch (e) {
-      list.textContent = '读取失败：' + e.message;
+      list.textContent = tf('ops.load_failed', { msg: e.message });
     }
   }
   btnEvents.addEventListener('click', function () { mode = 'events'; load(); });
   btnOps.addEventListener('click', function () { mode = 'ops'; load(); });
   await load();
-  openModal({ title: '运维日志（事件 / 操作流水）', body: body, wide: true, actions: [{ label: '关闭', onClick: closeModal }] });
+  openModal({ title: t('ops.title'), body: body, wide: true, actions: [{ label: t('common.close'), onClick: closeModal }] });
 }
 
 /** 效益统计三卡：当前重定向 / 累计搬运 / 累计清理。
@@ -981,12 +981,12 @@ async function loadSavings(strip) {
   try {
     const v = await invoke('savings');
     strip.textContent = '';
-    strip.appendChild(savingCard('当前重定向到 RAM 盘', v.redirected_text,
-      v.redirected_rules + ' 条规则生效 · ' + v.redirected_files + ' 个文件不写 SSD'));
-    strip.appendChild(savingCard('累计搬运', v.moved_text,
-      v.moved_files + ' 个文件从 SSD 搬入'));
-    strip.appendChild(savingCard('累计清理释放', v.cleaned_text,
-      v.cleaned_files + ' 个文件已删除'));
+    strip.appendChild(savingCard(t('ops.card.redirected_title'), v.redirected_text,
+      tf('ops.card.redirected_sub', { rules: v.redirected_rules, files: v.redirected_files })));
+    strip.appendChild(savingCard(t('ops.card.moved_title'), v.moved_text,
+      tf('ops.card.moved_sub', { n: v.moved_files })));
+    strip.appendChild(savingCard(t('ops.card.cleaned_title'), v.cleaned_text,
+      tf('ops.card.cleaned_sub', { n: v.cleaned_files })));
   } catch (e) {
     // 统计只是附属信息，拿不到就撤掉这块，别挡住下面的日志。
     strip.remove();
@@ -1036,13 +1036,13 @@ async function openSettings() {
   const info = document.createElement('div');
   info.className = 'field';
   [
-    ['版本', snap.version + '（schema v' + snap.schema_version + '）'],
-    ['数据目录', snap.data_dir],
-    ['数据库', snap.db_path],
+    [t('settings.version'), snap.version + tf('settings.schema_tag', { v: snap.schema_version })],
+    [t('settings.data_dir'), snap.data_dir],
+    [t('settings.db'), snap.db_path],
   ].forEach(function (kv) {
     const d = document.createElement('div');
     d.className = 'hint';
-    d.textContent = kv[0] + '：' + kv[1];
+    d.textContent = tf('settings.kv', { k: kv[0], v: kv[1] });
     info.appendChild(d);
   });
   body.appendChild(info);
@@ -1056,7 +1056,7 @@ async function openSettings() {
   const closeField = document.createElement('div');
   closeField.className = 'field';
   const closeLabel = document.createElement('label');
-  closeLabel.textContent = '关闭窗口时';
+  closeLabel.textContent = t('settings.close_when');
   closeField.appendChild(closeLabel);
   let closeToTray = true;
   try { closeToTray = (await invoke('ui_settings', {})).close_to_tray; } catch (e) { closeToTray = true; }
@@ -1067,20 +1067,20 @@ async function openSettings() {
   closeInline.className = 'inline-check';
   closeInline.appendChild(closeCheck);
   const closeSpan = document.createElement('span');
-  closeSpan.textContent = '最小化到托盘（继续后台巡检水位与自动清理）';
+  closeSpan.textContent = t('settings.close_to_tray');
   closeInline.appendChild(closeSpan);
   closeCheck.addEventListener('change', async function () {
     try {
       await invoke('set_close_to_tray', { enabled: closeCheck.checked });
-      toast('已保存', closeCheck.checked ? '关闭窗口时最小化到托盘' : '关闭窗口时直接退出', 'ok');
+      toast(t('common.saved'), closeCheck.checked ? t('settings.close_to_tray_on') : t('settings.close_to_tray_off'), 'ok');
     } catch (e) {
-      toast('保存失败', e.message, 'error');
+      toast(t('common.save_failed'), e.message, 'error');
     }
   });
   closeField.appendChild(closeInline);
   const closeHint = document.createElement('div');
   closeHint.className = 'hint';
-  closeHint.textContent = '退出请走托盘的「退出」；取消勾选则点 ✕ 直接退出程序（后台巡检与自动清理将停止）。';
+  closeHint.textContent = t('settings.close_hint');
   closeField.appendChild(closeHint);
   body.appendChild(closeField);
 
@@ -1090,7 +1090,7 @@ async function openSettings() {
   const schedField = document.createElement('div');
   schedField.className = 'field';
   const schedLabel = document.createElement('label');
-  schedLabel.textContent = '定时自动清理';
+  schedLabel.textContent = t('settings.sched');
   schedField.appendChild(schedLabel);
   let sched = { enabled: false, time: '03:00' };
   try { sched = await invoke('scheduled_clean_settings', {}); } catch (e) { /* 默认值 */ }
@@ -1101,7 +1101,7 @@ async function openSettings() {
   schedCheck.checked = sched.enabled;
   schedInline.appendChild(schedCheck);
   const schedSpan = document.createElement('span');
-  schedSpan.textContent = '每天低峰期自动清理预授权规则';
+  schedSpan.textContent = t('settings.sched_on');
   schedInline.appendChild(schedSpan);
   const schedTime = document.createElement('input');
   schedTime.type = 'time';
@@ -1110,11 +1110,11 @@ async function openSettings() {
   async function saveSched() {
     try {
       await invoke('set_scheduled_clean', { enabled: schedCheck.checked, time: schedTime.value || '03:00' });
-      toast('已保存', schedCheck.checked
-        ? ('每天 ' + (schedTime.value || '03:00') + ' 自动清理预授权规则')
-        : '已关闭定时自动清理', 'ok');
+      toast(t('common.saved'), schedCheck.checked
+        ? tf('settings.sched_saved_on', { time: schedTime.value || '03:00' })
+        : t('settings.sched_saved_off'), 'ok');
     } catch (e) {
-      toast('保存失败', e.message, 'error');
+      toast(t('common.save_failed'), e.message, 'error');
     }
   }
   schedCheck.addEventListener('change', saveSched);
@@ -1122,14 +1122,14 @@ async function openSettings() {
   schedField.appendChild(schedInline);
   const schedHint = document.createElement('div');
   schedHint.className = 'hint';
-  schedHint.textContent = '只清理每条规则里配置过「自动清理策略」的目录（未授权的绝不动）。程序需常驻（托盘）才会按时执行。';
+  schedHint.textContent = t('settings.sched_hint');
   schedField.appendChild(schedHint);
   body.appendChild(schedField);
 
   const rootField = document.createElement('div');
   rootField.className = 'field';
   const rootLabel = document.createElement('label');
-  rootLabel.textContent = '目标根（RAM 盘）';
+  rootLabel.textContent = t('settings.root');
   rootField.appendChild(rootLabel);
   const rootList = document.createElement('div');
   rootList.className = 'log-list';
@@ -1141,19 +1141,19 @@ async function openSettings() {
     a.textContent = '#' + r.id + ' ' + r.label;
     const b = document.createElement('div');
     b.className = 'log-msg';
-    b.textContent = r.path + ' · ' + (r.state === 'ready' ? '就绪' : r.message) +
-      ' · 等待上限 ' + r.wait_timeout_ms + 'ms' + (r.is_ramdisk ? ' · RAM 盘' : '');
+    b.textContent = r.path + ' · ' + (r.state === 'ready' ? t('header.root_ready') : r.message) +
+      tf('settings.root_wait', { ms: r.wait_timeout_ms }) + (r.is_ramdisk ? t('settings.root_ramdisk') : '');
     const del = document.createElement('button');
     del.className = 'mini';
-    del.textContent = '删除';
+    del.textContent = t('common.delete');
     del.addEventListener('click', async function () {
       try {
         await invoke('delete_root', { id: r.id });
         closeModal();
-        toast('已删除目标根', '#' + r.id + ' ' + r.path, 'ok');
+        toast(t('settings.root_deleted'), '#' + r.id + ' ' + r.path, 'ok');
         await refresh(true);
       } catch (e) {
-        toast('删除失败', e.message, 'error');
+        toast(t('settings.root_delete_failed'), e.message, 'error');
       }
     });
     row.appendChild(a);
@@ -1161,26 +1161,26 @@ async function openSettings() {
     row.appendChild(del);
     rootList.appendChild(row);
   });
-  if (!snap.roots || !snap.roots.length) rootList.textContent = '（尚未配置目标根，先在下面添加）';
+  if (!snap.roots || !snap.roots.length) rootList.textContent = t('settings.no_root');
   rootField.appendChild(rootList);
   body.appendChild(rootField);
 
   const addField = document.createElement('div');
   addField.className = 'field';
   const addLabel = document.createElement('label');
-  addLabel.textContent = '添加目标根';
+  addLabel.textContent = t('settings.add_root');
   addField.appendChild(addLabel);
   const row = document.createElement('div');
   row.className = 'field-row';
-  const nameInput = mkInput('名称，如 RAMDisk 4G');
-  const pathInput = mkInput('路径，如 R: 或 R:\\Redirect');
-  const pick = mkPickButton('浏览…', async function () {
-    const p = await invoke('pick_folder', { title: '选择 RAM 盘的根目录（或直接手填 R:）', defaultPath: pathInput.value });
+  const nameInput = mkInput(t('settings.name_ph'));
+  const pathInput = mkInput(t('settings.path_ph'));
+  const pick = mkPickButton(t('common.browse'), async function () {
+    const p = await invoke('pick_folder', { title: t('settings.pick_title'), defaultPath: pathInput.value });
     if (p) pathInput.value = p;
   });
   const addBtn = document.createElement('button');
   addBtn.className = 'btn primary';
-  addBtn.textContent = '添加';
+  addBtn.textContent = t('common.add');
   addBtn.addEventListener('click', async function () {
     try {
       await invoke('add_root', {
@@ -1190,10 +1190,10 @@ async function openSettings() {
         waitTimeoutMs: 90000,
       });
       closeModal();
-      toast('已添加目标根', pathInput.value, 'ok');
+      toast(t('settings.root_added'), pathInput.value, 'ok');
       await refresh(true);
     } catch (e) {
-      toast('添加失败', e.message, 'error');
+      toast(t('settings.root_add_failed'), e.message, 'error');
     }
   });
   // 只有"路径"输入框拉满，两个按钮各自紧凑 —— 否则「浏览/添加」会被撑成一大条。
@@ -1208,18 +1208,18 @@ async function openSettings() {
   addField.appendChild(row);
   const addHint = document.createElement('div');
   addHint.className = 'hint';
-  addHint.textContent = '提示：直接填「R:」即可。目标盘建议格式化为 NTFS（Junction 需要 NTFS 才可靠）。';
+  addHint.textContent = t('settings.add_hint');
   addField.appendChild(addHint);
   body.appendChild(addField);
 
   openModal({
-    title: '设置',
+    title: t('settings.title'),
     body: body,
     wide: true,
     actions: [
-      { label: '导出配置', onClick: function () { closeModal(); doExport(); } },
-      { label: '导入配置', onClick: function () { closeModal(); doImport(); } },
-      { label: '关闭', kind: 'primary', onClick: closeModal },
+      { label: t('settings.export'), onClick: function () { closeModal(); doExport(); } },
+      { label: t('settings.import'), onClick: function () { closeModal(); doImport(); } },
+      { label: t('common.close'), kind: 'primary', onClick: closeModal },
     ],
   });
 }
