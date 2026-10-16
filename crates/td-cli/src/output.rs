@@ -1,6 +1,7 @@
-//! 控制台输出辅助：状态行、规则行、操作结果的中文化格式化。
+//! 控制台输出辅助：状态行、规则行、操作结果的格式化。
 
 use td_core::engine;
+use td_core::i18n::{t, tf};
 use td_core::store::Rule;
 
 pub(crate) fn print_status_line(i: usize, st: &engine::RuleStatus) {
@@ -11,13 +12,21 @@ pub(crate) fn print_status_line(i: usize, st: &engine::RuleStatus) {
         td_core::store::category_label(&st.category),
         st.name
     );
-    println!("       源：{}", st.source);
-    println!("       目标：{}  ({})", st.target, st.link_type);
+    println!("{}", tf("cli.label_source", &[("path", &st.source)]));
     println!(
-        "       状态：{}  开机重建：{}  期望开启：{}",
-        st.label,
-        if st.rebuild_on_boot { "是" } else { "否" },
-        if st.want_enabled { "是" } else { "否" }
+        "{}",
+        tf("cli.label_target", &[
+            ("path", &st.target),
+            ("link", &st.link_type),
+        ])
+    );
+    println!(
+        "{}",
+        tf("cli.label_status", &[
+            ("label", st.label.as_str()),
+            ("boot", yn(st.rebuild_on_boot)),
+            ("enabled", yn(st.want_enabled)),
+        ])
     );
     for w in &st.warnings {
         println!("       ⚠ {w}");
@@ -36,43 +45,51 @@ pub(crate) fn print_rule_row(rule: &Rule) {
         rule.target_subpath
     );
     println!(
-        "       源：{}   链接：{}   开启：{}  开机重建：{}  需提权：{}",
-        rule.source_template,
-        rule.link_type,
-        yn(rule.want_enabled),
-        yn(rule.rebuild_on_boot),
-        yn(rule.needs_elevation)
+        "{}",
+        tf("cli.rule_detail", &[
+            ("src", &rule.source_template),
+            ("link", &rule.link_type),
+            ("on", yn(rule.want_enabled)),
+            ("boot", yn(rule.rebuild_on_boot)),
+            ("elev", yn(rule.needs_elevation)),
+        ])
     );
     if let Some(n) = &rule.notes {
-        println!("       备注：{n}");
+        println!("{}", tf("cli.label_notes", &[("notes", n)]));
     }
     if !rule.excludes.is_empty() {
-        println!("       清理排除：{}", rule.excludes.join("、"));
+        println!(
+            "{}",
+            tf("cli.label_excludes", &[("list", &rule.excludes.join("、"))])
+        );
     }
     if !rule.auto_clean_policy.trim().is_empty() {
-        println!("       水位自动清理：{}", rule.auto_clean_policy);
+        println!(
+            "{}",
+            tf("cli.label_auto_clean", &[("policy", &rule.auto_clean_policy)])
+        );
     }
 }
 
 pub(crate) fn yn(v: bool) -> &'static str {
     if v {
-        "是"
+        t("cli.yes")
     } else {
-        "否"
+        t("cli.no")
     }
 }
 
 pub(crate) fn print_outcome(o: &engine::Outcome) {
     let tag = if o.dry_run {
-        "预演"
+        t("cli.tag_dry_run")
     } else {
         match o.action {
-            "already_ok" | "already_plain" => "跳过",
-            "moved_and_linked" | "merged_and_linked" | "created_and_linked" => "完成",
-            "fixed_broken_target" => "修复",
-            "restored" => "恢复",
-            "relinked" => "重建",
-            _ => "完成",
+            "already_ok" | "already_plain" => t("cli.tag_skip"),
+            "moved_and_linked" | "merged_and_linked" | "created_and_linked" => t("cli.tag_done"),
+            "fixed_broken_target" => t("cli.tag_fix"),
+            "restored" => t("cli.tag_restore"),
+            "relinked" => t("cli.tag_relink"),
+            _ => t("cli.tag_done"),
         }
     };
     println!(
@@ -82,9 +99,11 @@ pub(crate) fn print_outcome(o: &engine::Outcome) {
     if let Some(s) = o.stats {
         if s.files > 0 || s.bytes > 0 {
             println!(
-                "         规模：{}，耗时 {}",
-                s.summary(),
-                td_core::util::human_dur_ms(o.elapsed_ms)
+                "{}",
+                tf("cli.label_scale", &[
+                    ("stats", &s.summary()),
+                    ("dur", &td_core::util::human_dur_ms(o.elapsed_ms)),
+                ])
             );
         }
     }
