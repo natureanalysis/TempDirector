@@ -2,6 +2,28 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-10-16（架构重构，续）
+
+### 重构 —— `engine.rs`（1144 行）拆为 `engine/` 目录模块
+
+* **`crates/td-core/src/engine.rs` → `engine/{mod,resolve,status,apply,restore,tests}.rs`**：
+  - `resolve`：规则 → 源/目标路径（环境变量展开、安全预检、`clean_dir_for_rule`）
+  - `status`：体检（`RuleStatus`、批量扫描、写库状态机键 `state_key`）
+  - `apply`：应用（搬运/合并 → 建链，失败回滚）
+  - `restore`：恢复（拆链搬回）与只重建链接（relink）
+  - `mod.rs` 汇总再导出全部公开符号，**`crate::engine::X` 路径不变**，
+    GUI/CLI/worker/boot 调用方零改动。
+* `boot/acl.rs` 的 `export_apply_roundtrip` 测试改为**自建受保护 DACL 环境**：
+  原先依赖 `%TEMP%` 继承链，回灌不带 protected 标志时父目录可继承 ACE 会并入
+  回读结果，在本机环境必然失败。现用 `D:P` 探针（Everyone 完全控制，不依赖
+  运行账号 SID）切断继承后验证往返，测试不再受宿主目录影响。
+
+### 验证
+
+* `cargo test --workspace --no-fail-fast`：145 通过 / 0 失败（含 engine 11 个
+  状态机/回滚测试逐字随迁）。
+* CLI `version` 冒烟输出不变；编译零警告。
+
 ## 2026-10-16（架构重构）
 
 ### 重构 —— td-core 引入用例门面层 `usecase`，GUI/CLI 收敛调用面
