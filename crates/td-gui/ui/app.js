@@ -386,11 +386,11 @@ function renderDetail() {
   const host = $('detail');
   const rule = (state.snap.rules || []).find(function (r) { return r.id === state.focusId; });
   if (!rule) {
-    host.classList.add('hidden');
-    host.textContent = '';
+    // 只收起、不清空内容：滑出动画期间还要有东西可看，下次打开时再重建。
+    host.classList.remove('open');
     return;
   }
-  host.classList.remove('hidden');
+  host.classList.add('open');
   host.textContent = '';
 
   const head = document.createElement('div');
@@ -415,6 +415,18 @@ function renderDetail() {
   if (rule.has_acl) chips.appendChild(chip('已存权限模板'));
   if (rule.last_files) chips.appendChild(chip(rule.last_files + ' 个文件 · ' + humanBytes(rule.last_bytes || 0)));
   head.appendChild(chips);
+  // 关闭按钮必须最后 append：`.detail-close { margin-left: auto }` 靠"最后一个
+  // 弹性项"把它顶到最右，若它后面还有 chips，chips 会被挤到它右边。
+  const close = document.createElement('button');
+  close.className = 'icon-btn detail-close';
+  close.textContent = '✕';
+  close.title = '关闭详情（Esc）';
+  close.addEventListener('click', function () {
+    state.focusId = null;
+    renderDetail();
+    renderRows();
+  });
+  head.appendChild(close);
   host.appendChild(head);
 
   const grid = document.createElement('div');
@@ -2098,7 +2110,14 @@ document.addEventListener('input', function (ev) {
 
 document.addEventListener('keydown', function (ev) {
   if (ev.key === 'Escape') {
-    if (!$('modal').classList.contains('hidden')) closeModal();
+    // 弹窗优先于详情：弹窗开着时 Esc 只关弹窗，不顺手把详情也收掉。
+    if (!$('modal').classList.contains('hidden')) {
+      closeModal();
+    } else if ($('detail').classList.contains('open')) {
+      state.focusId = null;
+      renderDetail();
+      renderRows();
+    }
   }
   if ((ev.ctrlKey || ev.metaKey) && ev.key === 'r') {
     ev.preventDefault();
