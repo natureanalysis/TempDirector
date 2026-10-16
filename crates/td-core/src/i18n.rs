@@ -158,6 +158,14 @@ fn zh(key: &str) -> &'static str {
         "disk.role.target" => "目标盘",
         "disk.role.source" => "源盘",
         "worker.boot_rebuild" => "开机重建",
+        "volume.not_created" => "卷已就绪，但目标根目录还没建出来：{path}（RAM 盘重启后的正常现象，运行一次开机重建即可）",
+        "volume.missing" => "目标卷不存在：{path}",
+        "volume.not_dir" => "目标路径不是目录：{path}",
+        "volume.ready" => "就绪，可用空间 {free}",
+        "volume.readonly" => "不可写入：{e}",
+        "volume.no_space_info" => "无法查询容量：{e}",
+        "volume.wait_timeout" => "等待目标卷就绪超时（已等 {secs} 秒）：{path}。RAM 盘未创建、未格式化，或创建它的程序还没启动。",
+        "volume.create_failed" => "创建目标根目录失败（{path}）：{e}。若是 RAM 盘尚未挂载，请先创建 RAM 盘。",
         _ => "",
     }
 }
@@ -231,6 +239,14 @@ fn en(key: &str) -> &'static str {
         "disk.role.target" => "Target disk",
         "disk.role.source" => "Source disk",
         "worker.boot_rebuild" => "Boot rebuild",
+        "volume.not_created" => "Volume ready but target root not yet created: {path} (normal after RAM disk restart; run boot rebuild once)",
+        "volume.missing" => "Target volume does not exist: {path}",
+        "volume.not_dir" => "Target path is not a directory: {path}",
+        "volume.ready" => "Ready, free space {free}",
+        "volume.readonly" => "Not writable: {e}",
+        "volume.no_space_info" => "Cannot query capacity: {e}",
+        "volume.wait_timeout" => "Timed out waiting for target volume ({secs}s): {path}. RAM disk not created, not formatted, or its creator not started.",
+        "volume.create_failed" => "Failed to create target root directory ({path}): {e}. If the RAM disk is not mounted, create it first.",
         _ => "",
     }
 }

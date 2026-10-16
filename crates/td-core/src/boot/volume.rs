@@ -51,11 +51,10 @@ pub fn wait_for_volume(path: &Path, timeout: Duration, poll: Duration) -> TdResu
             return Ok(started.elapsed());
         }
         if started.elapsed() >= timeout {
-            return Err(TdError::Other(format!(
-                "等待目标卷就绪超时（已等 {} 秒）：{}。RAM 盘未创建、未格式化，或创建它的程序还没启动。",
-                timeout.as_secs(),
-                path.display()
-            )));
+            return Err(TdError::Other(crate::i18n::tf("volume.wait_timeout", &[
+                ("secs", &timeout.as_secs().to_string()),
+                ("path", &path.display().to_string()),
+            ])));
         }
         std::thread::sleep(poll);
     }
@@ -88,11 +87,10 @@ fn wait_for_volume_available(path: &Path, timeout: Duration, poll: Duration) -> 
             return Ok(started.elapsed());
         }
         if started.elapsed() >= timeout {
-            return Err(TdError::Other(format!(
-                "等待目标卷就绪超时（已等 {} 秒）：{}。RAM 盘未创建、未格式化，或创建它的程序还没启动。",
-                timeout.as_secs(),
-                path.display()
-            )));
+            return Err(TdError::Other(crate::i18n::tf("volume.wait_timeout", &[
+                ("secs", &timeout.as_secs().to_string()),
+                ("path", &path.display().to_string()),
+            ])));
         }
         std::thread::sleep(poll);
     }
@@ -104,10 +102,10 @@ pub fn ensure_root_dir(path: &Path) -> TdResult<()> {
         return Ok(());
     }
     std::fs::create_dir_all(path).map_err(|e| {
-        TdError::Other(format!(
-            "创建目标根目录失败（{}）：{e}。若是 RAM 盘尚未挂载，请先创建 RAM 盘。",
-            path.display()
-        ))
+        TdError::Other(crate::i18n::tf("volume.create_failed", &[
+            ("path", &path.display().to_string()),
+            ("e", &e.to_string()),
+        ]))
     })
 }
 
@@ -122,16 +120,13 @@ pub fn probe_volume(path: &Path) -> (&'static str, String) {
         if volume_exists {
             return (
                 "not_created",
-                format!(
-                    "卷已就绪，但目标根目录还没建出来：{}（RAM 盘重启后的正常现象，运行一次开机重建即可）",
-                    path.display()
-                ),
+                crate::i18n::tf("volume.not_created", &[("path", &path.display().to_string())]),
             );
         }
-        return ("missing", format!("目标卷不存在：{}", path.display()));
+        return ("missing", crate::i18n::tf("volume.missing", &[("path", &path.display().to_string())]));
     }
     if !path.is_dir() {
-        return ("not_dir", format!("目标路径不是目录：{}", path.display()));
+        return ("not_dir", crate::i18n::tf("volume.not_dir", &[("path", &path.display().to_string())]));
     }
     match free_space(path) {
         Ok(free) => {
@@ -141,13 +136,13 @@ pub fn probe_volume(path: &Path) -> (&'static str, String) {
                     let _ = std::fs::remove_file(&probe);
                     (
                         "ready",
-                        format!("就绪，可用空间 {}", crate::util::human_bytes(free)),
+                        crate::i18n::tf("volume.ready", &[("free", &crate::util::human_bytes(free))]),
                     )
                 }
-                Err(e) => ("readonly", format!("不可写入：{e}")),
+                Err(e) => ("readonly", crate::i18n::tf("volume.readonly", &[("e", &e.to_string())])),
             }
         }
-        Err(e) => ("no_space_info", format!("无法查询容量：{e}")),
+        Err(e) => ("no_space_info", crate::i18n::tf("volume.no_space_info", &[("e", &e.to_string())])),
     }
 }
 
