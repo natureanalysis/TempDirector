@@ -17,6 +17,7 @@ use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
 
 use crate::error::{io_ctx, TdError, TdResult};
+use crate::i18n::{t, tf};
 use crate::util;
 
 /// 当前进程是否已提权（查令牌而不是"试着开一下物理磁盘"）。
@@ -81,10 +82,9 @@ pub fn is_elevated() -> bool {
 /// 所以带空格的路径必须自己加引号 —— 见 [`quote_arg`]。
 pub fn run_elevated_wait(exe: &Path, args: &str) -> TdResult<u32> {
     if !exe.is_file() {
-        return Err(TdError::InvalidPath(format!(
-            "找不到要提权启动的程序：{}",
-            exe.display()
-        )));
+        return Err(TdError::InvalidPath(tf("elevate.exe_not_found", &[
+            ("path", &exe.display().to_string()),
+        ])));
     }
 
     let verb = util::to_wide("runas");
@@ -112,10 +112,8 @@ pub fn run_elevated_wait(exe: &Path, args: &str) -> TdResult<u32> {
         let e = std::io::Error::last_os_error();
         return match e.raw_os_error() {
             // 用户点了 UAC 的「否」
-            Some(1223) => Err(TdError::Other(
-                "提权被取消：你在 UAC 弹窗上点了「否」。这条操作需要管理员权限。".into(),
-            )),
-            _ => Err(io_ctx(e, exe, crate::i18n::t("io.action.elev_request"))),
+            Some(1223) => Err(TdError::Other(t("elevate.cancelled").into())),
+            _ => Err(io_ctx(e, exe, t("io.action.elev_request"))),
         };
     }
 

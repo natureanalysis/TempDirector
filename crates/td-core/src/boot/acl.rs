@@ -24,6 +24,7 @@ use windows_sys::Win32::Security::Authorization::{
 use windows_sys::Win32::Security::SetFileSecurityW;
 
 use crate::error::{io_ctx, TdError, TdResult};
+use crate::i18n::{t, tf};
 use crate::util;
 
 /// `SE_FILE_OBJECT`
@@ -49,10 +50,10 @@ pub fn export_sddl(path: &Path) -> TdResult<String> {
             &mut sd,
         );
         if rc != 0 || sd.is_null() {
-            return Err(TdError::Other(format!(
-                "导出目录权限失败（Win32 错误 {rc}）：{}",
-                path.display()
-            )));
+            return Err(TdError::Other(tf("acl.export_failed", &[
+                ("rc", &rc.to_string()),
+                ("path", &path.display().to_string()),
+            ])));
         }
 
         let mut out: *mut u16 = std::ptr::null_mut();
@@ -65,10 +66,9 @@ pub fn export_sddl(path: &Path) -> TdResult<String> {
             &mut len,
         );
         let result = if ok == 0 || out.is_null() {
-            Err(TdError::Other(format!(
-                "把权限描述转成 SDDL 失败：{}",
-                path.display()
-            )))
+            Err(TdError::Other(tf("acl.to_sddl_failed", &[
+                ("path", &path.display().to_string()),
+            ])))
         } else {
             let mut n = 0usize;
             while *out.add(n) != 0 {
@@ -101,15 +101,15 @@ pub fn apply_sddl(path: &Path, sddl: &str) -> TdResult<()> {
             std::ptr::null_mut(),
         );
         if ok == 0 || sd.is_null() {
-            return Err(TdError::Other(format!(
-                "SDDL 解析失败（记录可能来自另一台机器，SID 已失效）：{sddl}"
-            )));
+            return Err(TdError::Other(tf("acl.parse_failed", &[
+                ("sddl", sddl),
+            ])));
         }
         let applied = SetFileSecurityW(wide.as_ptr(), DACL_SECURITY_INFORMATION, sd);
         LocalFree(sd);
         if applied == 0 {
             let e = std::io::Error::last_os_error();
-            return Err(io_ctx(e, path, crate::i18n::t("io.action.restore_acl")));
+            return Err(io_ctx(e, path, t("io.action.restore_acl")));
         }
     }
     Ok(())

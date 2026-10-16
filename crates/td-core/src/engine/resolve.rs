@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{TdError, TdResult};
+use crate::i18n::tf;
 use crate::link::detect::LinkType;
 use crate::store::{Root, Rule, Store};
 use crate::util;
@@ -25,10 +26,9 @@ pub fn resolve(store: &Store, rule: &Rule) -> TdResult<Resolved> {
 
     let mut warnings = Vec::new();
     if !unknown.is_empty() {
-        warnings.push(format!(
-            "存在未解析的环境变量：{}（该规则可能属于其他用户）",
-            unknown.join("、")
-        ));
+        warnings.push(tf("resolve.unresolved_vars_warn", &[
+            ("vars", &unknown.join("、")),
+        ]));
     }
     let pf = crate::safety::preflight_source(&source);
     warnings.extend(pf.warnings.clone());
@@ -44,7 +44,9 @@ pub fn resolve(store: &Store, rule: &Rule) -> TdResult<Resolved> {
 
 pub fn rule_link_type(rule: &Rule) -> TdResult<LinkType> {
     LinkType::parse(&rule.link_type)
-        .ok_or_else(|| TdError::InvalidPath(format!("未知的链接类型：{}", rule.link_type)))
+        .ok_or_else(|| {
+            TdError::InvalidPath(tf("resolve.unknown_link_type", &[("kind", &rule.link_type)]))
+        })
 }
 
 /// 一条规则**真正要清理的目录**：
@@ -67,10 +69,9 @@ pub fn clean_dir_for_rule(store: &Store, rule: &Rule) -> TdResult<PathBuf> {
 /// 执行前的「环境就绪」校验。
 pub(super) fn validate_ready(r: &Resolved) -> TdResult<()> {
     if !r.unknown_vars.is_empty() {
-        return Err(TdError::InvalidPath(format!(
-            "源路径里的环境变量无法解析：{}。请以目标用户的身份运行，或改用绝对路径。",
-            r.unknown_vars.join("、")
-        )));
+        return Err(TdError::InvalidPath(tf("resolve.unresolved_vars_err", &[
+            ("vars", &r.unknown_vars.join("、")),
+        ])));
     }
     let (root_path, _) = r.root.resolved_path();
     if !root_path.is_dir() {

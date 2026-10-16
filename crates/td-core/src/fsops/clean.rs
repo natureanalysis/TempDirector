@@ -38,6 +38,7 @@ use walkdir::WalkDir;
 use crate::error::{io_ctx, TdError, TdResult};
 use crate::fsops::exclude::Excludes;
 use crate::fsops::mover::Progress;
+use crate::i18n::{t, tf};
 use crate::util;
 
 /// 清理策略。时间一律用 Unix 秒（前端按本地时区算好传进来）。
@@ -59,15 +60,13 @@ impl CleanPolicy {
             CleanPolicy::Empty => Ok(()),
             CleanPolicy::Before { cutoff } => {
                 if *cutoff <= 0 {
-                    return Err(TdError::InvalidPath("清理时间点非法".into()));
+                    return Err(TdError::InvalidPath(t("clean.invalid_cutoff").into()));
                 }
                 Ok(())
             }
             CleanPolicy::Between { from, to } => {
                 if *from <= 0 || *to <= *from {
-                    return Err(TdError::InvalidPath(
-                        "时间段非法：起点须为正、且早于终点".into(),
-                    ));
+                    return Err(TdError::InvalidPath(t("clean.invalid_range").into()));
                 }
                 Ok(())
             }
@@ -118,9 +117,9 @@ impl CleanPlan {
 
     pub fn summary(&self) -> String {
         if self.is_empty() {
-            return crate::i18n::t("clean.stats.empty").to_string();
+            return t("clean.stats.empty").to_string();
         }
-        crate::i18n::tf("clean.stats.count", &[
+        tf("clean.stats.count", &[
             ("n", &self.files.to_string()),
             ("size", &util::human_bytes(self.bytes)),
         ])
@@ -144,21 +143,21 @@ pub struct CleanReport {
 
 impl CleanReport {
     pub fn summary(&self) -> String {
-        let mut s = crate::i18n::tf("clean.report.deleted", &[
+        let mut s = tf("clean.report.deleted", &[
             ("n", &self.deleted_files.to_string()),
             ("size", &util::human_bytes(self.deleted_bytes)),
         ]);
         if self.dirs_pruned > 0 {
-            s += &crate::i18n::tf("clean.report.pruned", &[("n", &self.dirs_pruned.to_string())]);
+            s += &tf("clean.report.pruned", &[("n", &self.dirs_pruned.to_string())]);
         }
         if self.links_skipped > 0 {
-            s += &crate::i18n::tf("clean.report.links", &[("n", &self.links_skipped.to_string())]);
+            s += &tf("clean.report.links", &[("n", &self.links_skipped.to_string())]);
         }
         if self.excluded_skipped > 0 {
-            s += &crate::i18n::tf("clean.report.excluded", &[("n", &self.excluded_skipped.to_string())]);
+            s += &tf("clean.report.excluded", &[("n", &self.excluded_skipped.to_string())]);
         }
         if self.skipped > 0 {
-            s += &crate::i18n::tf("clean.report.skipped", &[
+            s += &tf("clean.report.skipped", &[
                 ("n", &self.skipped.to_string()),
                 ("examples", &self.skip_examples.join("；")),
             ]);
@@ -184,15 +183,16 @@ fn walk_files(
     links_skipped: &mut u64,
     excluded_skipped: &mut u64,
 ) -> TdResult<Vec<Candidate>> {
-    let root_md = fs::symlink_metadata(dir).map_err(|e| io_ctx(e, dir, crate::i18n::t("io.action.read_dir")))?;
+    let root_md = fs::symlink_metadata(dir).map_err(|e| io_ctx(e, dir, t("io.action.read_dir")))?;
     if root_md.file_type().is_symlink() {
-        return Err(TdError::SafetyBlocked(format!(
-            "该目录本身是链接（联接/符号链接），请清理它指向的真实目录：{}",
-            dir.display()
-        )));
+        return Err(TdError::SafetyBlocked(tf("clean.dir_is_link", &[
+            ("path", &dir.display().to_string()),
+        ])));
     }
     if !root_md.is_dir() {
-        return Err(TdError::InvalidPath(format!("不是目录：{}", dir.display())));
+        return Err(TdError::InvalidPath(tf("clean.not_dir", &[
+            ("path", &dir.display().to_string()),
+        ])));
     }
 
     let vroot = util::to_verbatim(dir);
