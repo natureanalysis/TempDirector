@@ -23,7 +23,7 @@ function tauriInvoke(name, args) {
   if (g && g.core && typeof g.core.invoke === 'function') return g.core.invoke(name, args || {});
   const internals = window.__TAURI_INTERNALS__;
   if (internals && typeof internals.invoke === 'function') return internals.invoke(name, args || {});
-  return Promise.reject(new Error('未检测到 Tauri IPC 桥'));
+  return Promise.reject(new Error(t('err.no_bridge')));
 }
 
 function tauriListen(event, handler) {
@@ -2003,8 +2003,8 @@ backend.listen('td-disk-progress', function (ev) {
   const p = ev.payload || {};
   const total = p.total || 0;
   scanHint.textContent = total
-    ? ('正在扫描 ' + (p.name || '') + '（' + (p.index + 1) + '/' + total + '）…')
-    : '正在汇总卷容量…';
+    ? tf('disk.scan_item', { name: (p.name || ''), i: (p.index + 1), n: total })
+    : t('disk.scan_volumes');
 });
 
 /** 工具栏「空间统计」：实时扫描各规则缓存占用，并汇总相关卷容量。 */
@@ -2013,33 +2013,33 @@ async function openDiskStats() {
 
   const status = document.createElement('div');
   status.className = 'hint';
-  status.textContent = '正在扫描各规则缓存目录的占用…';
+  status.textContent = t('disk.scanning');
   body.appendChild(status);
 
   const host = document.createElement('div');
   body.appendChild(host);
 
   openModal({
-    title: '磁盘空间占用统计',
+    title: t('disk.title'),
     body: body,
     wide: true,
     actions: [
-      { label: '重新扫描', onClick: function () { load(); } },
-      { label: '关闭', onClick: closeModal },
+      { label: t('disk.rescan'), onClick: function () { load(); } },
+      { label: t('common.close'), onClick: closeModal },
     ],
   });
 
   async function load() {
     host.textContent = '';
     status.className = 'hint';
-    status.textContent = '正在扫描各规则缓存目录的占用…';
+    status.textContent = t('disk.scanning');
     scanHint = status;
     try {
       const data = await invoke('disk_usage');
       renderDiskStats(host, status, data);
     } catch (e) {
       status.className = 'hint err';
-      status.textContent = '统计失败：' + e.message;
+      status.textContent = t('disk.failed') + '：' + e.message;
     } finally {
       scanHint = null;
     }
@@ -2050,20 +2050,19 @@ async function openDiskStats() {
 function renderDiskStats(host, status, data) {
   host.textContent = '';
   status.className = 'hint ok';
-  status.textContent = '共 ' + data.rule_count + ' 条规则，缓存目录合计占用 ' +
-    data.total_bytes_text + '（扫描耗时 ' + data.elapsed_ms + ' ms）';
+  status.textContent = tf('disk.summary', { rules: data.rule_count, size: data.total_bytes_text, ms: data.elapsed_ms });
 
   // ---- 各规则占用排行（横向条形图） ----
   const barsTitle = document.createElement('div');
   barsTitle.className = 'chart-title';
-  barsTitle.textContent = '各规则缓存占用排行';
+  barsTitle.textContent = t('disk.bars_title');
   host.appendChild(barsTitle);
 
   const rules = (data.rules || []).filter(function (r) { return r.bytes > 0; });
   if (!rules.length) {
     const none = document.createElement('div');
     none.className = 'hint';
-    none.textContent = '（所有规则目录当前都为空或不存在）';
+    none.textContent = t('disk.bars_none');
     host.appendChild(none);
   } else {
     const max = rules.reduce(function (m, r) { return Math.max(m, r.bytes); }, 1);
@@ -2078,14 +2077,14 @@ function renderDiskStats(host, status, data) {
   // ---- 磁盘卷容量 ----
   const volTitle = document.createElement('div');
   volTitle.className = 'chart-title';
-  volTitle.textContent = '磁盘卷容量';
+  volTitle.textContent = t('disk.vol_title');
   host.appendChild(volTitle);
 
   const vols = data.volumes || [];
   if (!vols.length) {
     const none = document.createElement('div');
     none.className = 'hint';
-    none.textContent = '（未取到卷容量信息）';
+    none.textContent = t('disk.vol_none');
     host.appendChild(none);
   } else {
     const list = document.createElement('div');
@@ -2124,11 +2123,12 @@ function volumeRow(v) {
   head.className = 'vol-head';
   const nm = document.createElement('div');
   nm.className = 'vol-name';
-  nm.textContent = v.path + (v.roles && v.roles.length ? '（' + v.roles.join(' · ') + '）' : '');
+  nm.textContent = (v.roles && v.roles.length)
+    ? tf('disk.vol_roles', { path: v.path, roles: v.roles.join(' · ') })
+    : v.path;
   const txt = document.createElement('div');
   txt.className = 'vol-text';
-  txt.textContent = '已用 ' + v.used_text + ' / 共 ' + v.total_text +
-    ' · 可用 ' + v.free_text + '（' + v.used_pct.toFixed(1) + '%）';
+  txt.textContent = tf('disk.vol_text', { used: v.used_text, total: v.total_text, free: v.free_text, pct: v.used_pct.toFixed(1) });
   head.appendChild(nm);
   head.appendChild(txt);
   row.appendChild(head);
@@ -2164,7 +2164,7 @@ document.addEventListener('click', async function (ev) {
     if (act === 'locks') { await doLocks(id); return; }
     if (act === 'clean') {
       const r = state.snap.rules.find(function (x) { return x.id === id; });
-      await openCleanDialog([{ kind: 'rule', id: id }], '规则：' + (r ? r.name : ('#' + id)));
+      await openCleanDialog([{ kind: 'rule', id: id }], tf('clean.title_rule', { name: r ? r.name : ('#' + id) }));
       return;
     }
     if (act === 'edit') { await openRuleForm(id); return; }
@@ -2177,7 +2177,7 @@ document.addEventListener('click', async function (ev) {
       const r = state.snap.rules.find(function (x) { return x.id === id; });
       if (!r) return;
       try { await invoke('reveal_in_explorer', { path: r.source }); }
-      catch (e) { toast('打开失败', e.message, 'error'); }
+      catch (e) { toast(t('toast.reveal_failed'), e.message, 'error'); }
       return;
     }
     return;
@@ -2204,56 +2204,56 @@ document.addEventListener('click', async function (ev) {
   if (closest('#more-menu')) hideMoreMenu();
   if (el.id === 'btn-refresh') await refresh(true);
   else if (el.id === 'btn-add') await openRuleForm(null);
-  else if (el.id === 'btn-apply') { if (requirePicked('应用')) await runApply(pickedIds(), false); }
-  else if (el.id === 'btn-restore') { if (requirePicked('恢复')) await runRestore(pickedIds()); }
+  else if (el.id === 'btn-apply') { if (requirePicked(t('pick.apply'))) await runApply(pickedIds(), false); }
+  else if (el.id === 'btn-restore') { if (requirePicked(t('pick.restore'))) await runRestore(pickedIds()); }
   else if (el.id === 'btn-enable' || el.id === 'btn-disable') {
-    if (!requirePicked('开关')) return;
+    if (!requirePicked(t('pick.toggle'))) return;
     const enabled = el.id === 'btn-enable';
     try {
       await invoke('set_rules_enabled', { ids: pickedIds(), enabled: enabled });
-      toast(enabled ? '已设为期望开启' : '已设为期望关闭', pickedIds().length + ' 条规则', 'ok');
+      toast(enabled ? t('toast.enabled') : t('toast.disabled'), tf('toast.toggle_hint', { n: pickedIds().length }), 'ok');
       await refresh(true);
-    } catch (e) { toast('操作失败', e.message, 'error'); }
+    } catch (e) { toast(t('toast.op_failed'), e.message, 'error'); }
   } else if (el.id === 'btn-locks') {
-    if (!requirePicked('检测')) return;
+    if (!requirePicked(t('pick.detect'))) return;
     await doLocks(pickedIds()[0]);
   } else if (el.id === 'btn-clean') {
     await openBatchCleanDialog();
   } else if (el.id === 'btn-disk') {
     await openDiskStats();
   } else if (el.id === 'btn-relink') {
-    if (!requirePicked('重建')) return;
+    if (!requirePicked(t('pick.relink'))) return;
     for (const id of pickedIds()) await doRelink(id);
   } else if (el.id === 'btn-delete') {
-    if (!requirePicked('删除')) return;
+    if (!requirePicked(t('pick.delete'))) return;
     const ids = pickedIds();
     const body = document.createElement('div');
     const p1 = document.createElement('div');
     p1.className = 'field';
-    p1.textContent = '将删除 ' + ids.length + ' 条规则的配置记录。';
+    p1.textContent = tf('del.confirm_body', { n: ids.length });
     const p2 = document.createElement('div');
     p2.className = 'field';
     const h = document.createElement('div');
     h.className = 'hint warn';
-    h.textContent = '注意：这只会删掉规则记录，不会改动磁盘上的目录或链接。如果想把链接还原成真实目录，请先执行「恢复」。';
+    h.textContent = t('del.confirm_warn');
     p2.appendChild(h);
     body.appendChild(p1);
     body.appendChild(p2);
     openModal({
-      title: '确认删除规则',
+      title: t('del.confirm_title'),
       body: body,
       actions: [
-        { label: '取消', onClick: closeModal },
+        { label: t('common.cancel'), onClick: closeModal },
         {
-          label: '删除', kind: 'danger',
+          label: t('common.delete'), kind: 'danger',
           onClick: async function () {
             try {
               await invoke('delete_rules', { ids: ids });
               state.picked.clear();
               closeModal();
-              toast('已删除', ids.length + ' 条规则记录', 'ok');
+              toast(t('del.done'), tf('del.done_hint', { n: ids.length }), 'ok');
               await refresh(false);
-            } catch (e) { toast('删除失败', e.message, 'error'); }
+            } catch (e) { toast(t('del.failed'), e.message, 'error'); }
           },
         },
       ],
@@ -2373,7 +2373,7 @@ document.addEventListener('drop', async function (ev) {
     await invoke('reorder_rules', { orderedIds: orderedIds });
     await refresh(true);
   } catch (e) {
-    toast('调整顺序失败', e.message, 'error');
+    toast(t('toast.reorder_failed'), e.message, 'error');
   }
 });
 
@@ -2408,7 +2408,7 @@ backend.listen('td-progress', function (ev) {
 
 backend.listen('td-tray-boot', function (ev) {
   const p = ev.payload || {};
-  toast('托盘：开机重建', p.message, p.ok ? 'ok' : 'warn');
+  toast(t('toast.tray_boot'), p.message, p.ok ? 'ok' : 'warn');
   refresh(true);
 });
 
