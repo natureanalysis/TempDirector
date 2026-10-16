@@ -404,6 +404,16 @@ fn zh(key: &str) -> &'static str {
         "cli.mkdir_failed" => "创建数据目录失败：{err}",
         "cli.unknown_cmd" => "未知命令：{cmd}",
         "cli.error_prefix" => "❌ {err}",
+        "timefmt.zero" => "0 秒",
+        "timefmt.days" => "{n} 天",
+        "timefmt.hours" => "{n} 小时",
+        "timefmt.minutes" => "{n} 分",
+        "timefmt.seconds" => "{n} 秒",
+        "timefmt.now" => "现在",
+        "timefmt.ago" => "{dur}前",
+        "timefmt.bad_time" => "无法理解的时间「{s}」（可用 today / yesterday / 90s / 30m / 2h / 7d / Unix秒）",
+        "timefmt.bad_number" => "时长的数字部分非法：{s}",
+        "timefmt.bad_unit" => "未知时间单位「{unit}」（用 s / m / h / d）",
         _ => "",
     }
 }
@@ -723,6 +733,16 @@ fn en(key: &str) -> &'static str {
         "cli.mkdir_failed" => "Failed to create data directory: {err}",
         "cli.unknown_cmd" => "Unknown command: {cmd}",
         "cli.error_prefix" => "❌ {err}",
+        "timefmt.zero" => "0 seconds",
+        "timefmt.days" => "{n} days",
+        "timefmt.hours" => "{n} hours",
+        "timefmt.minutes" => "{n} min",
+        "timefmt.seconds" => "{n} seconds",
+        "timefmt.now" => "now",
+        "timefmt.ago" => "{dur} ago",
+        "timefmt.bad_time" => "Cannot understand time \"{s}\" (valid: today / yesterday / 90s / 30m / 2h / 7d / Unix-seconds)",
+        "timefmt.bad_number" => "Invalid numeric part in duration: {s}",
+        "timefmt.bad_unit" => "Unknown time unit \"{unit}\" (use s / m / h / d)",
         _ => "",
     }
 }

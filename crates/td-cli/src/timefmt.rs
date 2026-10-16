@@ -5,6 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use td_core::i18n::{t, tf};
 use td_core::{TdError, TdResult};
 
 /// 本地"当天已过多少秒"（时:分:秒）。用于把 UTC now 折算本地零点：
@@ -34,7 +35,7 @@ pub(crate) fn now_utc_secs() -> i64 {
 /// 不复用 `util::human_dur_ms`（它只到秒级，86400s 会显示成"86400.0s"）。
 pub(crate) fn human_duration(secs: i64) -> String {
     if secs <= 0 {
-        return "0 秒".into();
+        return t("timefmt.zero").into();
     }
     let d = secs / 86400;
     let h = (secs % 86400) / 3600;
@@ -42,19 +43,19 @@ pub(crate) fn human_duration(secs: i64) -> String {
     let s = secs % 60;
     let mut parts: Vec<String> = Vec::new();
     if d > 0 {
-        parts.push(format!("{d} 天"));
+        parts.push(tf("timefmt.days", &[("n", &d.to_string())]));
         if h > 0 && d < 30 {
-            parts.push(format!("{h} 小时"));
+            parts.push(tf("timefmt.hours", &[("n", &h.to_string())]));
         }
     } else if h > 0 {
-        parts.push(format!("{h} 小时"));
+        parts.push(tf("timefmt.hours", &[("n", &h.to_string())]));
         if m > 0 {
-            parts.push(format!("{m} 分"));
+            parts.push(tf("timefmt.minutes", &[("n", &m.to_string())]));
         }
     } else if m > 0 {
-        parts.push(format!("{m} 分"));
+        parts.push(tf("timefmt.minutes", &[("n", &m.to_string())]));
     } else {
-        parts.push(format!("{s} 秒"));
+        parts.push(tf("timefmt.seconds", &[("n", &s.to_string())]));
     }
     parts.join(" ")
 }
@@ -62,9 +63,9 @@ pub(crate) fn human_duration(secs: i64) -> String {
 /// 距今多久以前（带"前"）。
 pub(crate) fn ago_text(secs_ago: i64) -> String {
     if secs_ago <= 0 {
-        return "现在".into();
+        return t("timefmt.now").into();
     }
-    format!("{}前", human_duration(secs_ago))
+    tf("timefmt.ago", &[("dur", &human_duration(secs_ago))])
 }
 
 /// 解析时间点参数为 Unix 秒。接受：
@@ -85,23 +86,19 @@ pub(crate) fn parse_when(s: &str, now_utc: i64, tod_secs: i64) -> TdResult<i64> 
     // 数字前缀 + 字母单位。用 find+切片把字母**保留**在 unit 里
     // （split_once 会丢掉分隔符本身，"1h" 会被切成 ("1","")）。
     let idx = t.find(|c: char| c.is_alphabetic()).ok_or_else(|| {
-        TdError::Other(format!(
-            "无法理解的时间「{s}」（可用 today / yesterday / 90s / 30m / 2h / 7d / Unix秒）"
-        ))
+        TdError::Other(tf("timefmt.bad_time", &[("s", s)]))
     })?;
     let (num, unit) = (&t[..idx], &t[idx..]);
     let n: i64 = num
         .parse()
-        .map_err(|_| TdError::Other(format!("时长的数字部分非法：{s}")))?;
+        .map_err(|_| TdError::Other(tf("timefmt.bad_number", &[("s", s)])))?;
     let mult = match unit {
         "s" | "sec" | "secs" => 1,
         "m" | "min" | "mins" => 60,
         "h" | "hr" | "hrs" => 3600,
         "d" | "day" | "days" => 86400,
         _ => {
-            return Err(TdError::Other(format!(
-                "未知时间单位「{unit}」（用 s / m / h / d）"
-            )))
+            return Err(TdError::Other(tf("timefmt.bad_unit", &[("unit", unit)])))
         }
     };
     Ok(now_utc - n * mult)
@@ -110,12 +107,18 @@ pub(crate) fn parse_when(s: &str, now_utc: i64, tod_secs: i64) -> TdResult<i64> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use td_core::i18n::{set_locale, Locale};
+
+    fn zh() {
+        set_locale(Locale::Zh);
+    }
 
     const NOW: i64 = 1_700_000_000;
     const TOD: i64 = 3600 * 10 + 200; // 当天已过 10:03:20
 
     #[test]
     fn parse_when_relative_and_keywords() {
+        zh();
         assert_eq!(parse_when("1h", NOW, TOD).unwrap(), NOW - 3600);
         assert_eq!(parse_when("30m", NOW, TOD).unwrap(), NOW - 1800);
         assert_eq!(parse_when("7d", NOW, TOD).unwrap(), NOW - 7 * 86400);
@@ -129,6 +132,7 @@ mod tests {
 
     #[test]
     fn ago_text_is_relative() {
+        zh();
         assert_eq!(ago_text(0), "现在");
         assert!(ago_text(3600).ends_with('前'));
         assert!(ago_text(-5).ends_with("在"), "未来时刻归一为「现在」");
@@ -136,6 +140,7 @@ mod tests {
 
     #[test]
     fn human_duration_uses_big_units() {
+        zh();
         assert_eq!(human_duration(45), "45 秒");
         assert_eq!(human_duration(120), "2 分");
         assert_eq!(human_duration(3600), "1 小时");
