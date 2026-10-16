@@ -29,6 +29,7 @@ use crate::engine::{self, ApplyOptions};
 use crate::error::{TdError, TdResult};
 use crate::fsops::mover::Progress;
 use crate::fsops::verify::VerifyMode;
+use crate::i18n::tf;
 use crate::store::Store;
 
 /// job 文件格式版本。
@@ -78,8 +79,11 @@ impl JobResult {
         let ok = self.items.iter().filter(|i| i.ok).count();
         let failed = self.items.len() - ok;
         match &self.error {
-            Some(e) => format!("worker 失败：{e}"),
-            None => format!("worker 完成：成功 {ok}，失败 {failed}"),
+            Some(e) => tf("worker.failed", &[("err", e)]),
+            None => tf("worker.done", &[
+                ("ok", &ok.to_string()),
+                ("failed", &failed.to_string()),
+            ]),
         }
     }
 }
@@ -137,10 +141,10 @@ pub fn validate_job_location(path: &Path) -> TdResult<()> {
     let actual = crate::util::normalize_key(&abs.to_string_lossy());
     let prefix = format!("{canon}\\");
     if !actual.starts_with(&prefix) {
-        return Err(TdError::SafetyBlocked(format!(
-            "拒绝执行：job 文件必须位于 {canon}\\ 之内，实际是 {actual}。\
-             （提权 worker 只接受本程序自己写出的任务文件）"
-        )));
+        return Err(TdError::SafetyBlocked(tf("worker.bad_location", &[
+            ("canon", &canon),
+            ("actual", &actual),
+        ])));
     }
     Ok(())
 }
@@ -150,14 +154,14 @@ pub fn run_job(job_path: &Path) -> TdResult<JobResult> {
     validate_job_location(job_path)?;
 
     let text = std::fs::read_to_string(job_path)
-        .map_err(|e| TdError::Other(format!("读取 job 失败：{e}")))?;
+        .map_err(|e| TdError::Other(tf("worker.read_failed", &[("err", &e.to_string())])))?;
     let job: Job = serde_json::from_str(&text)
-        .map_err(|e| TdError::Other(format!("解析 job 失败：{e}")))?;
+        .map_err(|e| TdError::Other(tf("worker.parse_failed", &[("err", &e.to_string())])))?;
     if job.schema > JOB_VERSION {
-        return Err(TdError::Other(format!(
-            "job 版本 {} 高于本程序支持的 {JOB_VERSION}",
-            job.schema
-        )));
+        return Err(TdError::Other(tf("worker.bad_version", &[
+            ("ver", &job.schema.to_string()),
+            ("max", &JOB_VERSION.to_string()),
+        ])));
     }
 
     // 时间戳从库里取（本地时间、可读），失败才退回 unix 秒
@@ -167,10 +171,11 @@ pub fn run_job(job_path: &Path) -> TdResult<JobResult> {
         None,
         "info",
         "worker_start",
-        &format!(
-            "提权 worker 开始：kind={} rules={:?} origin_pid={}",
-            job.kind, job.rules, job.origin_pid
-        ),
+        &tf("worker.start_log", &[
+            ("kind", &job.kind),
+            ("rules", &format!("{:?}", job.rules)),
+            ("pid", &job.origin_pid.to_string()),
+        ]),
     );
 
     let mut items: Vec<JobItem> = Vec::new();
@@ -242,9 +247,9 @@ pub fn run_job(job_path: &Path) -> TdResult<JobResult> {
             Err(e) => hard_error = Some(e.to_string()),
         },
         other => {
-            return Err(TdError::InvalidPath(format!(
-                "未知的 job 种类：{other}（可用：apply / restore / boot_rebuild）"
-            )))
+            return Err(TdError::InvalidPath(tf("worker.unknown_kind", &[
+                ("kind", other),
+            ])))
         }
     }
 

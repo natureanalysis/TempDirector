@@ -358,6 +358,14 @@ fn zh(key: &str) -> &'static str {
         "elevated.exe_path_failed" => "取当前程序路径失败：{err}",
         "elevated.job_log" => "{kind}（提权）：{summary}",
         "elevated.no_result" => "提权进程没留下结果（退出码 {code}）。可能是它启动失败，或被安全软件拦下了。",
+        "worker.failed" => "worker 失败：{err}",
+        "worker.done" => "worker 完成：成功 {ok}，失败 {failed}",
+        "worker.bad_location" => "拒绝执行：job 文件必须位于 {canon}\\ 之内，实际是 {actual}。（提权 worker 只接受本程序自己写出的任务文件）",
+        "worker.read_failed" => "读取 job 失败：{err}",
+        "worker.parse_failed" => "解析 job 失败：{err}",
+        "worker.bad_version" => "job 版本 {ver} 高于本程序支持的 {max}",
+        "worker.start_log" => "提权 worker 开始：kind={kind} rules={rules} origin_pid={pid}",
+        "worker.unknown_kind" => "未知的 job 种类：{kind}（可用：apply / restore / boot_rebuild）",
         _ => "",
     }
 }
@@ -631,6 +639,14 @@ fn en(key: &str) -> &'static str {
         "elevated.exe_path_failed" => "Failed to get current executable path: {err}",
         "elevated.job_log" => "{kind} (elevated): {summary}",
         "elevated.no_result" => "Elevated process left no result (exit code {code}). It may have failed to start, or was blocked by security software.",
+        "worker.failed" => "worker failed: {err}",
+        "worker.done" => "worker done: {ok} succeeded, {failed} failed",
+        "worker.bad_location" => "Refused: job file must be inside {canon}\\, actually at {actual}. (The elevated worker only accepts task files written by this program itself)",
+        "worker.read_failed" => "Failed to read job: {err}",
+        "worker.parse_failed" => "Failed to parse job: {err}",
+        "worker.bad_version" => "job version {ver} is higher than supported {max}",
+        "worker.start_log" => "Elevated worker started: kind={kind} rules={rules} origin_pid={pid}",
+        "worker.unknown_kind" => "Unknown job kind: {kind} (valid: apply / restore / boot_rebuild)",
         _ => "",
     }
 }
