@@ -2,6 +2,7 @@
 
 use crate::elevate;
 use crate::error::{TdError, TdResult};
+use crate::i18n::{t, tf};
 use crate::store::Store;
 use crate::worker;
 
@@ -21,9 +22,7 @@ pub fn run_elevated_job(
         return Ok(Vec::new());
     }
     if opts.dry_run {
-        return Err(TdError::Other(
-            "预演不需要提权：请先直接预演（它只读不写）".into(),
-        ));
+        return Err(TdError::Other(t("elevated.dry_run_no_elev").into()));
     }
 
     let job = worker::Job {
@@ -37,7 +36,7 @@ pub fn run_elevated_job(
     };
     let job_path = worker::write_job(&job)?;
     let exe = std::env::current_exe()
-        .map_err(|e| TdError::Other(format!("取当前程序路径失败：{e}")))?;
+        .map_err(|e| TdError::Other(tf("elevated.exe_path_failed", &[("err", &e.to_string())])))?;
     let args = format!(
         "elevated {}",
         elevate::quote_arg(&job_path.to_string_lossy())
@@ -55,7 +54,10 @@ pub fn run_elevated_job(
                 None,
                 if r.ok { "info" } else { "warn" },
                 "elevated_job",
-                &format!("{kind}（提权）：{}", r.one_line()),
+                &tf("elevated.job_log", &[
+                    ("kind", kind),
+                    ("summary", &r.one_line()),
+                ]),
             )?;
             Ok(r
                 .items
@@ -70,8 +72,8 @@ pub fn run_elevated_job(
                 })
                 .collect())
         }
-        None => Err(TdError::Other(format!(
-            "提权进程没留下结果（退出码 {code}）。可能是它启动失败，或被安全软件拦下了。"
-        ))),
+        None => Err(TdError::Other(tf("elevated.no_result", &[
+            ("code", &code.to_string()),
+        ]))),
     }
 }

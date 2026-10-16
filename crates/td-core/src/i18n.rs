@@ -351,6 +351,13 @@ fn zh(key: &str) -> &'static str {
         "lifecycle.write_failed" => "写入 {path} 失败：{err}",
         "lifecycle.read_failed" => "读取 {path} 失败：{err}",
         "lifecycle.parse_failed" => "解析 {path} 失败：{err}",
+        "apply.no_source_dir" => "源目录不存在或不是目录，无法检测占用：{path}",
+        "apply.blocked_log" => "{name}：{summary}",
+        "usecase_clean.log" => "清理「{label}」：{summary}",
+        "elevated.dry_run_no_elev" => "预演不需要提权：请先直接预演（它只读不写）",
+        "elevated.exe_path_failed" => "取当前程序路径失败：{err}",
+        "elevated.job_log" => "{kind}（提权）：{summary}",
+        "elevated.no_result" => "提权进程没留下结果（退出码 {code}）。可能是它启动失败，或被安全软件拦下了。",
         _ => "",
     }
 }
@@ -617,6 +624,13 @@ fn en(key: &str) -> &'static str {
         "lifecycle.write_failed" => "Failed to write {path}: {err}",
         "lifecycle.read_failed" => "Failed to read {path}: {err}",
         "lifecycle.parse_failed" => "Failed to parse {path}: {err}",
+        "apply.no_source_dir" => "Source directory does not exist or is not a directory; cannot check occupancy: {path}",
+        "apply.blocked_log" => "{name}: {summary}",
+        "usecase_clean.log" => "Clean \"{label}\": {summary}",
+        "elevated.dry_run_no_elev" => "Dry run does not need elevation: run the dry run directly (it is read-only)",
+        "elevated.exe_path_failed" => "Failed to get current executable path: {err}",
+        "elevated.job_log" => "{kind} (elevated): {summary}",
+        "elevated.no_result" => "Elevated process left no result (exit code {code}). It may have failed to start, or was blocked by security software.",
         _ => "",
     }
 }

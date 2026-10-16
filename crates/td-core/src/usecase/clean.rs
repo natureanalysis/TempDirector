@@ -7,6 +7,7 @@ use crate::error::{TdError, TdResult};
 use crate::fsops::clean;
 use crate::fsops::exclude::Excludes;
 use crate::fsops::mover::Progress;
+use crate::i18n::tf;
 use crate::safety;
 use crate::store::Store;
 use crate::util;
@@ -96,7 +97,10 @@ pub fn clean_run(
             rule_id,
             "info",
             "clean",
-            &format!("清理「{label}」：{summary}"),
+            &tf("usecase_clean.log", &[
+                ("label", label.as_str()),
+                ("summary", &summary),
+            ]),
         )?;
         // 同时落一条操作流水：event 的 message 聚合不了，「效益统计」要从
         // operations 的结构化列（file_count / bytes）上取数。

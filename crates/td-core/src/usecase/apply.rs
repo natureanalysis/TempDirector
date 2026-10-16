@@ -4,6 +4,7 @@ use crate::engine;
 use crate::error::{TdError, TdResult};
 use crate::fsops::mover::Progress;
 use crate::fsops::occupancy::{self, LockReport, LockScanOptions};
+use crate::i18n::tf;
 use crate::store::Store;
 
 use super::view::{ApplyOpts, ItemOutcome};
@@ -121,10 +122,9 @@ pub fn check_locks(store: &Store, id: i64) -> TdResult<LockReport> {
     let rule = store.get_rule(id)?;
     let resolved = engine::resolve(store, &rule)?;
     if !resolved.source.is_dir() {
-        return Err(TdError::InvalidPath(format!(
-            "源目录不存在或不是目录，无法检测占用：{}",
-            resolved.source.display()
-        )));
+        return Err(TdError::InvalidPath(tf("apply.no_source_dir", &[
+            ("path", &resolved.source.display().to_string()),
+        ])));
     }
     let report = occupancy::scan_locks(&resolved.source, &LockScanOptions::default())?;
     if !report.is_clear() {
@@ -132,7 +132,10 @@ pub fn check_locks(store: &Store, id: i64) -> TdResult<LockReport> {
             Some(id),
             "warn",
             "blocked",
-            &format!("{}：{}", rule.name, report.summary()),
+            &tf("apply.blocked_log", &[
+                ("name", &rule.name),
+                ("summary", &report.summary()),
+            ]),
         )?;
     }
     Ok(report)
