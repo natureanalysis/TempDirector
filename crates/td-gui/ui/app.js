@@ -657,24 +657,24 @@ const OPTS_NORMAL = { dry_run: false, allow_merge: false, skip_lock_check: false
 async function runElevated(kind, ids) {
   if (!ids.length) return;
   state.busy = true;
-  showProgress('正在请求管理员权限…请在 UAC 弹窗上点「是」');
+  showProgress(t('act.elev_request'));
   try {
     const out = await invoke('run_elevated_job', { kind: kind, ids: ids, opts: OPTS_NORMAL });
     hideProgress();
     const ok = out.filter(function (o) { return o.ok; }).length;
     const failed = out.length - ok;
     out.forEach(function (o) {
-      if (!o.ok) toast('失败：#' + o.rule_id + ' ' + o.name, o.message, 'error');
+      if (!o.ok) toast(tf('act.fail_item', { id: o.rule_id, name: o.name }), o.message, 'error');
     });
     toast(
-      kind === 'apply' ? '提权应用完成' : '提权恢复完成',
-      ok + ' 条成功' + (failed ? '，' + failed + ' 条失败' : ''),
+      kind === 'apply' ? t('act.elev_apply_done') : t('act.elev_restore_done'),
+      tf('act.summary', { ok: ok }) + (failed ? tf('act.summary_failed', { n: failed }) : ''),
       failed ? 'warn' : 'ok'
     );
     await refresh(true);
   } catch (e) {
     hideProgress();
-    toast('提权执行失败', e.message, 'error');
+    toast(t('act.elev_failed'), e.message, 'error');
   } finally {
     state.busy = false;
   }
@@ -696,19 +696,19 @@ async function runApply(ids, dryRun) {
     if (needElev.length) {
       const others = ids.length - needElev.length;
       const choice = await askChoice({
-        title: '有规则需要管理员权限',
+        title: t('act.elev_needed_title'),
         lines: [
-          { text: '选中的 ' + ids.length + ' 条里有 ' + needElev.length + ' 条位于受保护位置（Program Files / ProgramData / Windows 下），搬运与建链需要管理员权限。' },
+          { text: tf('act.elev_needed_line1', { total: ids.length, n: needElev.length }) },
           {
-            text: '选择「以管理员身份执行」会弹出一次 UAC 授权窗口；授权后由一个一次性进程完成这次操作（它只认规则 id，不接受任意路径）。' +
-              (others ? '其余 ' + others + ' 条会一起在提权进程里处理。' : ''),
+            text: t('act.elev_needed_line2') +
+              (others ? tf('act.elev_needed_line2_rest', { n: others }) : ''),
             kind: '',
           },
         ],
         actions: [
-          { label: '以管理员身份执行', kind: 'primary', value: 'elevate' },
-          { label: '只处理不需要权限的', value: 'partial' },
-          { label: '取消', value: 'cancel' },
+          { label: t('act.elev_run'), kind: 'primary', value: 'elevate' },
+          { label: t('act.elev_partial'), value: 'partial' },
+          { label: t('common.cancel'), value: 'cancel' },
         ],
       });
       if (choice !== 'elevate' && choice !== 'partial') return;
@@ -716,7 +716,7 @@ async function runApply(ids, dryRun) {
       if (choice === 'partial') {
         const rest = ids.filter(function (id) { return needElev.indexOf(id) < 0; });
         if (!rest.length) {
-          toast('没有可处理的规则', '选中的都需要管理员权限', 'warn');
+          toast(t('act.no_handle'), t('act.all_need_elev'), 'warn');
           return;
         }
         ids = rest;
@@ -725,20 +725,20 @@ async function runApply(ids, dryRun) {
   }
 
   state.busy = true;
-  showProgress((dryRun ? '预演：' : '') + '正在处理 ' + ids.length + ' 条规则…');
+  showProgress((dryRun ? t('act.dry_prefix') : '') + tf('act.processing', { n: ids.length }));
   try {
     const out = await invoke('apply_rules', { ids: ids, opts: { dry_run: !!dryRun, allow_merge: false, skip_lock_check: false, sha256: false } });
     const ok = out.filter(function (o) { return o.ok; }).length;
     const failed = out.length - ok;
     hideProgress();
     out.forEach(function (o) {
-      if (!o.ok) toast('失败：#' + o.rule_id + ' ' + o.name, o.message, 'error');
+      if (!o.ok) toast(tf('act.fail_item', { id: o.rule_id, name: o.name }), o.message, 'error');
     });
-    toast(dryRun ? '预演完成' : '执行完成', ok + ' 条成功' + (failed ? '，' + failed + ' 条失败' : ''), failed ? 'warn' : 'ok');
+    toast(dryRun ? t('act.dry_done') : t('act.apply_done'), tf('act.summary', { ok: ok }) + (failed ? tf('act.summary_failed', { n: failed }) : ''), failed ? 'warn' : 'ok');
     await refresh(true);
   } catch (e) {
     hideProgress();
-    toast('执行失败', e.message, 'error');
+    toast(t('act.apply_failed'), e.message, 'error');
   } finally {
     state.busy = false;
   }
@@ -747,20 +747,20 @@ async function runApply(ids, dryRun) {
 async function runRestore(ids) {
   if (!ids.length) return;
   state.busy = true;
-  showProgress('正在恢复 ' + ids.length + ' 条规则…');
+  showProgress(tf('act.restoring', { n: ids.length }));
   try {
     const out = await invoke('restore_rules', { ids: ids, opts: { dry_run: false, allow_merge: true, skip_lock_check: true, sha256: false } });
     const ok = out.filter(function (o) { return o.ok; }).length;
     const failed = out.length - ok;
     hideProgress();
     out.forEach(function (o) {
-      if (!o.ok) toast('失败：#' + o.rule_id + ' ' + o.name, o.message, 'error');
+      if (!o.ok) toast(tf('act.fail_item', { id: o.rule_id, name: o.name }), o.message, 'error');
     });
-    toast('恢复完成', ok + ' 条成功' + (failed ? '，' + failed + ' 条失败' : ''), failed ? 'warn' : 'ok');
+    toast(t('act.restore_done'), tf('act.summary', { ok: ok }) + (failed ? tf('act.summary_failed', { n: failed }) : ''), failed ? 'warn' : 'ok');
     await refresh(true);
   } catch (e) {
     hideProgress();
-    toast('恢复失败', e.message, 'error');
+    toast(t('act.restore_failed'), e.message, 'error');
   } finally {
     state.busy = false;
   }
@@ -775,7 +775,7 @@ async function restoreAllRules() {
     return r.badge === '✅' || r.badge === '⚠️';
   });
   if (!linked.length) {
-    toast('没有可恢复的规则', '当前没有任何规则处于链接状态', 'warn');
+    toast(t('act.all.nothing'), t('act.all.nothing_hint'), 'warn');
     return;
   }
   const needElev = linked.filter(function (r) { return r.needs_elevation; }).length;
@@ -784,33 +784,33 @@ async function restoreAllRules() {
   const body = document.createElement('div');
   const p1 = document.createElement('div');
   p1.className = 'field';
-  p1.textContent = '将把 ' + linked.length + ' 条处于链接状态的规则全部还原：数据从 RAM 盘搬回原目录，并删除目录联接。';
+  p1.textContent = tf('act.all.intro', { n: linked.length });
   body.appendChild(p1);
   const p2 = document.createElement('div');
   p2.className = 'field';
   const h1 = document.createElement('div');
   h1.className = 'hint warn';
-  h1.textContent = '搬完之后"当前重定向"将归零（缓存重新写回 SSD）。规则配置保留：期望开启的规则下次「应用」会重新重定向；想彻底停用请关闭期望或删除规则。';
+  h1.textContent = t('act.all.warn');
   p2.appendChild(h1);
   const h2 = document.createElement('div');
   h2.className = 'hint';
   h2.textContent = needElev
-    ? '其中 ' + needElev + ' 条位于受保护位置，确认后会弹出一次 UAC 授权，全部规则将在提权进程里一起处理。'
-    : '数据量可能较大，过程中请勿关机。';
+    ? tf('act.all.elev', { n: needElev })
+    : t('act.all.keep_calm');
   p2.appendChild(h2);
   body.appendChild(p2);
   const list = document.createElement('div');
   list.className = 'field';
-  list.textContent = '涉及：' + linked.map(function (r) { return r.name; }).join('、');
+  list.textContent = tf('act.all.involved', { names: linked.map(function (r) { return r.name; }).join(t('list.sep')) });
   body.appendChild(list);
 
   openModal({
-    title: '恢复全部规则（一键还原）',
+    title: t('act.all.title'),
     body: body,
     actions: [
-      { label: '取消', onClick: closeModal },
+      { label: t('common.cancel'), onClick: closeModal },
       {
-        label: '全部恢复', kind: 'danger',
+        label: t('act.all.confirm'), kind: 'danger',
         onClick: async function () {
           closeModal();
           if (needElev) return runElevated('restore', ids);
@@ -824,15 +824,15 @@ async function restoreAllRules() {
 async function doRelink(id) {
   try {
     const o = await invoke('relink_rule', { id: id });
-    toast(o.ok ? '已重建链接' : '失败', o.message, o.ok ? 'ok' : 'error');
+    toast(o.ok ? t('act.relink_ok') : t('act.relink_fail'), o.message, o.ok ? 'ok' : 'error');
     await refresh(true);
   } catch (e) {
-    toast('重建失败', e.message, 'error');
+    toast(t('act.relink_failed'), e.message, 'error');
   }
 }
 
 async function doLocks(id) {
-  toast('正在检测占用…', '扫描源目录中的文件句柄', '');
+  toast(t('act.locks.scanning'), t('act.locks.scanning_hint'), '');
   try {
     const rep = await invoke('check_locks', { id: id });
     const body = document.createElement('div');
@@ -841,7 +841,7 @@ async function doLocks(id) {
       p.className = 'field';
       const hint = document.createElement('div');
       hint.className = 'hint ok';
-      hint.textContent = '✅ 未发现占用（已扫描 ' + rep.scanned + ' 个文件，' + rep.elapsed_ms + 'ms），可以安全搬运。';
+      hint.textContent = tf('act.locks.clear', { n: rep.scanned, ms: rep.elapsed_ms });
       p.appendChild(hint);
       body.appendChild(p);
     } else {
@@ -849,8 +849,8 @@ async function doLocks(id) {
       p.className = 'field';
       const hint = document.createElement('div');
       hint.className = 'hint warn';
-      hint.textContent = rep.locked_files.length + ' 个文件被占用' + (rep.truncated ? '（已截断）' : '') +
-        (rep.denied_files.length ? '，' + rep.denied_files.length + ' 个文件无权限访问' : '');
+      hint.textContent = tf('act.locks.busy', { n: rep.locked_files.length }) + (rep.truncated ? t('act.locks.truncated') : '') +
+        (rep.denied_files.length ? tf('act.locks.denied', { n: rep.denied_files.length }) : '');
       p.appendChild(hint);
       body.appendChild(p);
 
@@ -858,12 +858,12 @@ async function doLocks(id) {
         const bl = document.createElement('div');
         bl.className = 'field';
         const lbl = document.createElement('label');
-        lbl.textContent = '占用者（关闭它们后重试）';
+        lbl.textContent = t('act.locks.blockers');
         bl.appendChild(lbl);
         rep.blockers.forEach(function (b) {
           const line = document.createElement('div');
           line.className = 'hint err';
-          line.textContent = '⛔ ' + b.app + '（PID ' + b.pid + '）' + (b.is_service ? ' [服务]' : '');
+          line.textContent = '⛔ ' + b.app + '（PID ' + b.pid + '）' + (b.is_service ? t('act.locks.service') : '');
           bl.appendChild(line);
         });
         body.appendChild(bl);
@@ -871,7 +871,7 @@ async function doLocks(id) {
       const files = document.createElement('div');
       files.className = 'field';
       const fl = document.createElement('label');
-      fl.textContent = '被占用的文件（最多 10 个）';
+      fl.textContent = t('act.locks.files');
       files.appendChild(fl);
       rep.locked_files.slice(0, 10).forEach(function (f) {
         const line = document.createElement('div');
@@ -881,23 +881,23 @@ async function doLocks(id) {
       });
       body.appendChild(files);
     }
-    openModal({ title: '占用检测结果', body: body, actions: [{ label: '关闭', onClick: closeModal }] });
+    openModal({ title: t('act.locks.title'), body: body, actions: [{ label: t('common.close'), onClick: closeModal }] });
     await refresh(true);
   } catch (e) {
-    toast('检测失败', e.message, 'error');
+    toast(t('act.locks.failed'), e.message, 'error');
   }
 }
 
 async function doBoot() {
   state.busy = true;
-  showProgress('正在执行开机重建…');
+  showProgress(t('act.boot.running'));
   try {
     const r = await invoke('boot_rebuild');
     hideProgress();
     const lines = [r.roots.map(function (x) {
-      return (x.ready ? '✅ ' : '❌ ') + x.path + (x.ready ? '（等待 ' + x.waited_ms + 'ms）' : '：' + (x.error || '未就绪'));
+      return (x.ready ? '✅ ' : '❌ ') + x.path + (x.ready ? tf('act.boot.waited', { ms: x.waited_ms }) : '：' + (x.error || t('act.boot.not_ready')));
     }).join('\n'), r.one_line()].join('\n\n');
-    toast('开机重建完成', r.one_line(), r.has_problem() ? 'warn' : 'ok');
+    toast(t('act.boot.done'), r.one_line(), r.has_problem() ? 'warn' : 'ok');
     if (r.warnings.length || r.failed.length) {
       const body = document.createElement('div');
       r.warnings.concat(r.failed.map(function (f) { return '#' + f[0] + ' ' + f[1]; })).forEach(function (w) {
@@ -906,13 +906,13 @@ async function doBoot() {
         d.textContent = '⚠ ' + w;
         body.appendChild(d);
       });
-      openModal({ title: '开机重建：需要留意', body: body, actions: [{ label: '知道了', kind: 'primary', onClick: closeModal }] });
+      openModal({ title: t('act.boot.attention'), body: body, actions: [{ label: t('act.boot.got_it'), kind: 'primary', onClick: closeModal }] });
     }
     void lines;
     await refresh(true);
   } catch (e) {
     hideProgress();
-    toast('开机重建失败', e.message, 'error');
+    toast(t('act.boot.failed'), e.message, 'error');
   } finally {
     state.busy = false;
   }
