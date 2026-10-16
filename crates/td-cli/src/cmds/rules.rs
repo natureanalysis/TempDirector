@@ -81,6 +81,11 @@ pub(crate) fn cmd_rules(store: &Store, p: &Parsed) -> TdResult<()> {
                 ));
             }
 
+            // CLI 直连 store，不经过 usecase 的表单校验，这里复用同一套
+            // 排除模式校验，防止垃圾模式静默入库（清理时被容错为空而失去保护）。
+            let excludes: Vec<String> = p.values("exclude").to_vec();
+            td_core::fsops::exclude::Excludes::new(&excludes)?;
+
             let nr = NewRule {
                 name,
                 category,
@@ -91,6 +96,7 @@ pub(crate) fn cmd_rules(store: &Store, p: &Parsed) -> TdResult<()> {
                 want_enabled: p.has("enable"),
                 rebuild_on_boot: !p.has("no-boot"),
                 notes: p.value("notes").map(|s| s.to_string()),
+                excludes,
             };
             let id = store.insert_rule(&nr)?;
             let rule = store.get_rule(id)?;

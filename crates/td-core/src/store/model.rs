@@ -51,6 +51,8 @@ pub struct Rule {
     pub needs_elevation: bool,
     pub notes: Option<String>,
     pub sort_order: i64,
+    /// 清理排除模式。只影响 `clean`（命中子树不删不剪），不改搬运语义。
+    pub excludes: Vec<String>,
 
     pub last_state: Option<String>,
     pub last_checked_at: Option<String>,
@@ -125,6 +127,8 @@ pub struct NewRule {
     pub want_enabled: bool,
     pub rebuild_on_boot: bool,
     pub notes: Option<String>,
+    #[serde(default)]
+    pub excludes: Vec<String>,
 }
 
 /// 操作流水的一行。
@@ -156,9 +160,15 @@ pub struct EventRow {
 
 pub const RULE_COLUMNS: &str = "id, name, category, source_template, source_norm, \
      target_root_id, target_subpath, link_type, want_enabled, rebuild_on_boot, \
-     acl_sddl, needs_elevation, notes, sort_order, \
+     acl_sddl, needs_elevation, notes, sort_order, excludes, \
      last_state, last_checked_at, last_error, last_files, last_bytes, applied_at, \
      created_at, updated_at";
+
+/// DB 里的 `excludes` 列（JSON 数组文本）→ `Vec<String>`。
+/// 手工改库写坏 JSON 时按"无排除"处理，不让一条脏数据拖垮整个列表。
+fn excludes_from_db(text: String) -> Vec<String> {
+    serde_json::from_str(&text).unwrap_or_default()
+}
 
 pub fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Rule> {
     Ok(Rule {
@@ -176,14 +186,15 @@ pub fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Rule> {
         needs_elevation: row.get(11)?,
         notes: row.get(12)?,
         sort_order: row.get(13)?,
-        last_state: row.get(14)?,
-        last_checked_at: row.get(15)?,
-        last_error: row.get(16)?,
-        last_files: row.get(17)?,
-        last_bytes: row.get(18)?,
-        applied_at: row.get(19)?,
-        created_at: row.get(20)?,
-        updated_at: row.get(21)?,
+        excludes: excludes_from_db(row.get(14)?),
+        last_state: row.get(15)?,
+        last_checked_at: row.get(16)?,
+        last_error: row.get(17)?,
+        last_files: row.get(18)?,
+        last_bytes: row.get(19)?,
+        applied_at: row.get(20)?,
+        created_at: row.get(21)?,
+        updated_at: row.get(22)?,
     })
 }
 

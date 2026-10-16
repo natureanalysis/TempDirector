@@ -314,6 +314,7 @@ mod tests {
                 want_enabled: true,
                 rebuild_on_boot: true,
                 notes: None,
+                excludes: Vec::new(),
             })
             .unwrap();
 
@@ -382,6 +383,7 @@ mod tests {
                 want_enabled: true,
                 rebuild_on_boot: true,
                 notes: None,
+                excludes: Vec::new(),
             })
             .unwrap();
 

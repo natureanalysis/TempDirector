@@ -23,6 +23,8 @@ pub(crate) fn print_help() {
   rules list [--enabled] [--category 分类] [--search 关键词] [--json]
   rules add <名称> <源路径模板> <目标子目录> [--root id] [--category 分类]
             [--link-type junction|symlink_dir] [--enable] [--no-boot] [--notes 备注]
+            [--exclude 模式]                     清理时跳过的子目录/文件，可重复多条
+                                                 如 --exclude sessions --exclude "logs\\old"
   rules rm <id...>
   rules enable|disable <id...|--all>
 

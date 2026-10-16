@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS rules (
     needs_elevation   INTEGER NOT NULL DEFAULT 0,
     notes             TEXT,
     sort_order        INTEGER NOT NULL DEFAULT 0,
+    -- 清理排除模式（JSON 数组，如 ["sessions","logs/old"]）。
+    -- 只影响 clean：命中的子树不删不剪；apply/restore 搬运永远是全量。
+    excludes          TEXT NOT NULL DEFAULT '[]',
 
     -- 以下为状态缓存，真相由实时检测给出（last_* 只用于列表排序与离线展示）
     last_state        TEXT,

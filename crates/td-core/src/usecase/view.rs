@@ -51,6 +51,8 @@ pub struct RuleView {
     pub has_acl: bool,
     pub needs_elevation: bool,
     pub notes: Option<String>,
+    /// 清理排除模式（只影响 clean，不改搬运）。
+    pub excludes: Vec<String>,
     pub badge: String,
     pub label: String,
     pub needs_attention: bool,
@@ -126,6 +128,9 @@ pub struct RuleForm {
     pub rebuild_on_boot: bool,
     #[serde(default)]
     pub notes: Option<String>,
+    /// 清理排除模式，如 `["sessions", "logs/old"]`。空 = 不排除。
+    #[serde(default)]
+    pub excludes: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -144,6 +149,7 @@ impl RuleForm {
             want_enabled: self.want_enabled,
             rebuild_on_boot: self.rebuild_on_boot,
             notes: self.notes.clone(),
+            excludes: self.excludes.clone(),
         }
     }
 }
@@ -243,6 +249,7 @@ pub struct CleanPreviewView {
     pub bytes: u64,
     pub bytes_text: String,
     pub links_skipped: u64,
+    pub excluded_skipped: u64,
     pub sample: Vec<CleanSampleEntry>,
     pub summary: String,
 }
@@ -259,6 +266,7 @@ pub struct CleanResultView {
     pub skipped: u64,
     pub skip_examples: Vec<String>,
     pub links_skipped: u64,
+    pub excluded_skipped: u64,
     pub summary: String,
 }
 

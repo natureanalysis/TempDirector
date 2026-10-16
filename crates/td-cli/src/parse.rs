@@ -2,6 +2,7 @@
 //!
 //! 约定：`--flag`、`--key value`、`--key=value` 与位置参数；
 //! 值以下一个 `--` 开头时视为未提供（该 flag 无值）。
+//! 同一 flag 可重复出现，值按出现顺序累积（[`Parsed::values`]）。
 
 use std::collections::HashMap;
 
@@ -10,7 +11,8 @@ use td_core::{TdError, TdResult};
 #[derive(Debug, Default)]
 pub(crate) struct Parsed {
     positional: Vec<String>,
-    flags: HashMap<String, Option<String>>,
+    /// 空 Vec 表示无值 flag；有值 flag 的值按出现顺序累积。
+    flags: HashMap<String, Vec<String>>,
 }
 
 impl Parsed {
@@ -21,7 +23,10 @@ impl Parsed {
             let a = &args[i];
             if let Some(rest) = a.strip_prefix("--") {
                 if let Some((k, v)) = rest.split_once('=') {
-                    out.flags.insert(k.to_string(), Some(v.to_string()));
+                    out.flags
+                        .entry(k.to_string())
+                        .or_default()
+                        .push(v.to_string());
                 } else {
                     let next_is_value = args
                         .get(i + 1)
@@ -29,10 +34,12 @@ impl Parsed {
                         .unwrap_or(false);
                     if next_is_value {
                         out.flags
-                            .insert(rest.to_string(), Some(args[i + 1].clone()));
+                            .entry(rest.to_string())
+                            .or_default()
+                            .push(args[i + 1].clone());
                         i += 1;
                     } else {
-                        out.flags.insert(rest.to_string(), None);
+                        out.flags.entry(rest.to_string()).or_default();
                     }
                 }
             } else {
@@ -48,8 +55,17 @@ impl Parsed {
     }
 
     pub(crate) fn value(&self, name: &str) -> Option<&str> {
-        self.flags.get(name).and_then(|v| v.as_deref())
+        self.flags
+            .get(name)
+            .and_then(|v| v.last())
+            .map(|s| s.as_str())
     }
+
+    /// 同一 flag 重复出现时累积的全部值（如多个 `--exclude`）。
+    pub(crate) fn values(&self, name: &str) -> &[String] {
+        self.flags.get(name).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
 
     /// 位置参数（可被 `--` 后的内容追加）。
     pub(crate) fn pos(&self, idx: usize) -> Option<&str> {
@@ -116,6 +132,23 @@ mod tests {
         assert!(p.value("dry-run").is_none(), "后随 flag 时不应吃掉它当值");
         assert!(p.has("dry-run"));
         assert!(p.has("limit2"));
+    }
+
+    #[test]
+    fn repeated_flag_accumulates_values_in_order() {
+        let p = parsed(&["--exclude", "sessions", "--exclude=logs/old", "--exclude", "*.log"]);
+        assert_eq!(
+            p.values("exclude"),
+            &["sessions".to_string(), "logs/old".to_string(), "*.log".to_string()]
+        );
+        assert!(p.values("missing").is_empty(), "未出现的 flag 返回空切片");
+        assert_eq!(p.value("exclude"), Some("*.log"), "value 取最后一个");
+    }
+
+    #[test]
+    fn bare_flag_repeat_does_not_clear_values() {
+        let p = parsed(&["--exclude", "a", "--exclude"]);
+        assert_eq!(p.values("exclude"), &["a".to_string()]);
     }
 
     #[test]

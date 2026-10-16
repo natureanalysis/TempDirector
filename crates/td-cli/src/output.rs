@@ -46,6 +46,9 @@ pub(crate) fn print_rule_row(rule: &Rule) {
     if let Some(n) = &rule.notes {
         println!("       备注：{n}");
     }
+    if !rule.excludes.is_empty() {
+        println!("       清理排除：{}", rule.excludes.join("、"));
+    }
 }
 
 pub(crate) fn yn(v: bool) -> &'static str {

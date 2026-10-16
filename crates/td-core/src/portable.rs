@@ -49,6 +49,9 @@ pub struct BundleRule {
     pub acl_sddl: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    /// 清理排除模式（v2 起支持；旧配置文件无此字段 → 空）。
+    #[serde(default)]
+    pub excludes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +140,7 @@ pub fn export_bundle(store: &Store) -> TdResult<Bundle> {
             rebuild_on_boot: rule.rebuild_on_boot,
             acl_sddl: rule.acl_sddl,
             notes: rule.notes,
+            excludes: rule.excludes,
         });
     }
 
@@ -222,6 +226,7 @@ pub fn import_bundle(
             want_enabled: br.want_enabled,
             rebuild_on_boot: br.rebuild_on_boot,
             notes: br.notes.clone(),
+            excludes: br.excludes.clone(),
         };
 
         if dry_run {
@@ -267,6 +272,7 @@ mod tests {
             want_enabled: true,
             rebuild_on_boot: true,
             notes: Some("先关 Chrome".into()),
+            excludes: vec!["sessions".into()],
         })
         .unwrap();
 
@@ -306,6 +312,7 @@ mod tests {
             want_enabled: true,
             rebuild_on_boot: true,
             notes: None,
+            excludes: Vec::new(),
         })
         .unwrap();
         let bundle = export_bundle(&src).unwrap();
@@ -343,6 +350,8 @@ mod tests {
                 rebuild_on_boot: true,
                 acl_sddl: None,
                 notes: None,
+                excludes: Vec::new(),
+
             }],
         };
         let dst = Store::open_in_memory().unwrap();

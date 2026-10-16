@@ -176,6 +176,7 @@ input, select { font-family: inherit; font-size: 13px; }
   outline: none;
 }
 .input:focus, .select:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+textarea.input { resize: vertical; min-height: 3.2em; line-height: 1.5; font-family: inherit; }
 .search { width: 300px; }
 
 .check { display: flex; align-items: center; gap: 5px; color: var(--ink-2); cursor: pointer; user-select: none; }

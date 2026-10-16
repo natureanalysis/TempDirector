@@ -2,6 +2,40 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-10-16（功能：规则级清理排除）
+
+### 功能 —— 每条规则可配「清理排除」模式，清理时不误删混在缓存里的重要数据
+
+* **`fsops/exclude.rs`（新模块）**：fnmatch 子集的模式匹配（gitignore 的可解释子集）——
+  纯名字模式（`sessions`）匹配**任意层级**；含分隔符模式（`logs/old`）从根**锚定**；
+  `*` 不跨层、`**` 单独成段跨层、`?` 单字符；`\` 与 `/` 等价。校验：≤16 条、
+  单条 ≤120 字符、禁止 `..` 与空模式。
+* **设计边界（写进模块文档）**：排除**只影响 `clean`**，不改 apply/restore 的搬运语义
+  （建链要求源路径腾空，搬运永远全量）。想让重要数据不进 RAM 盘，应收窄源路径，
+  而不是依赖排除。
+* `fsops/clean.rs`：`walk_files`/`plan`/`run` 均接收 `&Excludes`，用 `WalkDir::filter_entry`
+  在遍历时剪掉命中子树；`CleanPlan`/`CleanReport` 新增 `excluded_skipped` 计数并进 summary。
+* store：schema v1→v2 增量迁移（`ALTER TABLE rules ADD COLUMN excludes TEXT NOT NULL
+  DEFAULT '[]'`，仅对 current==1 的老库执行，新库由 schema.sql 直接建全列）；坏 JSON
+  容错为空数组。`Rule`/`NewRule` 带 `excludes` 字段，insert/update/导出导入链路全通。
+* usecase：`RuleView`/`RuleForm`/`CleanPreviewView`/`CleanResultView` 加字段；
+  `RuleForm.excludes` 带 `#[serde(default)]`，老前端缺字段可正常反序列化（wire contract
+  测试钉住）。`clean` 用例解析规则时构建 `Excludes`（坏模式在入口就报错）。
+* CLI：`rules add` 支持 `--exclude <模式>`（**可重复多条**，`parse.rs` 的 `Parsed` 从
+  `HashMap<String, Option<String>>` 改为 `HashMap<String, Vec<String>>` 支持重复 flag，
+  `value()` 取最后一个保持兼容）；`rules list` 规则行展示排除。**`clean` 子命令改为
+  复用 usecase 的 `clean_preview`/`clean_run` 门面**（原先直连 `fsops::clean`，
+  规则目标拿不到 excludes，且重复实现了 resolve 与事件落库）。
+* GUI：规则表单加排除编辑框（textarea 一行一条），详情面板/清理预演（单个与批量）
+  展示排除与 `excluded_skipped` 跳过计数；mock 层对齐真实 API 形状。
+
+### 验证
+
+* `cargo test --workspace --no-fail-fast` 全绿（td-core 147 + doc_sync 2 + td-cli 11
+  + td-gui preset 2；exclude 模块 10 个单测、store roundtrip/坏 JSON 容错、
+  usecase 端到端"排除子树保留"断言）。
+* `node --check` 前端语法通过；`cargo clippy --workspace --all-targets` 0 告警。
+
 ## 2026-10-16（架构重构，续）
 
 ### 重构 —— `engine.rs`（1144 行）拆为 `engine/` 目录模块

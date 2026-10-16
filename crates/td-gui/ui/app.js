@@ -417,6 +417,9 @@ function renderDetail() {
   addRow(grid, '目标路径', rule.target);
   addRow(grid, '链接类型', rule.link_type === 'symlink_dir' ? '目录符号链接（需要特权）' : '目录联接 Junction（免提权）');
   if (rule.notes) addRow(grid, '备注', rule.notes, true);
+  if (rule.excludes && rule.excludes.length) {
+    addRow(grid, '清理排除', rule.excludes.join('；'), true);
+  }
   if (rule.unknown_vars && rule.unknown_vars.length) {
     addRow(grid, '未解析变量', rule.unknown_vars.join('、'), true);
   }
@@ -1307,6 +1310,19 @@ async function openRuleForm(id) {
   notes.value = rule && rule.notes ? rule.notes : '';
   body.appendChild(mk('备注', notes).field);
 
+  // 清理排除：一行一条，只影响「清理」，不影响应用/恢复的搬运
+  const excludes = document.createElement('textarea');
+  excludes.className = 'input';
+  excludes.rows = 2;
+  excludes.placeholder = '一行一条，可留空。\n例：sessions（任意层级）\n例：logs\\old（从根锚定）\n例：*.log（通配符）';
+  excludes.value = rule && rule.excludes ? rule.excludes.join('\n') : '';
+  const exWrap = mk('清理排除（可选）', excludes);
+  const exHint = document.createElement('div');
+  exHint.className = 'hint';
+  exHint.textContent = '清理时跳过匹配的子目录或文件（目录命中则整棵子树保留）；应用/恢复的搬运不受影响。';
+  exWrap.field.appendChild(exHint);
+  body.appendChild(exWrap.field);
+
   async function checkSource() {
     const v = srcInput.value.trim();
     if (!v) { srcHint.textContent = ''; srcHint.className = 'hint'; return; }
@@ -1369,6 +1385,8 @@ async function openRuleForm(id) {
             want_enabled: onCheck.checked,
             rebuild_on_boot: bootCheck.checked,
             notes: notes.value || null,
+            excludes: excludes.value.split(/\r?\n/).map(function (s) { return s.trim(); })
+              .filter(function (s) { return s.length > 0; }),
           };
           try {
             if (rule) await invoke('update_rule', { id: rule.id, form: form });
@@ -1534,6 +1552,12 @@ async function openCleanDialog(targets, headingText) {
       lk.textContent = '注意：目录内有 ' + pv.links_skipped + ' 个链接，不会被删除或进入。';
       previewHost.appendChild(lk);
     }
+    if (pv.excluded_skipped) {
+      const ex = document.createElement('div');
+      ex.className = 'hint warn';
+      ex.textContent = '已有 ' + pv.excluded_skipped + ' 个条目因规则的清理排除被跳过（不受影响）。';
+      previewHost.appendChild(ex);
+    }
     (pv.sample || []).forEach(function (s) {
       const line = document.createElement('div');
       line.className = 'hint';
@@ -1551,7 +1575,7 @@ async function openCleanDialog(targets, headingText) {
     delBtn.textContent = pv.files ? ('确认删除 ' + pv.files + ' 个文件') : '确认删除';
   }
 
-  function renderBatchPreview(rows, files, bytes, linksSkipped) {
+  function renderBatchPreview(rows, files, bytes, linksSkipped, excludedSkipped) {
     previewHost.textContent = '';
     const sum = document.createElement('div');
     sum.className = files ? 'hint' : 'hint ok';
@@ -1564,6 +1588,12 @@ async function openCleanDialog(targets, headingText) {
       lk.className = 'hint warn';
       lk.textContent = '注意：部分目录内有 ' + linksSkipped + ' 个链接，不会被删除或进入。';
       previewHost.appendChild(lk);
+    }
+    if (excludedSkipped) {
+      const ex = document.createElement('div');
+      ex.className = 'hint warn';
+      ex.textContent = '已有 ' + excludedSkipped + ' 个条目因规则的清理排除被跳过（不受影响）。';
+      previewHost.appendChild(ex);
     }
     rows.forEach(function (it) {
       const line = document.createElement('div');
@@ -1586,7 +1616,7 @@ async function openCleanDialog(targets, headingText) {
         renderPreview(pv);
       } else {
         const rows = [];
-        let files = 0, bytes = 0, linksSkipped = 0;
+        let files = 0, bytes = 0, linksSkipped = 0, excludedSkipped = 0;
         for (let i = 0; i < targets.length; i++) {
           previewHost.textContent = '';
           const st = document.createElement('div');
@@ -1600,11 +1630,12 @@ async function openCleanDialog(targets, headingText) {
             files += pv.files;
             bytes += pv.bytes;
             linksSkipped += pv.links_skipped;
+            excludedSkipped += pv.excluded_skipped || 0;
           } catch (e) {
             rows.push({ name: name, error: e.message });
           }
         }
-        renderBatchPreview(rows, files, bytes, linksSkipped);
+        renderBatchPreview(rows, files, bytes, linksSkipped, excludedSkipped);
       }
     } catch (e) {
       toast('预演失败', e.message, 'error');
@@ -1982,7 +2013,7 @@ function createMockBackend() {
     mockRule(2, 'Edge 缓存', 'browser', '%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache', 'browsers\\edge-cache', '✅', 'link_ok', '链接正常', { last_files: 21002, last_bytes: 734003200 }),
     mockRule(3, 'Firefox 缓存', 'browser', '%APPDATA%\\Mozilla\\Firefox\\Profiles\\xxxx.default-release\\cache2', 'browsers\\firefox-cache2', '⚠️', 'link_ok_empty', '目录联接 → R:\\browsers\\firefox-cache2（目标为空（RAM 盘刚重启））'),
     mockRule(4, 'Photoshop 暂存盘', 'design', 'C:\\Users\\me\\AppData\\Roaming\\Adobe\\Common\\Media Cache Files', 'design\\ps-media-cache', '⚠️', 'link_broken', '目录联接 断裂，目标不可达：R:\\design\\ps-media-cache', { needs_attention: true }),
-    mockRule(5, 'VS Code 缓存', 'dev', '%APPDATA%\\Code\\Cache', 'dev\\vscode-cache', '❌', 'plain_dir', '未链接（真实目录）'),
+    mockRule(5, 'VS Code 缓存', 'dev', '%APPDATA%\\Code\\Cache', 'dev\\vscode-cache', '❌', 'plain_dir', '未链接（真实目录）', { excludes: ['logs', 'CachedData\\old'] }),
     mockRule(6, '微信文件缓存', 'office', '%APPDATA%\\Tencent\\WeChat\\FileStorage', 'office\\wechat-files', '❌', 'plain_dir', '未链接（真实目录）', { want_enabled: false }),
     mockRule(7, 'npm 缓存', 'dev', '%LOCALAPPDATA%\\npm-cache', 'dev\\npm-cache', '✅', 'link_ok', '链接正常', { last_files: 88213, last_bytes: 3221225472 }),
     mockRule(8, 'Premiere 媒体缓存', 'design', 'C:\\Users\\me\\AppData\\Roaming\\Adobe\\Common\\Media Cache', 'design\\pr-media-cache', '❌', 'plain_dir', '未链接（真实目录）', { needs_elevation: true, has_acl: true, want_enabled: false }),
@@ -1998,6 +2029,7 @@ function createMockBackend() {
       target_root_id: 1, target_subpath: sub, link_type: 'junction',
       want_enabled: e.want_enabled !== false, rebuild_on_boot: true,
       has_acl: !!e.has_acl, needs_elevation: !!e.needs_elevation, notes: null,
+      excludes: e.excludes || [],
       badge: badge, label: label,
       needs_attention: !!e.needs_attention || badge === '❌',
       warnings: e.needs_elevation ? ['该路径位于受保护位置，应用时需要管理员权限'] : [],
@@ -2092,6 +2124,7 @@ function createMockBackend() {
             r.source = args.form.source_template; r.target = 'R:\\' + args.form.target_subpath;
             r.want_enabled = args.form.want_enabled; r.rebuild_on_boot = args.form.rebuild_on_boot;
             r.notes = args.form.notes;
+            r.excludes = args.form.excludes || [];
           }
           return Promise.resolve(null);
         }
@@ -2121,6 +2154,7 @@ function createMockBackend() {
             dir: t.kind === 'folder' ? t.path : 'R:\\dev\\vscode-cache',
             label: '（模拟）VS Code 缓存',
             files: 1280, bytes: 536870912, bytes_text: '512.0 MB', links_skipped: 0,
+            excluded_skipped: t.kind === 'rule' ? 12 : 0,
             sample: [
               { path: 'Cache\\f1', bytes: 1048576, mtime: Math.floor(Date.now() / 1000) - 86400 * 3 },
               { path: 'Cache\\f2', bytes: 2097152, mtime: Math.floor(Date.now() / 1000) - 3600 * 5 },
@@ -2133,6 +2167,7 @@ function createMockBackend() {
             dir: 'R:\\dev\\vscode-cache', label: '（模拟）VS Code 缓存',
             deleted_files: 1280, deleted_bytes: 536870912, deleted_bytes_text: '512.0 MB',
             dirs_pruned: 3, skipped: 2, skip_examples: ['f3', 'f4'], links_skipped: 0,
+            excluded_skipped: 12,
             summary: '已删除 1280 个文件 / 512.0 MB，剪除 3 个空目录；2 个文件被占用或无权限已跳过（例如：f3；f4）',
           });
         case 'inspect_source': {

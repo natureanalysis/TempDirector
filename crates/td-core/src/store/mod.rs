@@ -27,7 +27,7 @@ use rusqlite::Connection;
 use crate::error::TdResult;
 
 /// 当前 schema 版本。加迁移时递增，并在 `migrate` 里补一段 `if current < N`。
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// 视为"已结束"的操作流水阶段。其余阶段在启动时都算待修复项。
 pub const OP_TERMINAL_PHASES: [&str; 3] = ["done", "failed", "rolled_back"];
@@ -88,14 +88,14 @@ impl Store {
         let current = self.user_version()?;
         if current < 1 {
             self.conn.execute_batch(include_str!("schema.sql"))?;
+        } else if current == 1 {
+            // v2：规则加清理排除模式（JSON 数组）。schema.sql 已含该列，
+            // 这里只对 v1 老库做增量（新库走上面的建表，不能再 ALTER 一次）。
             self.conn
-                .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                .execute_batch("ALTER TABLE rules ADD COLUMN excludes TEXT NOT NULL DEFAULT '[]';")?;
         }
-        // 后续版本迁移示例（保持"只加不改"）：
-        // if current < 2 {
-        //     self.conn.execute_batch("ALTER TABLE rules ADD COLUMN new_col TEXT;")?;
-        //     self.conn.pragma_update(None, "user_version", 2)?;
-        // }
+        self.conn
+            .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
 

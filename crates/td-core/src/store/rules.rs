@@ -195,8 +195,8 @@ impl Store {
         self.conn().execute(
             "INSERT INTO rules(name, category, source_template, source_norm, target_root_id,
                                target_subpath, link_type, want_enabled, rebuild_on_boot,
-                               notes, needs_elevation)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                               notes, needs_elevation, excludes)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 nr.name,
                 nr.category,
@@ -209,6 +209,7 @@ impl Store {
                 nr.rebuild_on_boot,
                 nr.notes,
                 needs_elev,
+                serde_json::to_string(&nr.excludes).unwrap_or_else(|_| "[]".into()),
             ],
         )?;
         Ok(self.conn().last_insert_rowid())
@@ -235,7 +236,7 @@ impl Store {
         let n = self.conn().execute(
             "UPDATE rules SET name=?2, category=?3, source_template=?4, source_norm=?5,
                     target_root_id=?6, target_subpath=?7, link_type=?8,
-                    want_enabled=?9, rebuild_on_boot=?10, notes=?11,
+                    want_enabled=?9, rebuild_on_boot=?10, notes=?11, excludes=?12,
                     updated_at=datetime('now')
              WHERE id=?1",
             params![
@@ -250,6 +251,7 @@ impl Store {
                 nr.want_enabled,
                 nr.rebuild_on_boot,
                 nr.notes,
+                serde_json::to_string(&nr.excludes).unwrap_or_else(|_| "[]".into()),
             ],
         )?;
         if n == 0 {
@@ -351,6 +353,7 @@ mod tests {
             want_enabled: true,
             rebuild_on_boot: true,
             notes: None,
+            excludes: Vec::new(),
         }
     }
 
@@ -439,5 +442,37 @@ mod tests {
         let boot = s.rules_for_boot().unwrap();
         assert_eq!(boot.len(), 1);
         assert_eq!(boot[0].name, "B");
+    }
+
+    #[test]
+    fn excludes_roundtrip() {
+        let s = mk_store();
+        let mut nr = new_rule("EX", r"C:\Temp\EX", "ex");
+        nr.excludes = vec!["sessions".into(), "logs/old".into()];
+        let id = s.insert_rule(&nr).unwrap();
+        assert_eq!(
+            s.get_rule(id).unwrap().excludes,
+            vec!["sessions".to_string(), "logs/old".to_string()]
+        );
+
+        // 更新为空 → 覆盖
+        let cleared = new_rule("EX", r"C:\Temp\EX", "ex2");
+        s.update_rule(id, &cleared).unwrap();
+        assert!(s.get_rule(id).unwrap().excludes.is_empty());
+
+        // 默认无排除
+        let id2 = s.insert_rule(&new_rule("D", r"C:\Temp\D", "d")).unwrap();
+        assert!(s.get_rule(id2).unwrap().excludes.is_empty());
+    }
+
+    #[test]
+    fn bad_excludes_json_falls_back_to_empty() {
+        let s = mk_store();
+        let id = s.insert_rule(&new_rule("BAD", r"C:\Temp\BAD", "bad")).unwrap();
+        // 模拟手工改库写坏 JSON
+        s.conn()
+            .execute("UPDATE rules SET excludes='{oops' WHERE id=?1", [id])
+            .unwrap();
+        assert!(s.get_rule(id).unwrap().excludes.is_empty());
     }
 }

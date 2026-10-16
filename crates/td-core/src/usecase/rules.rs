@@ -62,6 +62,8 @@ pub(crate) fn validate_form(form: &RuleForm) -> TdResult<()> {
             "链接类型只能是 junction 或 symlink_dir".into(),
         ));
     }
+    // 排除模式的结构校验（空/超长/超量/..）由 Excludes 统一给出。
+    crate::fsops::exclude::Excludes::new(&form.excludes)?;
     Ok(())
 }
 

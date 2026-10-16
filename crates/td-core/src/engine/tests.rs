@@ -47,6 +47,7 @@ fn setup(tag: &str) -> Env {
             want_enabled: true,
             rebuild_on_boot: true,
             notes: None,
+            excludes: Vec::new(),
         })
         .unwrap();
     let target = ram.join("dev").join("test-cache");

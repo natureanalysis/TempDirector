@@ -21,6 +21,12 @@
 //!   计入 `links_skipped` 如实汇报。根目录本身是链接则直接拒绝 ——
 //!   那是 TempDirector 自己管的链接，清理它得走"规则指向的真实目录"那条路。
 //! * 长路径全程 `\\?\` verbatim；只读文件先清属性再删。
+//!
+//! ## 排除（[`Excludes`]）
+//!
+//! 规则可带排除模式（`sessions`、`logs/old` 这类），枚举与剪空目录都跳过
+//! 命中的子树，计入 `excluded_skipped` 如实汇报。语义与限制见
+//! [`exclude`](super::exclude) 模块文档 —— 排除**只影响清理**，不改搬运。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 use crate::error::{io_ctx, TdError, TdResult};
+use crate::fsops::exclude::Excludes;
 use crate::fsops::mover::Progress;
 use crate::util;
 
@@ -91,6 +98,8 @@ pub struct CleanPlan {
     pub bytes: u64,
     /// 树内链接数：不删、不进入，仅汇报。
     pub links_skipped: u64,
+    /// 被排除模式跳过的条目数（目录命中即整棵子树跳过）。
+    pub excluded_skipped: u64,
     /// 样本（最多 20 条），给人确认用。mtime 为 Unix 秒，前端还原本地时间。
     pub sample: Vec<CleanSampleEntry>,
 }
@@ -126,6 +135,8 @@ pub struct CleanReport {
     pub skip_examples: Vec<String>,
     /// 树内链接数（刻意不碰）。
     pub links_skipped: u64,
+    /// 被排除模式跳过的条目数。
+    pub excluded_skipped: u64,
 }
 
 impl CleanReport {
@@ -140,6 +151,9 @@ impl CleanReport {
         }
         if self.links_skipped > 0 {
             s += &format!("；{} 个链接未触碰", self.links_skipped);
+        }
+        if self.excluded_skipped > 0 {
+            s += &format!("；{} 个条目按排除规则保留", self.excluded_skipped);
         }
         if self.skipped > 0 {
             s += &format!(
@@ -162,7 +176,13 @@ struct Candidate {
 
 /// 枚举根目录下**全部普通文件**（递归、不跟随链接），带 mtime 与大小。
 /// 链接根目录直接拒绝（那是链接，应清理它指向的真实目录）。
-fn walk_files(dir: &Path, links_skipped: &mut u64) -> TdResult<Vec<Candidate>> {
+/// 命中排除模式的目录整棵子树不进入，计数如实汇报。
+fn walk_files(
+    dir: &Path,
+    excludes: &Excludes,
+    links_skipped: &mut u64,
+    excluded_skipped: &mut u64,
+) -> TdResult<Vec<Candidate>> {
     let root_md = fs::symlink_metadata(dir).map_err(|e| io_ctx(e, dir, "读取目录"))?;
     if root_md.file_type().is_symlink() {
         return Err(TdError::SafetyBlocked(format!(
@@ -174,10 +194,22 @@ fn walk_files(dir: &Path, links_skipped: &mut u64) -> TdResult<Vec<Candidate>> {
         return Err(TdError::InvalidPath(format!("不是目录：{}", dir.display())));
     }
 
+    let vroot = util::to_verbatim(dir);
     let mut out = Vec::new();
-    for entry in WalkDir::new(util::to_verbatim(dir))
+    for entry in WalkDir::new(&vroot)
         .follow_links(false)
         .into_iter()
+        .filter_entry(|e| {
+            if e.depth() == 0 {
+                return true;
+            }
+            let rel = rel_path(&vroot, e.path());
+            if !excludes.is_empty() && excludes.matches(&rel) {
+                *excluded_skipped += 1;
+                return false;
+            }
+            true
+        })
     {
         let entry = match entry {
             Ok(e) => e,
@@ -216,16 +248,27 @@ fn walk_files(dir: &Path, links_skipped: &mut u64) -> TdResult<Vec<Candidate>> {
     Ok(out)
 }
 
+/// 子条目相对根目录的路径（统一 `/` 分隔，供排除模式匹配）。
+fn rel_path(root: &Path, child: &Path) -> String {
+    child
+        .strip_prefix(root)
+        .unwrap_or(child)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 /// 预演：只算不删。
-pub fn plan(dir: &Path, policy: &CleanPolicy) -> TdResult<CleanPlan> {
+pub fn plan(dir: &Path, policy: &CleanPolicy, excludes: &Excludes) -> TdResult<CleanPlan> {
     policy.validate()?;
     let mut links = 0u64;
-    let files = walk_files(dir, &mut links)?;
+    let mut excluded = 0u64;
+    let files = walk_files(dir, excludes, &mut links, &mut excluded)?;
     let picked: Vec<&Candidate> = files.iter().filter(|f| policy.matches(f.mtime)).collect();
     Ok(CleanPlan {
         files: picked.len() as u64,
         bytes: picked.iter().map(|f| f.bytes).sum(),
         links_skipped: links,
+        excluded_skipped: excluded,
         sample: picked
             .iter()
             .take(20)
@@ -242,12 +285,14 @@ pub fn plan(dir: &Path, policy: &CleanPolicy) -> TdResult<CleanPlan> {
 pub fn run(
     dir: &Path,
     policy: &CleanPolicy,
+    excludes: &Excludes,
     dry_run: bool,
     sink: &mut dyn FnMut(Progress),
 ) -> TdResult<CleanReport> {
     policy.validate()?;
     let mut links = 0u64;
-    let files = walk_files(dir, &mut links)?;
+    let mut excluded = 0u64;
+    let files = walk_files(dir, excludes, &mut links, &mut excluded)?;
     let picked: Vec<&Candidate> = files.iter().filter(|f| policy.matches(f.mtime)).collect();
     let planned_bytes: u64 = picked.iter().map(|f| f.bytes).sum();
     sink(Progress::Enumerated {
@@ -257,6 +302,7 @@ pub fn run(
 
     let mut report = CleanReport {
         links_skipped: links,
+        excluded_skipped: excluded,
         ..Default::default()
     };
     if dry_run {
@@ -300,8 +346,8 @@ pub fn run(
         }
     }
 
-    // 自底向上剪空目录（只剪因本次删除而真的空了的；链接目录不碰）。
-    report.dirs_pruned = prune_empty_dirs(dir)?;
+    // 自底向上剪空目录（只剪因本次删除而真的空了的；链接目录与被排除的目录不碰）。
+    report.dirs_pruned = prune_empty_dirs(dir, excludes)?;
     sink(Progress::Done {
         files: report.deleted_files,
         bytes: report.deleted_bytes,
@@ -323,14 +369,21 @@ fn clear_readonly(path: &Path) {
 
 /// 自底向上删除空子目录（不含根）。以**实时**状态判断是否为空，
 /// 天然只剪"删完文件后真的空了"的目录；反复扫描直到没有新的可剪（处理嵌套空壳）。
-fn prune_empty_dirs(dir: &Path) -> TdResult<u64> {
+/// 被排除模式命中的目录（及其子树）一律保留。
+fn prune_empty_dirs(dir: &Path, excludes: &Excludes) -> TdResult<u64> {
+    let vroot = util::to_verbatim(dir);
     let mut pruned = 0u64;
     loop {
         let mut removed_this_pass = false;
         let mut dirs: Vec<PathBuf> = Vec::new();
-        for entry in WalkDir::new(util::to_verbatim(dir))
+        for entry in WalkDir::new(&vroot)
             .follow_links(false)
             .into_iter()
+            .filter_entry(|e| {
+                e.depth() == 0
+                    || excludes.is_empty()
+                    || !excludes.matches(&rel_path(&vroot, e.path()))
+            })
         {
             match entry {
                 Ok(e) => {
@@ -406,7 +459,7 @@ mod tests {
         put(&base, "sub/b.bin", b"222", t.two_days_ago);
 
         let mut sink = |_| {};
-        let rep = run(&base, &CleanPolicy::Empty, false, &mut sink).unwrap();
+        let rep = run(&base, &CleanPolicy::Empty, &Excludes::default(), false, &mut sink).unwrap();
         assert_eq!(rep.deleted_files, 2);
         assert_eq!(rep.deleted_bytes, 8);
         assert!(base.is_dir(), "根目录必须保留");
@@ -423,12 +476,12 @@ mod tests {
         put(&base, "new.bin", b"c", t.one_minute_ago);
 
         let cutoff = t.now - 86400; // "昨天及更早" ≈ 24h 前
-        let p = plan(&base, &CleanPolicy::Before { cutoff }).unwrap();
+        let p = plan(&base, &CleanPolicy::Before { cutoff }, &Excludes::default()).unwrap();
         assert_eq!(p.files, 1, "只有 2 天前的文件命中");
         assert_eq!(p.bytes, 2);
 
         let mut sink = |_| {};
-        let rep = run(&base, &CleanPolicy::Before { cutoff }, false, &mut sink).unwrap();
+        let rep = run(&base, &CleanPolicy::Before { cutoff }, &Excludes::default(), false, &mut sink).unwrap();
         assert_eq!(rep.deleted_files, 1);
         assert!(base.join("mid.bin").exists());
         assert!(base.join("new.bin").exists());
@@ -448,9 +501,9 @@ mod tests {
             from: t.two_hours_ago,
             to: t.one_minute_ago,
         };
-        assert_eq!(plan(&base, &p).unwrap().files, 2, "from 闭、to 开");
+        assert_eq!(plan(&base, &p, &Excludes::default()).unwrap().files, 2, "from 闭、to 开");
         let mut sink = |_| {};
-        let rep = run(&base, &p, false, &mut sink).unwrap();
+        let rep = run(&base, &p, &Excludes::default(), false, &mut sink).unwrap();
         assert_eq!(rep.deleted_files, 2);
         assert!(base.join("out_old.bin").exists(), "时间段之前的不受影响");
         assert!(base.join("edge_to.bin").exists(), "to 边界不删");
@@ -463,7 +516,7 @@ mod tests {
         let t = axis();
         put(&base, "a.bin", b"xxxx", t.two_days_ago);
         let mut sink = |_| {};
-        let rep = run(&base, &CleanPolicy::Empty, true, &mut sink).unwrap();
+        let rep = run(&base, &CleanPolicy::Empty, &Excludes::default(), true, &mut sink).unwrap();
         assert_eq!(rep.deleted_files, 1, "预演也要报出将要删的量");
         assert_eq!(rep.deleted_bytes, 4);
         assert!(base.join("a.bin").exists(), "预演不得动磁盘");
@@ -473,13 +526,13 @@ mod tests {
     #[test]
     fn plan_summary_and_sample() {
         let base = fixture("summary");
-        let p = plan(&base, &CleanPolicy::Empty).unwrap();
+        let p = plan(&base, &CleanPolicy::Empty, &Excludes::default()).unwrap();
         assert!(p.is_empty());
         assert_eq!(p.summary(), "没有符合条件的文件");
 
         let t = axis();
         put(&base, "x/y.bin", b"12345678", t.two_days_ago);
-        let p = plan(&base, &CleanPolicy::Empty).unwrap();
+        let p = plan(&base, &CleanPolicy::Empty, &Excludes::default()).unwrap();
         assert_eq!(p.files, 1);
         assert_eq!(p.sample.len(), 1);
         assert_eq!(p.sample[0].mtime, t.two_days_ago, "样本带 mtime 供前端还原");
@@ -493,7 +546,7 @@ mod tests {
         put(&base, "mixed/gone.bin", b"1", t.two_days_ago);
         put(&base, "mixed/stays.bin", b"2", t.now);
         let mut sink = |_| {};
-        run(&base, &CleanPolicy::Before { cutoff: t.now - 3600 }, false, &mut sink)
+        run(&base, &CleanPolicy::Before { cutoff: t.now - 3600 }, &Excludes::default(), false, &mut sink)
             .unwrap();
         assert!(base.join("mixed").is_dir(), "还有文件的目录不能剪");
         assert!(base.join("mixed/stays.bin").exists());
@@ -506,7 +559,7 @@ mod tests {
         let t = axis();
         put(&base, "a/b/c/deep.bin", b"1", t.two_days_ago);
         let mut sink = |_| {};
-        let rep = run(&base, &CleanPolicy::Empty, false, &mut sink).unwrap();
+        let rep = run(&base, &CleanPolicy::Empty, &Excludes::default(), false, &mut sink).unwrap();
         assert_eq!(rep.deleted_files, 1);
         assert_eq!(rep.dirs_pruned, 3, "a/b/c 三层空壳都应被剪");
         assert!(base.is_dir(), "根目录保留");
@@ -517,14 +570,14 @@ mod tests {
     #[test]
     fn refuses_reparse_root_and_missing_dir() {
         let base = fixture("refuse");
-        assert!(plan(&base.join("nope"), &CleanPolicy::Empty).is_err());
+        assert!(plan(&base.join("nope"), &CleanPolicy::Empty, &Excludes::default()).is_err());
 
         let real = base.join("real");
         fs::create_dir_all(&real).unwrap();
         let link = base.join("link");
         crate::link::create::create_dir_link(&link, &real, crate::link::LinkType::Junction)
             .unwrap();
-        let err = plan(&link, &CleanPolicy::Empty).unwrap_err();
+        let err = plan(&link, &CleanPolicy::Empty, &Excludes::default()).unwrap_err();
         assert!(matches!(err, TdError::SafetyBlocked(_)), "{err}");
         assert!(real.exists(), "拒绝时绝不能碰链接指向的真实目录");
         let _ = fs::remove_dir_all(&base);
@@ -540,7 +593,7 @@ mod tests {
         fs::set_permissions(&p, perm).unwrap();
 
         let mut sink = |_| {};
-        let rep = run(&base, &CleanPolicy::Empty, false, &mut sink).unwrap();
+        let rep = run(&base, &CleanPolicy::Empty, &Excludes::default(), false, &mut sink).unwrap();
         assert_eq!(rep.deleted_files, 1, "只读文件清掉属性后应删除");
         let _ = fs::remove_dir_all(&base);
     }
@@ -558,6 +611,79 @@ mod tests {
         assert!(CleanPolicy::Between { from: 200, to: 200 }.validate().is_err());
         assert!(CleanPolicy::Between { from: 300, to: 200 }.validate().is_err());
         // 非法策略在 plan/run 入口就该被挡下
-        assert!(plan(Path::new("."), &CleanPolicy::Before { cutoff: 0 }).is_err());
+        assert!(plan(Path::new("."), &CleanPolicy::Before { cutoff: 0 }, &Excludes::default()).is_err());
+    }
+
+    fn mk_excludes(pats: &[&str]) -> Excludes {
+        let v: Vec<String> = pats.iter().map(|s| s.to_string()).collect();
+        Excludes::new(&v).unwrap()
+    }
+
+    #[test]
+    fn excluded_subtree_survives_empty_clean() {
+        let base = fixture("excl_empty");
+        let t = axis();
+        put(&base, "cache/a.bin", b"111", t.now);
+        put(&base, "sessions/db.sqlite", b"2222", t.now);
+        put(&base, "deep/sessions/x.bin", b"33", t.now);
+
+        let ex = mk_excludes(&["sessions"]);
+        let p = plan(&base, &CleanPolicy::Empty, &ex).unwrap();
+        assert_eq!(p.files, 1, "只有 cache/a.bin 会被清");
+        assert_eq!(p.excluded_skipped, 2, "两个 sessions 目录都被剪掉");
+
+        let mut sink = |_| {};
+        let rep = run(&base, &CleanPolicy::Empty, &ex, false, &mut sink).unwrap();
+        assert_eq!(rep.deleted_files, 1);
+        assert!(base.join("sessions/db.sqlite").exists(), "排除子树必须原样保留");
+        assert!(base.join("deep/sessions/x.bin").exists(), "任意层级的同名目录都受保护");
+        assert!(!base.join("cache").exists(), "未排除的正常清理");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn anchored_exclude_prunes_only_outside() {
+        let base = fixture("excl_anchor");
+        let t = axis();
+        put(&base, "logs/old/keep.bin", b"1", t.now);
+        put(&base, "logs/fresh.bin", b"22", t.now);
+        put(&base, "deep/logs/old/kill.bin", b"333", t.now);
+
+        // 锚定：只保护根下第一层 logs/old，深层同名不保护
+        let ex = mk_excludes(&["logs/old"]);
+        let mut sink = |_| {};
+        let rep = run(&base, &CleanPolicy::Empty, &ex, false, &mut sink).unwrap();
+        assert!(base.join("logs/old/keep.bin").exists(), "锚定子树保留");
+        assert!(!base.join("logs/fresh.bin").exists(), "同目录其他文件正常清");
+        assert!(!base.join("deep/logs/old").exists(), "深层同名不在此模式保护范围");
+        assert!(rep.excluded_skipped >= 1);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn excluded_empty_dir_is_not_pruned() {
+        let base = fixture("excl_prune");
+        let t = axis();
+        put(&base, "keep/inner/dead.bin", b"1", t.two_days_ago);
+
+        let ex = mk_excludes(&["keep"]);
+        let mut sink = |_| {};
+        let rep = run(&base, &CleanPolicy::Empty, &ex, false, &mut sink).unwrap();
+        assert_eq!(rep.deleted_files, 0, "排除子树里的文件不删");
+        assert_eq!(rep.dirs_pruned, 0, "排除子树的空目录也不剪");
+        assert!(base.join("keep/inner").is_dir(), "目录结构原样保留");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn exclude_reported_in_summary() {
+        let base = fixture("excl_summary");
+        let t = axis();
+        put(&base, "sessions/a.bin", b"11", t.now);
+        let ex = mk_excludes(&["sessions"]);
+        let mut sink = |_| {};
+        let rep = run(&base, &CleanPolicy::Empty, &ex, false, &mut sink).unwrap();
+        assert!(rep.summary().contains("按排除规则保留"), "{}", rep.summary());
+        let _ = fs::remove_dir_all(&base);
     }
 }

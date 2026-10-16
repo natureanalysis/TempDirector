@@ -1,10 +1,10 @@
 //! `clean` 子命令：文件夹清理。默认只预演，`--yes` 才真正删除（破坏性操作两步走）。
 
-use std::path::PathBuf;
+use std::path::Path;
 
-use td_core::engine;
-use td_core::fsops::clean::{self, CleanPolicy};
+use td_core::fsops::clean::CleanPolicy;
 use td_core::store::Store;
+use td_core::usecase::{clean_preview, clean_run, CleanTarget};
 use td_core::{TdError, TdResult};
 
 use crate::parse::Parsed;
@@ -68,66 +68,54 @@ fn describe_policy(policy: &CleanPolicy, now_utc: i64) -> String {
     }
 }
 
-/// 解析清理目标：数字当规则 id（走 clean_dir_for_rule），否则当目录路径（过黑名单）。
-fn resolve_clean_target(store: &Store, target: &str) -> TdResult<(PathBuf, String, Option<i64>)> {
-    if let Ok(id) = target.parse::<i64>() {
-        let rule = store.get_rule(id)?;
-        let dir = engine::clean_dir_for_rule(store, &rule)?;
-        Ok((dir, rule.name, Some(id)))
-    } else {
-        let (expanded, _u) = td_core::util::expand_path(target);
-        let pf = td_core::safety::preflight_source(&expanded);
-        if pf.is_blocked() {
-            return Err(TdError::SafetyBlocked(pf.blocking.join("；")));
-        }
-        let label = expanded.display().to_string();
-        Ok((expanded, label, None))
+/// 解析清理目标：数字当规则 id（清它真正落地的目录，自动带上规则排除），
+/// 否则当目录路径（展开 `%VAR%`、过黑名单都在 usecase 层）。
+fn parse_clean_target(target: &str) -> CleanTarget {
+    match target.parse::<i64>() {
+        Ok(id) => CleanTarget::Rule { id },
+        Err(_) => CleanTarget::Folder {
+            path: target.to_string(),
+        },
     }
 }
 
 pub(crate) fn cmd_clean(store: &Store, p: &Parsed) -> TdResult<()> {
-    let target = p.required(0, "<规则id | 目录路径>")?;
+    let target_str = p.required(0, "<规则id | 目录路径>")?;
     let now_utc = now_utc_secs();
     let tod = local_time_of_day_secs() as i64;
     let policy = build_clean_policy(p, now_utc, tod)?;
-    let (dir, label, rule_id) = resolve_clean_target(store, &target)?;
-
-    if !dir.is_dir() {
-        println!("目录不存在，无需清理：{}", dir.display());
-        return Ok(());
-    }
+    let target = parse_clean_target(&target_str);
 
     // 默认预演；只有显式 --yes 才真正删除（破坏性操作，两步走）。
-    let execute = p.has("yes");
-
-    if !execute {
-        let plan = clean::plan(&dir, &policy)?;
+    if !p.has("yes") {
+        let pv = clean_preview(store, &target, &policy)?;
         if p.json() {
             println!(
                 "{}",
-                serde_json::json!({
-                    "dir": dir.display().to_string(),
-                    "label": label,
-                    "policy": policy,
-                    "dry_run": true,
-                    "plan": plan,
-                })
+                serde_json::json!({ "policy": policy, "dry_run": true, "preview": pv })
             );
             return Ok(());
         }
-        println!("目标：{label}");
-        println!("目录：{}", dir.display());
+        println!("目标：{}", pv.label);
+        println!("目录：{}", pv.dir);
         println!("策略：{}", describe_policy(&policy, now_utc));
         println!();
-        if plan.is_empty() {
+        if !Path::new(&pv.dir).is_dir() {
+            println!("目录不存在，无需清理。");
+            return Ok(());
+        }
+        if pv.files == 0 {
             println!("✅ 没有符合条件的文件，无需清理。");
             return Ok(());
         }
-        println!("将删除：{}", plan.summary());
-        if plan.links_skipped > 0 {
-            println!("（另有 {} 个链接不会被删除或进入）", plan.links_skipped);
+        println!("将删除：{}", pv.summary);
+        if pv.links_skipped > 0 {
+            println!("（另有 {} 个链接不会被删除或进入）", pv.links_skipped);
         }
-        for s in &plan.sample {
+        if pv.excluded_skipped > 0 {
+            println!("（另有 {} 个条目因排除模式被跳过）", pv.excluded_skipped);
+        }
+        for s in &pv.sample {
             println!(
                 "  · {}  {}  {}",
                 s.path,
@@ -135,11 +123,11 @@ pub(crate) fn cmd_clean(store: &Store, p: &Parsed) -> TdResult<()> {
                 ago_text(now_utc - s.mtime)
             );
         }
-        if plan.files > plan.sample.len() as u64 {
+        if pv.files > pv.sample.len() as u64 {
             println!(
                 "  …（仅列出前 {} 条，共 {} 个）",
-                plan.sample.len(),
-                plan.files
+                pv.sample.len(),
+                pv.files
             );
         }
         println!();
@@ -148,7 +136,7 @@ pub(crate) fn cmd_clean(store: &Store, p: &Parsed) -> TdResult<()> {
     }
 
     let quiet = p.json();
-    let mut sink = |prog: td_core::fsops::mover::Progress| {
+    let mut sink = |prog: &td_core::fsops::mover::Progress| {
         if quiet {
             return;
         }
@@ -158,29 +146,18 @@ pub(crate) fn cmd_clean(store: &Store, p: &Parsed) -> TdResult<()> {
             let _ = std::io::stdout().flush();
         }
     };
-    let report = clean::run(&dir, &policy, false, &mut sink)?;
+    // 事件流水由 usecase 层统一落库（原 CLI 自行记一条会重复）。
+    let report = clean_run(store, &target, &policy, false, &mut sink)?;
     if !quiet {
         println!();
     }
-    let _ = store.log_event(
-        rule_id,
-        "info",
-        "clean",
-        &format!("CLI 清理「{label}」：{}", report.summary()),
-    );
     if p.json() {
         println!(
             "{}",
-            serde_json::json!({
-                "dir": dir.display().to_string(),
-                "label": label,
-                "policy": policy,
-                "dry_run": false,
-                "report": report,
-            })
+            serde_json::json!({ "policy": policy, "dry_run": false, "result": report })
         );
     } else {
-        println!("✅ {}", report.summary());
+        println!("✅ {}", report.summary);
     }
     Ok(())
 }

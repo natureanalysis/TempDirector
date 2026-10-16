@@ -51,6 +51,7 @@ fn form(env: &Env, name: &str, sub: &str) -> RuleForm {
         want_enabled: true,
         rebuild_on_boot: true,
         notes: None,
+        excludes: Vec::new(),
     }
 }
 
@@ -69,7 +70,8 @@ fn rule_form_wire_contract_is_snake_case() {
             "link_type": "junction",
             "want_enabled": true,
             "rebuild_on_boot": true,
-            "notes": null
+            "notes": null,
+            "excludes": ["sessions", "logs/old"]
         }"#;
     let form: RuleForm =
         serde_json::from_str(json).expect("前端发送的表单必须能反序列化");
@@ -81,6 +83,15 @@ fn rule_form_wire_contract_is_snake_case() {
     assert!(form.want_enabled);
     assert!(form.rebuild_on_boot);
     assert!(form.notes.is_none());
+    assert_eq!(form.excludes, vec!["sessions", "logs/old"]);
+
+    // 老前端不带 excludes 字段时按"无排除"处理
+    let legacy: RuleForm = serde_json::from_str(
+        r#"{"name":"x","category":"dev","source_template":"C:\\T","target_root_id":1,
+            "target_subpath":"x","link_type":"junction"}"#,
+    )
+    .unwrap();
+    assert!(legacy.excludes.is_empty());
 }
 
 #[test]
@@ -447,6 +458,7 @@ fn preset_rules_filters_by_existence() {
             want_enabled: true,
             rebuild_on_boot: true,
             notes: v.note.clone(),
+            excludes: Vec::new(),
         };
         validate_form(&f).unwrap_or_else(|e| panic!("预设 {} 没通过表单校验：{e}", v.name));
     }
@@ -518,6 +530,44 @@ fn clean_rule_target_resolves_to_source_when_unlinked() {
     let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
     assert_eq!(pv.files, 1);
     assert_eq!(pv.bytes, 1024);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn clean_rule_respects_excludes_end_to_end() {
+    let env = setup("cleanexcl");
+    // 源目录里混着要保护的子树
+    fs::create_dir_all(env.source.join("sessions")).unwrap();
+    fs::write(env.source.join("sessions/db.sqlite"), b"keep").unwrap();
+    fs::write(env.source.join("trash.bin"), b"gone").unwrap();
+
+    let mut f = form(&env, "带排除", "dev\\excl");
+    f.excludes = vec!["sessions".into()];
+    let id = add_rule(&env.store, &f).unwrap();
+
+    let t = CleanTarget::Rule { id };
+    let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+    assert_eq!(pv.files, 2, "只数到未排除的文件（a.bin + trash.bin）");
+    assert!(pv.excluded_skipped >= 1, "预演要如实汇报排除计数");
+
+    let r = clean_run(&env.store, &t, &empty_policy(), false, &mut |_| {}).unwrap();
+    assert_eq!(r.deleted_files, 2);
+    assert!(env.source.join("sessions/db.sqlite").exists(), "排除子树必须保留");
+    assert!(!env.source.join("trash.bin").exists());
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn add_rule_rejects_invalid_excludes() {
+    let env = setup("badexcl");
+    let mut f = form(&env, "坏排除", "dev\\bad");
+    f.excludes = vec!["a/../..".into()];
+    let err = add_rule(&env.store, &f).unwrap_err();
+    assert!(matches!(err, TdError::InvalidPath(_)), "{err}");
+
+    let mut f2 = form(&env, "空排除", "dev\\empty-pat");
+    f2.excludes = vec!["  ".into()];
+    assert!(add_rule(&env.store, &f2).is_err());
     let _ = fs::remove_dir_all(&env.base);
 }
 

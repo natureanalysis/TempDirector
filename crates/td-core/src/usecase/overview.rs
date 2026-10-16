@@ -140,6 +140,7 @@ fn merge_view(rule: Rule, resolved: engine::Resolved, status: engine::RuleStatus
         has_acl: rule.acl_sddl.is_some(),
         needs_elevation: rule.needs_elevation,
         notes: rule.notes,
+        excludes: rule.excludes,
         badge: status.badge.to_string(),
         label: status.label,
         needs_attention: status.needs_attention,
