@@ -90,46 +90,32 @@ pub fn preflight_source(source: &Path) -> SourcePreflight {
 
     if is_volume_root(source) {
         out.blocking
-            .push(format!("拒绝把整个卷根作为缓存目录：{}", source.display()));
+            .push(crate::i18n::tf("safety.volume_root", &[("path", &source.display().to_string())]));
     }
     if FORBIDDEN_EXACT.contains(&rel.as_str()) {
-        out.blocking.push(format!(
-            "该路径属于系统关键目录，禁止重定向：{}",
-            source.display()
-        ));
+        out.blocking.push(crate::i18n::tf("safety.forbidden_exact", &[("path", &source.display().to_string())]));
     }
     for prefix in FORBIDDEN_PREFIX {
         if rel.starts_with(prefix) {
-            out.blocking.push(format!(
-                "该路径位于系统保留区（{prefix}），禁止重定向：{}",
-                source.display()
-            ));
+            out.blocking.push(crate::i18n::tf("safety.forbidden_prefix", &[
+                ("prefix", prefix),
+                ("path", &source.display().to_string()),
+            ]));
         }
     }
 
     if ELEVATED_PREFIX.iter().any(|p| rel.starts_with(p)) {
         out.requires_elevation = true;
-        out.warnings.push(format!(
-            "该路径位于受保护位置，移动/建链需要管理员权限：{}",
-            source.display()
-        ));
+        out.warnings.push(crate::i18n::tf("safety.elevated", &[("path", &source.display().to_string())]));
     }
     if rel.contains("onedrive") || rel.contains("dropbox") {
-        out.warnings.push(
-            "该路径疑似在云同步目录内：云盘客户端会用重解析点做占位符，与目录链接冲突，强烈不建议重定向"
-                .to_string(),
-        );
+        out.warnings.push(crate::i18n::t("safety.cloud").to_string());
     }
     if rel.ends_with("\\temp") || rel == "temp" {
-        out.warnings.push(
-            "重定向整个 TEMP 目录影响面较大（安装程序、待重启的更新会依赖它），建议逐软件配置"
-                .to_string(),
-        );
+        out.warnings.push(crate::i18n::t("safety.temp").to_string());
     }
     if util::simplify(source).to_string_lossy().len() > 200 {
-        out.warnings.push(
-            "路径较长，部分老程序（未声明 longPathAware）仍可能受 260 字符限制影响".to_string(),
-        );
+        out.warnings.push(crate::i18n::t("safety.long_path").to_string());
     }
     out
 }
@@ -147,27 +133,19 @@ pub fn preflight_pair(source: &Path, target: &Path) -> TdResult<()> {
         util::normalize_key(&util::simplify(target).to_string_lossy()),
     );
     if s.is_empty() || t.is_empty() {
-        return Err(TdError::InvalidPath("源路径与目标路径都不能为空".into()));
+        return Err(TdError::InvalidPath(crate::i18n::t("safety.both_empty").into()));
     }
     if !source.is_absolute() || !target.is_absolute() {
-        return Err(TdError::InvalidPath(
-            "源路径与目标路径必须是绝对路径（支持 %VAR% 模板，但展开后必须绝对）".into(),
-        ));
+        return Err(TdError::InvalidPath(crate::i18n::t("safety.must_absolute").into()));
     }
     if s == t {
-        return Err(TdError::SafetyBlocked(format!(
-            "源路径与目标路径相同：{s}"
-        )));
+        return Err(TdError::SafetyBlocked(crate::i18n::tf("safety.same", &[("s", &s)])));
     }
     if t.starts_with(&format!("{s}\\")) {
-        return Err(TdError::SafetyBlocked(format!(
-            "目标目录位于源目录内部（{t} 在 {s} 内），会形成自环"
-        )));
+        return Err(TdError::SafetyBlocked(crate::i18n::tf("safety.target_in_source", &[("t", &t), ("s", &s)])));
     }
     if s.starts_with(&format!("{t}\\")) {
-        return Err(TdError::SafetyBlocked(format!(
-            "源目录位于目标目录内部（{s} 在 {t} 内），会形成自环"
-        )));
+        return Err(TdError::SafetyBlocked(crate::i18n::tf("safety.source_in_target", &[("s", &s), ("t", &t)])));
     }
     Ok(())
 }
