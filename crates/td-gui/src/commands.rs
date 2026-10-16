@@ -3,6 +3,8 @@
 //! 这一层只做三件事：取状态锁、调用 [`crate::api`]、把错误转成字符串。
 //! **不放任何业务逻辑** —— 业务逻辑全在 `api.rs`，那里可以脱离窗口做单元测试。
 
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -10,6 +12,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use td_core::store::Store;
 
 use crate::api;
+use crate::notify;
+
+/// settings 键：关闭窗口时是否驻留托盘（`"0"` = 直接退出；缺省/其它 = 驻留）。
+pub const KEY_CLOSE_TO_TRAY: &str = "close_to_tray";
 
 /// 全局状态。`Store` 不是 `Sync`，用 `Mutex` 包一层；
 /// 命令是同步的（跑在 Tauri 的工作线程上），因此不会卡住界面线程，
@@ -20,6 +26,11 @@ use crate::api;
 pub struct AppState {
     store: Mutex<Store>,
     init_error: Option<String>,
+    /// 水位告警去重：`root_id` → 上次已通知的级别。
+    /// 只在"升级到 critical"时通知一次；降级后清掉记录，下次越线可再通知。
+    water_notified: Mutex<BTreeMap<i64, String>>,
+    /// 首次隐藏到托盘的一次性提示标记（每会话一次）。
+    tray_hint_shown: AtomicBool,
 }
 
 impl AppState {
@@ -27,12 +38,52 @@ impl AppState {
         Self {
             store: Mutex::new(store),
             init_error,
+            water_notified: Mutex::new(BTreeMap::new()),
+            tray_hint_shown: AtomicBool::new(false),
         }
     }
 
     pub fn init_error(&self) -> Option<&str> {
         self.init_error.as_deref()
     }
+}
+
+/// 读"关闭窗口时驻留托盘"偏好；缺省（未设置）= 驻留。
+pub fn close_to_tray_setting(store: &Store) -> bool {
+    store
+        .get_setting(KEY_CLOSE_TO_TRAY)
+        .ok()
+        .flatten()
+        .map(|v| v.trim() != "0")
+        .unwrap_or(true)
+}
+
+/// 关闭窗口时是否驻留托盘。
+///
+/// 拿不到锁时按**安全默认（驻留）**：宁可让用户多点一次托盘退出，
+/// 也不要因为一次瞬时锁竞争就把后台巡检 / 预授权自动清理一起关掉。
+pub fn close_to_tray(app: &AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    // 先把结果取出来再返回：`try_lock` 的临时 guard 会在 match 表达式末尾析构，
+    // 若直接作为块尾表达式返回，会和局部 `state` 的析构顺序冲突（E0597）。
+    let stay = match state.store.try_lock() {
+        Ok(store) => close_to_tray_setting(&store),
+        Err(_) => true,
+    };
+    stay
+}
+
+/// 首次隐藏到托盘时提示一次：用户点 ✕ 会以为程序退了，必须说明它还在跑。
+pub fn hint_tray_once(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.tray_hint_shown.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    notify::notify(
+        app,
+        "TempDirector 仍在后台运行",
+        "窗口已隐藏到托盘，水位巡检与预授权自动清理继续生效。点托盘图标可重新打开。",
+    );
 }
 
 /// 进度事件名（Tauri 只允许字母数字与 `-/:_`，所以用连字符）。
@@ -294,9 +345,86 @@ pub fn disk_usage(app: AppHandle, state: State<'_, AppState>) -> R<api::DiskUsag
 // ---------------------------------------------------------------------------
 
 /// 定时巡检水位：级别变化才落事件（前端定时器调用，见 app.js 启动段）。
+///
+/// 顺带把两类"人不在界面前也要知道"的事推送成系统通知：
+/// 水位**升级到 critical**、以及**预授权自动清理真的删了文件**。
 #[tauri::command]
-pub fn water_poll(state: State<'_, AppState>) -> R<Vec<api::WaterLevel>> {
-    api::water_poll(&*lock_store(&state)?).map_err(map_err)
+pub fn water_poll(app: AppHandle, state: State<'_, AppState>) -> R<Vec<api::WaterLevel>> {
+    let levels = {
+        let store = lock_store(&state)?;
+        // 记录调用前的最新事件 id，用来识别"本次巡检新产生的"事件。
+        let before = store
+            .recent_events(1)
+            .ok()
+            .and_then(|v| v.first().map(|e| e.id))
+            .unwrap_or(0);
+        let levels = api::water_poll(&store).map_err(map_err)?;
+        // 自动清理是破坏性动作，不能悄悄发生（事件由 run_auto_clean 落）。
+        if let Ok(evs) = store.recent_events(10) {
+            if let Some(e) = evs.iter().find(|e| e.id > before && e.kind == "auto_clean") {
+                notify::notify(
+                    &app,
+                    if e.level == "warn" {
+                        "水位自动清理有失败"
+                    } else {
+                        "水位自动清理完成"
+                    },
+                    &e.message,
+                );
+            }
+        }
+        levels
+    };
+    notify_water_critical(&app, &state, &levels);
+    Ok(levels)
+}
+
+/// 水位升级到 critical 时发一次系统通知（同根同级别不重复）。
+///
+/// 只在 critical 通知：warn 已在界面上有横幅，也推通知会迅速让人麻木 ——
+/// 通知是给"窗口关着"的场景用的，必须稀缺才有效。
+fn notify_water_critical(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    levels: &[api::WaterLevel],
+) {
+    let mut notified = match state.water_notified.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    for lv in pick_new_critical(&mut notified, levels) {
+        notify::notify(
+            app,
+            "RAM 盘即将写满",
+            &format!(
+                "{}（{}）已用 {:.1}%，仅剩 {}。软件写缓存可能开始失败，建议清理。",
+                lv.label, lv.path, lv.used_pct, lv.free_text
+            ),
+        );
+    }
+}
+
+/// 挑出"本次应当通知"的水位项，并就地更新去重表。
+///
+/// 规则：某根**新升级到 critical** 才返回（同级别不重复）；非 critical 的根
+/// 清掉记录，这样降级恢复后再越线仍能通知。抽成纯函数是为了能脱离 Tauri
+/// 运行时测这条"通知疲劳"边界。
+fn pick_new_critical<'a>(
+    notified: &mut BTreeMap<i64, String>,
+    levels: &'a [api::WaterLevel],
+) -> Vec<&'a api::WaterLevel> {
+    let mut out = Vec::new();
+    for lv in levels {
+        if lv.level == "critical" {
+            if notified.get(&lv.root_id).map(String::as_str) != Some("critical") {
+                notified.insert(lv.root_id, lv.level.clone());
+                out.push(lv);
+            }
+        } else {
+            notified.remove(&lv.root_id);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -305,12 +433,19 @@ pub fn water_poll(state: State<'_, AppState>) -> R<Vec<api::WaterLevel>> {
 
 #[tauri::command]
 pub fn boot_rebuild(app: AppHandle, state: State<'_, AppState>) -> R<td_core::boot::BootReport> {
-    let guard = lock_store(&state)?;
-    let report = api::boot_rebuild(&guard).map_err(map_err)?;
+    // 锁只在重建期间持有，通知放到锁外发（否则一次系统调用会挡住其它命令）。
+    let report = {
+        let guard = lock_store(&state)?;
+        api::boot_rebuild(&guard).map_err(map_err)?
+    };
     let _ = app.emit(
         EV_DONE,
         serde_json::json!({ "kind": "boot", "ok": report.ok_count(), "failed": report.failed.len() }),
     );
+    // 重建是"软件启动前"的关键一步，出问题要主动叫醒用户，不能只留在界面里。
+    if report.has_problem() {
+        notify::notify(&app, "开机重建未完全成功", &report.one_line());
+    }
     Ok(report)
 }
 
@@ -415,6 +550,32 @@ pub fn quit_app(app: AppHandle) -> R<()> {
 }
 
 // ---------------------------------------------------------------------------
+// 界面偏好
+// ---------------------------------------------------------------------------
+
+/// 界面偏好（目前只有关闭行为；后续偏好项往这里加）。
+#[derive(serde::Serialize)]
+pub struct UiSettings {
+    /// 关闭窗口时隐藏到托盘而不是退出（默认 true）。
+    pub close_to_tray: bool,
+}
+
+#[tauri::command]
+pub fn ui_settings(state: State<'_, AppState>) -> R<UiSettings> {
+    let store = lock_store(&state)?;
+    Ok(UiSettings {
+        close_to_tray: close_to_tray_setting(&store),
+    })
+}
+
+#[tauri::command]
+pub fn set_close_to_tray(state: State<'_, AppState>, enabled: bool) -> R<()> {
+    lock_store(&state)?
+        .set_setting(KEY_CLOSE_TO_TRAY, if enabled { "1" } else { "0" })
+        .map_err(map_err)
+}
+
+// ---------------------------------------------------------------------------
 // 开机自启 / 提权（M3）
 // ---------------------------------------------------------------------------
 
@@ -497,5 +658,69 @@ fn progress_detail(p: &Progress) -> String {
             files,
             td_core::util::human_bytes(*bytes)
         ),
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use td_core::usecase::WaterLevel;
+
+    fn level(root_id: i64, lv: &str) -> WaterLevel {
+        WaterLevel {
+            root_id,
+            label: format!("根{root_id}"),
+            path: format!("R{root_id}:"),
+            used_pct: 96.0,
+            free: 1024,
+            free_text: "1 KB".into(),
+            total_text: "1 GB".into(),
+            level: lv.into(),
+            message: String::new(),
+        }
+    }
+
+    #[test]
+    fn water_critical_notifies_only_on_upgrade() {
+        let mut notified = BTreeMap::new();
+
+        // 首次 critical → 通知一次
+        let first = [level(1, "critical")];
+        let hit = pick_new_critical(&mut notified, &first);
+        assert_eq!(hit.len(), 1, "首次越线要通知");
+        assert_eq!(hit[0].root_id, 1);
+
+        // 仍 critical → 不重复（防通知疲劳）
+        assert!(pick_new_critical(&mut notified, &first).is_empty());
+
+        // warn / ok 不通知，并清掉记录
+        let w = [level(1, "warn")];
+        assert!(pick_new_critical(&mut notified, &w).is_empty());
+        let o = [level(1, "ok")];
+        assert!(pick_new_critical(&mut notified, &o).is_empty());
+
+        // 降级后再越线 → 重新通知
+        assert_eq!(pick_new_critical(&mut notified, &first).len(), 1);
+
+        // 多根互不影响：根1 已在"已通知"状态、根2 首次越线，只通知根2
+        let two = [level(1, "critical"), level(2, "critical")];
+        let hit = pick_new_critical(&mut notified, &two);
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].root_id, 2, "只通知新越线的那个根");
+    }
+
+    #[test]
+    fn close_to_tray_defaults_true_and_persists() {
+        let s = Store::open_in_memory().unwrap();
+        assert!(close_to_tray_setting(&s), "缺省 = 驻留托盘");
+
+        s.set_setting(KEY_CLOSE_TO_TRAY, "0").unwrap();
+        assert!(!close_to_tray_setting(&s), "设 0 = 直接退出");
+
+        s.set_setting(KEY_CLOSE_TO_TRAY, "1").unwrap();
+        assert!(close_to_tray_setting(&s));
+
+        // 非 "0" 的值一律视为开启（宽容解析，避免脏数据把后台能力关掉）
+        s.set_setting(KEY_CLOSE_TO_TRAY, "yes").unwrap();
+        assert!(close_to_tray_setting(&s));
     }
 }

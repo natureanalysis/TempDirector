@@ -898,6 +898,40 @@ async function openSettings() {
   // ---- 开机自启（M3）----
   await appendAutostartSection(body, snap);
 
+  // ---- 关闭窗口行为 ----
+  // 托盘常驻是水位巡检 / 预授权自动清理"无人值守"的前提：窗口关掉后前端
+  // 定时器不再可靠，只有进程活着 + 托盘在，后台能力才继续生效。
+  const closeField = document.createElement('div');
+  closeField.className = 'field';
+  const closeLabel = document.createElement('label');
+  closeLabel.textContent = '关闭窗口时';
+  closeField.appendChild(closeLabel);
+  let closeToTray = true;
+  try { closeToTray = (await invoke('ui_settings', {})).close_to_tray; } catch (e) { closeToTray = true; }
+  const closeCheck = document.createElement('input');
+  closeCheck.type = 'checkbox';
+  closeCheck.checked = closeToTray;
+  const closeInline = document.createElement('label');
+  closeInline.className = 'inline-check';
+  closeInline.appendChild(closeCheck);
+  const closeSpan = document.createElement('span');
+  closeSpan.textContent = '最小化到托盘（继续后台巡检水位与自动清理）';
+  closeInline.appendChild(closeSpan);
+  closeCheck.addEventListener('change', async function () {
+    try {
+      await invoke('set_close_to_tray', { enabled: closeCheck.checked });
+      toast('已保存', closeCheck.checked ? '关闭窗口时最小化到托盘' : '关闭窗口时直接退出', 'ok');
+    } catch (e) {
+      toast('保存失败', e.message, 'error');
+    }
+  });
+  closeField.appendChild(closeInline);
+  const closeHint = document.createElement('div');
+  closeHint.className = 'hint';
+  closeHint.textContent = '退出请走托盘的「退出」；取消勾选则点 ✕ 直接退出程序（后台巡检与自动清理将停止）。';
+  closeField.appendChild(closeHint);
+  body.appendChild(closeField);
+
   const rootField = document.createElement('div');
   rootField.className = 'field';
   const rootLabel = document.createElement('label');
@@ -2107,6 +2141,8 @@ function createMockBackend() {
     };
   }
 
+  let mockCloseToTray = true;
+
   function stats() {
     const s = { total: rules.length, enabled: 0, ok: 0, warn: 0, plain: 0, other: 0, needs_attention: 0 };
     rules.forEach(function (r) {
@@ -2359,6 +2395,10 @@ function createMockBackend() {
         case 'reveal_in_explorer': return Promise.resolve(null);
         case 'show_main_window': return Promise.resolve(null);
         case 'quit_app': return Promise.resolve(null);
+        case 'ui_settings': return Promise.resolve({ close_to_tray: mockCloseToTray });
+        case 'set_close_to_tray':
+          mockCloseToTray = !!args.enabled;
+          return Promise.resolve(null);
         default: return Promise.reject(new Error('mock 未实现命令：' + name));
       }
     },

@@ -11,6 +11,7 @@
 
 pub mod api;
 pub mod commands;
+pub mod notify;
 pub mod submode;
 pub mod tray;
 
@@ -64,7 +65,19 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(state)
+        // 关闭窗口 ≠ 退出应用：默认隐藏到托盘，后台继续水位巡检 / 预授权自动清理
+        // （否则这些"无人值守"能力只在窗口开着时才生效）。用户可在设置里改成直接退出。
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if commands::close_to_tray(window.app_handle()) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    commands::hint_tray_once(window.app_handle());
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::ui_snapshot,
             commands::recent_events,
@@ -102,6 +115,8 @@ pub fn run() {
             commands::reveal_in_explorer,
             commands::show_main_window,
             commands::quit_app,
+            commands::ui_settings,
+            commands::set_close_to_tray,
         ])
         .setup(|app| {
             tray::install(app.handle())?;

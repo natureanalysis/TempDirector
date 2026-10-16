@@ -30,3 +30,4 @@ tauri = { version = "=2.11.5", features = ["tray-icon"] }
 # 2.5+ 要求 tauri ^2.12，会把锁文件里的 tauri 顶上去 → 精确 pin 复用 2.4.5。
 tauri-plugin-single-instance = "=2.4.5"
 tauri-plugin-dialog = "=2.7.3"
+tauri-plugin-notification = "=2.4.0"
