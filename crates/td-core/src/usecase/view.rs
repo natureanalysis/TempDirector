@@ -53,6 +53,8 @@ pub struct RuleView {
     pub notes: Option<String>,
     /// 清理排除模式（只影响 clean，不改搬运）。
     pub excludes: Vec<String>,
+    /// 水位预授权策略：`''` / `empty` / `older:<秒>`（详情展示用）。
+    pub auto_clean_policy: String,
     pub badge: String,
     pub label: String,
     pub needs_attention: bool,
@@ -134,6 +136,10 @@ pub struct RuleForm {
     /// 清理排除模式，如 `["sessions", "logs/old"]`。空 = 不排除。
     #[serde(default)]
     pub excludes: Vec<String>,
+    /// 水位预授权策略：`''` 未启用 / `empty` / `older:<秒>`。
+    /// 仅 water 巡检在 critical 时触发；手动 clean 不读它。
+    #[serde(default)]
+    pub auto_clean_policy: String,
 }
 
 fn yes() -> bool {
@@ -153,6 +159,7 @@ impl RuleForm {
             rebuild_on_boot: self.rebuild_on_boot,
             notes: self.notes.clone(),
             excludes: self.excludes.clone(),
+            auto_clean_policy: self.auto_clean_policy.clone(),
         }
     }
 }

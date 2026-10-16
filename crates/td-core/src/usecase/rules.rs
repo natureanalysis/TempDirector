@@ -64,6 +64,8 @@ pub(crate) fn validate_form(form: &RuleForm) -> TdResult<()> {
     }
     // 排除模式的结构校验（空/超长/超量/..）由 Excludes 统一给出。
     crate::fsops::exclude::Excludes::new(&form.excludes)?;
+    // 水位预授权策略的格式校验（empty / older:<秒>）。
+    super::water::validate_auto_policy(&form.auto_clean_policy)?;
     Ok(())
 }
 

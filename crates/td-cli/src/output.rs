@@ -49,6 +49,9 @@ pub(crate) fn print_rule_row(rule: &Rule) {
     if !rule.excludes.is_empty() {
         println!("       清理排除：{}", rule.excludes.join("、"));
     }
+    if !rule.auto_clean_policy.trim().is_empty() {
+        println!("       水位自动清理：{}", rule.auto_clean_policy);
+    }
 }
 
 pub(crate) fn yn(v: bool) -> &'static str {

@@ -31,6 +31,9 @@ pub(crate) fn print_help() {
             [--link-type junction|symlink_dir] [--enable] [--no-boot] [--notes 备注]
             [--exclude 模式]                     清理时跳过的子目录/文件，可重复多条
                                                  如 --exclude sessions --exclude "logs\\old"
+            [--auto-clean 策略]                  水位到严重线（默认95%）时的预授权清理：
+                                                 empty（清空）/ older:<秒>（只清早于该秒修改的），
+                                                 如 --auto-clean older:86400；缺省 = 不自动清理
   rules rm <id...>
   rules enable|disable <id...|--all>
 

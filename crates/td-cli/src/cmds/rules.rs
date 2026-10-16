@@ -86,6 +86,10 @@ pub(crate) fn cmd_rules(store: &Store, p: &Parsed) -> TdResult<()> {
             let excludes: Vec<String> = p.values("exclude").to_vec();
             td_core::fsops::exclude::Excludes::new(&excludes)?;
 
+            // 水位预授权策略同理：格式在入口就拦（空 = 未启用）。
+            let auto_clean_policy = p.value("auto-clean").unwrap_or("").trim().to_string();
+            td_core::usecase::water::validate_auto_policy(&auto_clean_policy)?;
+
             let nr = NewRule {
                 name,
                 category,
@@ -97,6 +101,7 @@ pub(crate) fn cmd_rules(store: &Store, p: &Parsed) -> TdResult<()> {
                 rebuild_on_boot: !p.has("no-boot"),
                 notes: p.value("notes").map(|s| s.to_string()),
                 excludes,
+                auto_clean_policy,
             };
             let id = store.insert_rule(&nr)?;
             let rule = store.get_rule(id)?;

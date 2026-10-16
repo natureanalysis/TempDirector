@@ -53,6 +53,9 @@ pub struct Rule {
     pub sort_order: i64,
     /// 清理排除模式。只影响 `clean`（命中子树不删不剪），不改搬运语义。
     pub excludes: Vec<String>,
+    /// 水位预授权策略：`''` 未启用 / `empty` / `older:<秒>`。
+    /// 仅 water 巡检在 critical 时触发；手动 clean 不读它。
+    pub auto_clean_policy: String,
 
     pub last_state: Option<String>,
     pub last_checked_at: Option<String>,
@@ -129,6 +132,9 @@ pub struct NewRule {
     pub notes: Option<String>,
     #[serde(default)]
     pub excludes: Vec<String>,
+    /// 水位预授权策略：`''` / `empty` / `older:<秒>`。缺省（老配置文件）= 未启用。
+    #[serde(default)]
+    pub auto_clean_policy: String,
 }
 
 /// 操作流水的一行。
@@ -160,7 +166,7 @@ pub struct EventRow {
 
 pub const RULE_COLUMNS: &str = "id, name, category, source_template, source_norm, \
      target_root_id, target_subpath, link_type, want_enabled, rebuild_on_boot, \
-     acl_sddl, needs_elevation, notes, sort_order, excludes, \
+     acl_sddl, needs_elevation, notes, sort_order, excludes, auto_clean_policy, \
      last_state, last_checked_at, last_error, last_files, last_bytes, applied_at, \
      created_at, updated_at";
 
@@ -187,14 +193,15 @@ pub fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Rule> {
         notes: row.get(12)?,
         sort_order: row.get(13)?,
         excludes: excludes_from_db(row.get(14)?),
-        last_state: row.get(15)?,
-        last_checked_at: row.get(16)?,
-        last_error: row.get(17)?,
-        last_files: row.get(18)?,
-        last_bytes: row.get(19)?,
-        applied_at: row.get(20)?,
-        created_at: row.get(21)?,
-        updated_at: row.get(22)?,
+        auto_clean_policy: row.get(15)?,
+        last_state: row.get(16)?,
+        last_checked_at: row.get(17)?,
+        last_error: row.get(18)?,
+        last_files: row.get(19)?,
+        last_bytes: row.get(20)?,
+        applied_at: row.get(21)?,
+        created_at: row.get(22)?,
+        updated_at: row.get(23)?,
     })
 }
 

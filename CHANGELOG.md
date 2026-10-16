@@ -20,6 +20,41 @@
 * `cargo test --workspace` 全绿；clippy 0 告警；`node --check` 通过。
 * CLI 冒烟：2 条规则预演 2 文件 → `--yes` 执行 → `clean` 事件逐条落库。
 
+## 2026-10-16（功能：规则级水位预授权自动清理）
+
+### 功能 —— critical 时按预授权策略自动清理，其余情况仍然只告警
+
+* **schema v2→v3**：`rules.auto_clean_policy TEXT NOT NULL DEFAULT ''`
+  （空 = 未启用 / `empty` 清空 / `older:<秒>` 只清早于该秒修改的）。
+  迁移只对 `user_version < 3` 的老库执行，新库由 schema.sql 直接建全列；
+  `v2_database_migrates_to_v3` 手工造 v2 库验证迁移无损。
+* **`water.rs` 新增预授权执行**：
+  * `parse_auto_policy` / `validate_auto_policy`：策略解析与入口校验
+    （空串合法=未启用，仅"非空但解析不了"报错）；
+  * `run_auto_clean`：**仅水位 critical** 时触发，只清「配了策略且目标根在
+    critical 卷上」的规则；**30 分钟冷却**（settings 键 `water_last_auto_clean_at`，
+    水位降不下去时不反复删）；每条走 `clean_run` 门面（规则 excludes 照常保护、
+    事件照常落），另落一条 `auto_clean` 汇总事件说明"这次删是水位触发的"。
+    由 `water_poll` 末尾调用，GUI 定时器 / CLI `water` / 计划任务都自动获得。
+  * **修复**：首巡检直接 warn/critical（装完就写满）此前不落水位事件——
+    现在视为从 `ok` 出发，越线即告警，只有首巡检 `ok` 才静默建基线。
+* usecase：`RuleForm`/`RuleView` 加 `auto_clean_policy`（`#[serde(default)]`，
+  老前端缺字段可反序列化，wire contract 测试钉住）；`validate_form` 拒绝坏策略。
+* CLI：`rules add --auto-clean <策略>` 入口校验；`rules list` 规则行展示策略；
+  help 补充说明。
+* GUI：规则表单加「水位自动清理（预授权）」下拉（未启用 / 清空 / 只清早于
+  N 小时修改的，映射 `''` / `empty` / `older:<秒>`）；详情面板友好文案展示；
+  mock 层对齐（`mockRule` 带字段、增改持久化、示例数据可见）。
+
+### 验证
+
+* `cargo test --workspace` 全绿（td-core 155：策略解析单测、v2→v3 迁移、
+  `water_critical_runs_preauthorized_auto_clean` 端到端——预授权规则被清、
+  未授权绝不动、水位 error + clean + auto_clean 三类事件齐、冷却期内不重复）；
+  clippy 0 告警；`node --check` 通过。
+* CLI 冒烟：`--auto-clean older:3600` 入库并在 `rules list` 展示；
+  `--auto-clean older:xx` 被入口校验拦截（exit 1 + 中文报错）。
+
 ## 2026-10-16（功能：RAM 盘水位监控）
 
 ### 功能 —— 目标根水位分级 + 阈值事件 + 全端展示（只告警，不自动删文件）

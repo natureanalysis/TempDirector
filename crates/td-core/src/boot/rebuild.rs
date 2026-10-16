@@ -315,6 +315,7 @@ mod tests {
                 rebuild_on_boot: true,
                 notes: None,
                 excludes: Vec::new(),
+                auto_clean_policy: String::new(),
             })
             .unwrap();
 
@@ -384,6 +385,7 @@ mod tests {
                 rebuild_on_boot: true,
                 notes: None,
                 excludes: Vec::new(),
+                auto_clean_policy: String::new(),
             })
             .unwrap();
 

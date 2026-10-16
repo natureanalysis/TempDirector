@@ -52,6 +52,7 @@ fn form(env: &Env, name: &str, sub: &str) -> RuleForm {
         rebuild_on_boot: true,
         notes: None,
         excludes: Vec::new(),
+        auto_clean_policy: String::new(),
     }
 }
 
@@ -71,7 +72,8 @@ fn rule_form_wire_contract_is_snake_case() {
             "want_enabled": true,
             "rebuild_on_boot": true,
             "notes": null,
-            "excludes": ["sessions", "logs/old"]
+            "excludes": ["sessions", "logs/old"],
+            "auto_clean_policy": "empty"
         }"#;
     let form: RuleForm =
         serde_json::from_str(json).expect("前端发送的表单必须能反序列化");
@@ -84,14 +86,16 @@ fn rule_form_wire_contract_is_snake_case() {
     assert!(form.rebuild_on_boot);
     assert!(form.notes.is_none());
     assert_eq!(form.excludes, vec!["sessions", "logs/old"]);
+    assert_eq!(form.auto_clean_policy, "empty");
 
-    // 老前端不带 excludes 字段时按"无排除"处理
+    // 老前端不带 excludes / auto_clean_policy 字段时按"无排除 / 未启用"处理
     let legacy: RuleForm = serde_json::from_str(
         r#"{"name":"x","category":"dev","source_template":"C:\\T","target_root_id":1,
             "target_subpath":"x","link_type":"junction"}"#,
     )
     .unwrap();
     assert!(legacy.excludes.is_empty());
+    assert!(legacy.auto_clean_policy.is_empty());
 }
 
 #[test]
@@ -459,6 +463,7 @@ fn preset_rules_filters_by_existence() {
             rebuild_on_boot: true,
             notes: v.note.clone(),
             excludes: Vec::new(),
+            auto_clean_policy: String::new(),
         };
         validate_form(&f).unwrap_or_else(|e| panic!("预设 {} 没通过表单校验：{e}", v.name));
     }
@@ -658,5 +663,53 @@ fn snapshot_banners_warn_on_high_water_level() {
         env.store.recent_events(10).unwrap().is_empty(),
         "snapshot 只读，事件只能由 water_poll 落"
     );
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn water_critical_runs_preauthorized_auto_clean() {
+    let env = setup("waterauto");
+    // 规则 A（配了预授权 empty）与规则 B（未授权）用不同源目录。
+    let mut fa = form(&env, "预授权A", "dev\\auto-a");
+    fa.auto_clean_policy = "empty".into();
+    let id_a = add_rule(&env.store, &fa).unwrap();
+    let dir_b = env.base.join("cache-b");
+    fs::create_dir_all(&dir_b).unwrap();
+    fs::write(dir_b.join("b.bin"), b"keep-b").unwrap();
+    let mut fb = form(&env, "普通B", "dev\\auto-b");
+    fb.source_template = dir_b.to_string_lossy().into_owned();
+    let _id_b = add_rule(&env.store, &fb).unwrap();
+
+    // 压低严重线 → 巡检时 critical → 自动清 A（未链接 → 清源目录的 a.bin）
+    env.store.set_setting("water_critical_pct", "0.5").unwrap();
+    let levels = water_poll(&env.store).unwrap();
+    assert_eq!(levels[0].level, "critical");
+    assert!(!env.source.join("a.bin").exists(), "预授权规则的文件应被自动清掉");
+    assert!(dir_b.join("b.bin").exists(), "未授权规则绝不动");
+
+    // 事件：水位 error + 规则A的 clean + auto_clean 汇总
+    let ev = env.store.recent_events(10).unwrap();
+    assert!(ev.iter().any(|e| e.kind == "water" && e.level == "error"));
+    assert!(ev.iter().any(|e| e.kind == "auto_clean" && e.message.contains("1 条预授权规则")));
+    assert!(ev.iter().any(|e| e.kind == "clean" && e.rule_id == Some(id_a)));
+
+    // 冷却：补一个文件再巡检 → 30 分钟冷却期内不重复触发
+    fs::write(env.source.join("a2.bin"), b"again").unwrap();
+    let _ = water_poll(&env.store).unwrap();
+    assert!(env.source.join("a2.bin").exists(), "冷却期内不重复自动清理");
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn add_rule_rejects_invalid_auto_clean_policy() {
+    let env = setup("waterbad");
+    let mut f = form(&env, "坏策略", "dev\\bad-policy");
+    f.auto_clean_policy = "older:abc".into();
+    let err = add_rule(&env.store, &f).unwrap_err();
+    assert!(matches!(err, TdError::InvalidPath(_)), "{err}");
+
+    let mut f2 = form(&env, "空策略OK", "dev\\ok-policy");
+    f2.auto_clean_policy = String::new();
+    assert!(add_rule(&env.store, &f2).is_ok(), "空串 = 未启用，应通过");
     let _ = fs::remove_dir_all(&env.base);
 }

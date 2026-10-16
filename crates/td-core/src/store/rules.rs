@@ -195,8 +195,8 @@ impl Store {
         self.conn().execute(
             "INSERT INTO rules(name, category, source_template, source_norm, target_root_id,
                                target_subpath, link_type, want_enabled, rebuild_on_boot,
-                               notes, needs_elevation, excludes)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                               notes, needs_elevation, excludes, auto_clean_policy)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 nr.name,
                 nr.category,
@@ -210,6 +210,7 @@ impl Store {
                 nr.notes,
                 needs_elev,
                 serde_json::to_string(&nr.excludes).unwrap_or_else(|_| "[]".into()),
+                nr.auto_clean_policy,
             ],
         )?;
         Ok(self.conn().last_insert_rowid())
@@ -237,7 +238,7 @@ impl Store {
             "UPDATE rules SET name=?2, category=?3, source_template=?4, source_norm=?5,
                     target_root_id=?6, target_subpath=?7, link_type=?8,
                     want_enabled=?9, rebuild_on_boot=?10, notes=?11, excludes=?12,
-                    updated_at=datetime('now')
+                    auto_clean_policy=?13, updated_at=datetime('now')
              WHERE id=?1",
             params![
                 id,
@@ -252,6 +253,7 @@ impl Store {
                 nr.rebuild_on_boot,
                 nr.notes,
                 serde_json::to_string(&nr.excludes).unwrap_or_else(|_| "[]".into()),
+                nr.auto_clean_policy,
             ],
         )?;
         if n == 0 {
@@ -354,6 +356,7 @@ mod tests {
             rebuild_on_boot: true,
             notes: None,
             excludes: Vec::new(),
+            auto_clean_policy: String::new(),
         }
     }
 
@@ -474,5 +477,60 @@ mod tests {
             .execute("UPDATE rules SET excludes='{oops' WHERE id=?1", [id])
             .unwrap();
         assert!(s.get_rule(id).unwrap().excludes.is_empty());
+    }
+
+    #[test]
+    fn auto_clean_policy_roundtrip() {
+        let s = mk_store();
+        let mut nr = new_rule("AC", r"C:\Temp\AC", "ac");
+        nr.auto_clean_policy = "older:3600".into();
+        let id = s.insert_rule(&nr).unwrap();
+        assert_eq!(s.get_rule(id).unwrap().auto_clean_policy, "older:3600");
+
+        // 更新覆盖 & 默认未启用
+        let off = new_rule("AC", r"C:\Temp\AC", "ac2");
+        s.update_rule(id, &off).unwrap();
+        assert_eq!(s.get_rule(id).unwrap().auto_clean_policy, "");
+        let id2 = s.insert_rule(&new_rule("N", r"C:\Temp\N", "n")).unwrap();
+        assert_eq!(s.get_rule(id2).unwrap().auto_clean_policy, "");
+    }
+
+    #[test]
+    fn v2_database_migrates_to_v3() {
+        // 手工造一个 v2 库（有 excludes 无 auto_clean_policy），迁移后补列且数据无损。
+        let dir = std::env::temp_dir().join(format!("td_v3mig_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("mig.db");
+        {
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE rules(id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                    category TEXT NOT NULL, source_template TEXT NOT NULL,
+                    source_norm TEXT NOT NULL UNIQUE, target_root_id INTEGER NOT NULL,
+                    target_subpath TEXT NOT NULL, link_type TEXT NOT NULL DEFAULT 'junction',
+                    want_enabled INTEGER NOT NULL DEFAULT 0,
+                    rebuild_on_boot INTEGER NOT NULL DEFAULT 1,
+                    acl_sddl TEXT, needs_elevation INTEGER NOT NULL DEFAULT 0,
+                    notes TEXT, sort_order INTEGER NOT NULL DEFAULT 0,
+                    excludes TEXT NOT NULL DEFAULT '[]',
+                    last_state TEXT, last_checked_at TEXT, last_error TEXT,
+                    last_files INTEGER, last_bytes INTEGER, applied_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+                 PRAGMA user_version=2;
+                 INSERT INTO rules(name, category, source_template, source_norm,
+                     target_root_id, target_subpath, excludes)
+                 VALUES('M', 'dev', 'C:\\Temp\\M', 'c:\\temp\\m', 1, 'm', '[\"x\"]');",
+            )
+            .unwrap();
+        }
+        let s = Store::open(&db).unwrap();
+        assert_eq!(s.user_version().unwrap(), crate::store::SCHEMA_VERSION);
+        let r = s.get_rule(1).unwrap();
+        assert_eq!(r.name, "M");
+        assert_eq!(r.excludes, vec!["x".to_string()], "v2 数据迁移后无损");
+        assert_eq!(r.auto_clean_policy, "", "v3 新列默认未启用");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -52,6 +52,9 @@ pub struct BundleRule {
     /// 清理排除模式（v2 起支持；旧配置文件无此字段 → 空）。
     #[serde(default)]
     pub excludes: Vec<String>,
+    /// 水位预授权策略（v3 起支持；旧配置文件无此字段 → 未启用）。
+    #[serde(default)]
+    pub auto_clean_policy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +144,7 @@ pub fn export_bundle(store: &Store) -> TdResult<Bundle> {
             acl_sddl: rule.acl_sddl,
             notes: rule.notes,
             excludes: rule.excludes,
+            auto_clean_policy: rule.auto_clean_policy,
         });
     }
 
@@ -227,6 +231,7 @@ pub fn import_bundle(
             rebuild_on_boot: br.rebuild_on_boot,
             notes: br.notes.clone(),
             excludes: br.excludes.clone(),
+            auto_clean_policy: br.auto_clean_policy.clone(),
         };
 
         if dry_run {
@@ -273,6 +278,7 @@ mod tests {
             rebuild_on_boot: true,
             notes: Some("先关 Chrome".into()),
             excludes: vec!["sessions".into()],
+            auto_clean_policy: "older:3600".into(),
         })
         .unwrap();
 
@@ -281,6 +287,7 @@ mod tests {
         assert_eq!(bundle.roots.len(), 1);
         assert_eq!(bundle.rules.len(), 1);
         assert_eq!(bundle.rules[0].root_ref, "r0");
+        assert_eq!(bundle.rules[0].auto_clean_policy, "older:3600");
 
         let json = serde_json::to_string_pretty(&bundle).unwrap();
         assert!(!json.contains("{RAM_ROOT}")); // 导出是实路径，占位符由使用者手改
@@ -313,6 +320,7 @@ mod tests {
             rebuild_on_boot: true,
             notes: None,
             excludes: Vec::new(),
+            auto_clean_policy: String::new(),
         })
         .unwrap();
         let bundle = export_bundle(&src).unwrap();
@@ -351,6 +359,7 @@ mod tests {
                 acl_sddl: None,
                 notes: None,
                 excludes: Vec::new(),
+                auto_clean_policy: String::new(),
 
             }],
         };

@@ -170,6 +170,7 @@ fn merge_view(rule: Rule, resolved: engine::Resolved, status: engine::RuleStatus
         needs_elevation: rule.needs_elevation,
         notes: rule.notes,
         excludes: rule.excludes,
+        auto_clean_policy: rule.auto_clean_policy,
         badge: status.badge.to_string(),
         label: status.label,
         needs_attention: status.needs_attention,

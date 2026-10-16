@@ -427,6 +427,9 @@ function renderDetail() {
   if (rule.excludes && rule.excludes.length) {
     addRow(grid, '清理排除', rule.excludes.join('；'), true);
   }
+  if (rule.auto_clean_policy) {
+    addRow(grid, '水位自动清理', describeAutoPolicy(rule.auto_clean_policy), true);
+  }
   if (rule.unknown_vars && rule.unknown_vars.length) {
     addRow(grid, '未解析变量', rule.unknown_vars.join('、'), true);
   }
@@ -450,6 +453,18 @@ function renderDetail() {
   actions.appendChild(mkBtn('复制源路径', 'copy-source', rule.id));
   actions.appendChild(mkBtn('打开位置', 'reveal', rule.id));
   actions.appendChild(mkBtn('编辑', 'edit', rule.id));
+}
+
+function describeAutoPolicy(p) {
+  if (p === 'empty') return '水位到严重线时清空全部';
+  const m = /older:(\d+)/.exec(p);
+  if (m) {
+    const secs = Number(m[1]);
+    if (secs % 86400 === 0) return '水位到严重线时清空早于 ' + (secs / 86400) + ' 天修改的';
+    if (secs % 3600 === 0) return '水位到严重线时清空早于 ' + (secs / 3600) + ' 小时修改的';
+    return '水位到严重线时清空早于 ' + secs + ' 秒修改的';
+  }
+  return p;
 }
 
 function chip(text) {
@@ -1330,6 +1345,50 @@ async function openRuleForm(id) {
   exWrap.field.appendChild(exHint);
   body.appendChild(exWrap.field);
 
+  // 水位自动清理：RAM 盘到严重线（默认 95%）时的预授权，30 分钟冷却防反复删
+  const autoSelect = document.createElement('select');
+  autoSelect.className = 'select';
+  [['', '未启用（水位越线只提醒，不自动删）'],
+   ['empty', '清空全部（最激进）'],
+   ['older', '只清早于 N 小时修改的']].forEach(function (p) {
+    const o = document.createElement('option');
+    o.value = p[0];
+    o.textContent = p[1];
+    autoSelect.appendChild(o);
+  });
+  const autoHours = mkInput('小时数，例如 24');
+  autoHours.type = 'number';
+  autoHours.min = '1';
+  autoHours.step = '1';
+  autoHours.value = '24';
+  const initPolicy = rule ? (rule.auto_clean_policy || '') : '';
+  const initHours = /older:(\d+)/.exec(initPolicy);
+  if (initPolicy === 'empty') autoSelect.value = 'empty';
+  else if (initHours) { autoSelect.value = 'older'; autoHours.value = String(Math.max(1, Math.round(Number(initHours[1]) / 3600))); }
+  const autoWrap = mk('水位自动清理（预授权）', autoSelect);
+  const autoRow = document.createElement('div');
+  autoRow.className = 'field-row';
+  autoRow.appendChild(autoWrap.field);
+  const hoursWrap = mk('早于（小时）', autoHours);
+  autoRow.appendChild(hoursWrap.field);
+  const autoHint = document.createElement('div');
+  autoHint.className = 'hint';
+  autoHint.textContent = 'RAM 盘水位到严重线时按此策略自动清理（排除模式照常保护）；30 分钟冷却，不会反复删。';
+  autoRow.appendChild(autoHint);
+  function syncAutoHours() { hoursWrap.field.style.display = autoSelect.value === 'older' ? '' : 'none'; }
+  autoSelect.addEventListener('change', syncAutoHours);
+  syncAutoHours();
+  body.appendChild(autoRow);
+
+  function autoPolicyValue() {
+    if (autoSelect.value === 'empty') return 'empty';
+    if (autoSelect.value === 'older') {
+      const h = Math.floor(Number(autoHours.value));
+      return h > 0 ? 'older:' + (h * 3600) : '';
+    }
+    return '';
+  }
+
   async function checkSource() {
     const v = srcInput.value.trim();
     if (!v) { srcHint.textContent = ''; srcHint.className = 'hint'; return; }
@@ -1394,6 +1453,7 @@ async function openRuleForm(id) {
             notes: notes.value || null,
             excludes: excludes.value.split(/\r?\n/).map(function (s) { return s.trim(); })
               .filter(function (s) { return s.length > 0; }),
+            auto_clean_policy: autoPolicyValue(),
           };
           try {
             if (rule) await invoke('update_rule', { id: rule.id, form: form });
@@ -2016,7 +2076,7 @@ backend.listen('td-tray-boot', function (ev) {
 
 function createMockBackend() {
   const rules = [
-    mockRule(1, 'Chrome 缓存', 'browser', '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache', 'browsers\\chrome-cache', '✅', 'link_ok', '链接正常', { last_files: 34521, last_bytes: 1288490188 }),
+    mockRule(1, 'Chrome 缓存', 'browser', '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache', 'browsers\\chrome-cache', '✅', 'link_ok', '链接正常', { last_files: 34521, last_bytes: 1288490188, auto_clean_policy: 'older:86400' }),
     mockRule(2, 'Edge 缓存', 'browser', '%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache', 'browsers\\edge-cache', '✅', 'link_ok', '链接正常', { last_files: 21002, last_bytes: 734003200 }),
     mockRule(3, 'Firefox 缓存', 'browser', '%APPDATA%\\Mozilla\\Firefox\\Profiles\\xxxx.default-release\\cache2', 'browsers\\firefox-cache2', '⚠️', 'link_ok_empty', '目录联接 → R:\\browsers\\firefox-cache2（目标为空（RAM 盘刚重启））'),
     mockRule(4, 'Photoshop 暂存盘', 'design', 'C:\\Users\\me\\AppData\\Roaming\\Adobe\\Common\\Media Cache Files', 'design\\ps-media-cache', '⚠️', 'link_broken', '目录联接 断裂，目标不可达：R:\\design\\ps-media-cache', { needs_attention: true }),
@@ -2037,6 +2097,7 @@ function createMockBackend() {
       want_enabled: e.want_enabled !== false, rebuild_on_boot: true,
       has_acl: !!e.has_acl, needs_elevation: !!e.needs_elevation, notes: null,
       excludes: e.excludes || [],
+      auto_clean_policy: e.auto_clean_policy || '',
       badge: badge, label: label,
       needs_attention: !!e.needs_attention || badge === '❌',
       warnings: e.needs_elevation ? ['该路径位于受保护位置，应用时需要管理员权限'] : [],
@@ -2120,7 +2181,7 @@ function createMockBackend() {
         case 'add_rule': {
           const f = assertFormShape(args.form);
           const id = Math.max.apply(null, rules.map(function (r) { return r.id; })) + 1;
-          rules.push(mockRule(id, f.name, f.category, f.source_template, f.target_subpath, '❌', 'plain_dir', '未链接（真实目录）', { want_enabled: f.want_enabled }));
+          rules.push(mockRule(id, f.name, f.category, f.source_template, f.target_subpath, '❌', 'plain_dir', '未链接（真实目录）', { want_enabled: f.want_enabled, auto_clean_policy: f.auto_clean_policy || '' }));
           return Promise.resolve(id);
         }
         case 'update_rule': {
@@ -2133,6 +2194,7 @@ function createMockBackend() {
             r.want_enabled = args.form.want_enabled; r.rebuild_on_boot = args.form.rebuild_on_boot;
             r.notes = args.form.notes;
             r.excludes = args.form.excludes || [];
+            r.auto_clean_policy = args.form.auto_clean_policy || '';
           }
           return Promise.resolve(null);
         }

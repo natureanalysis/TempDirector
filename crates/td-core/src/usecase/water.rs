@@ -13,7 +13,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::error::TdResult;
+use crate::error::{TdError, TdResult};
+use crate::fsops::clean::CleanPolicy;
 use crate::fsops::mover::volume_space;
 use crate::store::Store;
 use crate::util;
@@ -27,6 +28,43 @@ pub const DEFAULT_CRIT_PCT: f64 = 95.0;
 
 /// settings 里记「上次各根水位级别」的键（JSON：`{路径: 级别}`）。
 const STATE_KEY: &str = "water_level_state";
+/// settings 里记「上次自动清理时刻」（Unix 秒）—— 冷却去抖用。
+const LAST_AUTO_CLEAN_KEY: &str = "water_last_auto_clean_at";
+/// 自动清理冷却期：期内不重复触发（水位降不下去时不反复删）。
+const AUTO_CLEAN_COOLDOWN_SECS: i64 = 30 * 60;
+
+/// 校验预授权策略串：`''`（未启用）/ `empty` / `older:<正整数秒>`。
+/// 空串是合法值（未启用），只有「非空但解析不了」才报错。
+pub fn validate_auto_policy(s: &str) -> TdResult<()> {
+    let t = s.trim();
+    if t.is_empty() || parse_auto_policy(t).is_some() {
+        Ok(())
+    } else {
+        Err(TdError::InvalidPath(format!(
+            "水位自动清理策略不合法：{s:?}（可用：空 / empty / older:<秒>）"
+        )))
+    }
+}
+
+/// 解析预授权策略串 → CleanPolicy（`now` 为当前 Unix 秒）。
+/// `None` = 未启用或格式非法。
+pub fn parse_auto_policy(s: &str) -> Option<CleanPolicy> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    match s.trim() {
+        "" => None,
+        "empty" => Some(CleanPolicy::Empty),
+        other => {
+            let secs: i64 = other.strip_prefix("older:")?.trim().parse().ok()?;
+            if secs <= 0 {
+                return None;
+            }
+            Some(CleanPolicy::Before { cutoff: now - secs })
+        }
+    }
+}
 
 fn threshold(store: &Store, key: &str, default: f64) -> f64 {
     store
@@ -114,8 +152,9 @@ pub fn water_poll(store: &Store) -> TdResult<Vec<WaterLevel>> {
             continue;
         }
         new_state.insert(lv.path.clone(), lv.level.clone());
-        let Some(from) = old.get(&lv.path) else { continue };
-        if from == &lv.level {
+        // 首次巡检视为从 ok 出发：直接 warn/critical（装完就写满）也要落事件，只有 ok 静默建基线。
+        let from = old.get(&lv.path).map(String::as_str).unwrap_or("ok");
+        if from == lv.level {
             continue;
         }
         let (ev_level, msg) = match lv.level.as_str() {
@@ -147,7 +186,94 @@ pub fn water_poll(store: &Store) -> TdResult<Vec<WaterLevel>> {
     if old != new_state {
         store.set_setting(STATE_KEY, &serde_json::to_string(&new_state)?)?;
     }
+
+    run_auto_clean(store, &levels)?;
     Ok(levels)
+}
+
+/// 水位 critical 时的预授权自动清理。
+///
+/// * 只处理「目标根在 critical 卷上 **且** 配了 `auto_clean_policy`」的规则；
+/// * 冷却期内（30 分钟）不重复触发 —— 水位降不下去（比如文件都被占用）时不反复删；
+/// * 每条规则走 `clean_run` 门面（排除模式照常生效，事件流水照常落），
+///   另落一条 `auto_clean` 汇总事件，让人一眼看出"这次删是水位触发的"。
+fn run_auto_clean(store: &Store, levels: &[WaterLevel]) -> TdResult<()> {
+    let critical_roots: Vec<i64> = levels
+        .iter()
+        .filter(|w| w.level == "critical")
+        .map(|w| w.root_id)
+        .collect();
+    if critical_roots.is_empty() {
+        return Ok(());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    if let Some(last) = store
+        .get_setting(LAST_AUTO_CLEAN_KEY)?
+        .and_then(|s| s.trim().parse::<i64>().ok())
+    {
+        if now - last < AUTO_CLEAN_COOLDOWN_SECS {
+            return Ok(());
+        }
+    }
+
+    let mut done = 0usize;
+    let mut failed = 0usize;
+    let mut deleted_files = 0u64;
+    let mut deleted_bytes = 0u64;
+    for rule in store.list_rules()? {
+        if rule.auto_clean_policy.trim().is_empty()
+            || !critical_roots.contains(&rule.target_root_id)
+        {
+            continue;
+        }
+        let Some(policy) = parse_auto_policy(&rule.auto_clean_policy) else {
+            // 配置坏了（手工改库等）：不拖垮巡检，但要被看到。
+            store.log_event(
+                Some(rule.id),
+                "warn",
+                "auto_clean",
+                &format!(
+                    "规则「{}」的水位自动清理策略不合法：{:?}，已跳过（可用：empty / older:<秒>）",
+                    rule.name, rule.auto_clean_policy
+                ),
+            )?;
+            continue;
+        };
+        match super::clean::clean_run(
+            store,
+            &super::view::CleanTarget::Rule { id: rule.id },
+            &policy,
+            false,
+            &mut |_| {},
+        ) {
+            Ok(rep) => {
+                done += 1;
+                deleted_files += rep.deleted_files;
+                deleted_bytes += rep.deleted_bytes;
+            }
+            Err(_) => failed += 1,
+        }
+    }
+
+    if done + failed > 0 {
+        let level = if failed > 0 { "warn" } else { "info" };
+        store.log_event(
+            None,
+            level,
+            "auto_clean",
+            &format!(
+                "水位触线，自动清理 {done} 条预授权规则：删除 {} 个文件 / {}{}",
+                deleted_files,
+                util::human_bytes(deleted_bytes),
+                if failed > 0 { format!("，{failed} 条失败") } else { String::new() },
+            ),
+        )?;
+        store.set_setting(LAST_AUTO_CLEAN_KEY, &now.to_string())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -164,5 +290,24 @@ mod tests {
         assert_eq!(classify(100.0, 85.0, 95.0), "critical");
         // 阈值可自定义（warn 高于默认 crit 也不管：配置者优先）
         assert_eq!(classify(70.0, 70.0, 99.0), "warn");
+    }
+
+    #[test]
+    fn parse_auto_policy_forms() {
+        assert!(parse_auto_policy("").is_none(), "空 = 未启用");
+        assert!(parse_auto_policy("  ").is_none());
+        assert!(matches!(parse_auto_policy("empty"), Some(CleanPolicy::Empty)));
+        assert!(matches!(parse_auto_policy(" older:3600 "), Some(CleanPolicy::Before { .. })));
+        // 非法：前缀不对 / 非数字 / 零 / 负数
+        assert!(parse_auto_policy("Empty").is_none(), "大小写敏感");
+        assert!(parse_auto_policy("older:abc").is_none());
+        assert!(parse_auto_policy("older:0").is_none());
+        assert!(parse_auto_policy("older:-5").is_none());
+        assert!(parse_auto_policy("older:").is_none());
+        // 校验函数与解析一致
+        assert!(validate_auto_policy("").is_ok());
+        assert!(validate_auto_policy("empty").is_ok());
+        assert!(validate_auto_policy("older:60").is_ok());
+        assert!(validate_auto_policy("older:x").is_err());
     }
 }
