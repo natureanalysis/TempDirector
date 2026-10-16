@@ -288,6 +288,10 @@ fn zh(key: &str) -> &'static str {
         "form.reordered_log" => "调整了分类 {category} 的 {n} 条规则顺序",
         "form.acl_no_source" => "源目录不存在，无法导出权限：{path}",
         "form.acl_captured_log" => "{name}：已保存目录权限模板",
+        "form.preset_subpath_relative" => "目标子目录应为非空的相对路径",
+        "preset.parse_failed" => "presets.json 解析失败，已忽略：{err}",
+        "preset.skipped" => "预设「{name}」已跳过：{err}",
+        "preset.warn_prefix" => "TempDirector 预设：{msg}",
         _ => "",
     }
 }
@@ -491,6 +495,10 @@ fn en(key: &str) -> &'static str {
         "form.reordered_log" => "Reordered {n} rules in category {category}",
         "form.acl_no_source" => "Source directory does not exist; cannot export permissions: {path}",
         "form.acl_captured_log" => "{name}: saved directory permission template",
+        "form.preset_subpath_relative" => "Target subdirectory must be a non-empty relative path",
+        "preset.parse_failed" => "presets.json parse failed, ignored: {err}",
+        "preset.skipped" => "Preset \"{name}\" skipped: {err}",
+        "preset.warn_prefix" => "TempDirector preset: {msg}",
         _ => "",
     }
 }

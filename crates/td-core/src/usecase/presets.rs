@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{TdError, TdResult};
+use crate::i18n::{t, tf};
 use crate::paths;
 use crate::store::CATEGORIES;
 use crate::util;
@@ -42,14 +43,22 @@ pub(crate) fn load_user_presets(path: &Path) -> (Vec<PresetDef>, Vec<String>) {
     };
     let parsed: Vec<PresetDef> = match serde_json::from_str(&text) {
         Ok(v) => v,
-        Err(e) => return (Vec::new(), vec![format!("presets.json 解析失败，已忽略：{e}")]),
+        Err(e) => {
+            return (
+                Vec::new(),
+                vec![tf("preset.parse_failed", &[("err", &e.to_string())])],
+            )
+        }
     };
     let mut ok = Vec::new();
     let mut skipped = Vec::new();
     for p in parsed {
         match validate_preset(&p) {
             Ok(()) => ok.push(p),
-            Err(e) => skipped.push(format!("预设「{}」已跳过：{e}", p.name)),
+            Err(e) => skipped.push(tf("preset.skipped", &[
+                ("name", &p.name),
+                ("err", &e.to_string()),
+            ])),
         }
     }
     (ok, skipped)
@@ -57,21 +66,20 @@ pub(crate) fn load_user_presets(path: &Path) -> (Vec<PresetDef>, Vec<String>) {
 
 pub(crate) fn validate_preset(p: &PresetDef) -> TdResult<()> {
     if p.name.trim().is_empty() {
-        return Err(TdError::InvalidPath("名称不能为空".into()));
+        return Err(TdError::InvalidPath(t("form.name_empty").into()));
     }
     if !CATEGORIES.contains(&p.category.as_str()) {
-        return Err(TdError::InvalidPath(format!(
-            "未知分类 {}，可用：{}",
-            p.category,
-            CATEGORIES.join(" / ")
-        )));
+        return Err(TdError::InvalidPath(tf("form.unknown_category", &[
+            ("cat", &p.category),
+            ("list", &CATEGORIES.join(" / ")),
+        ])));
     }
     if p.source_template.trim().is_empty() {
-        return Err(TdError::InvalidPath("源路径不能为空".into()));
+        return Err(TdError::InvalidPath(t("form.source_empty").into()));
     }
     if p.target_subpath.trim().is_empty() || p.target_subpath.contains(':') {
         return Err(TdError::InvalidPath(
-            "目标子目录应为非空的相对路径".into(),
+            t("form.preset_subpath_relative").into(),
         ));
     }
     Ok(())
@@ -101,7 +109,7 @@ fn all_presets() -> Vec<PresetDef> {
     let user_path = user_presets_path();
     let (user, skipped) = load_user_presets(&user_path);
     for s in skipped {
-        eprintln!("TempDirector 预设：{s}");
+        eprintln!("{}", tf("preset.warn_prefix", &[("msg", &s)]));
     }
     merge_presets(builtin_presets(), &user)
 }
