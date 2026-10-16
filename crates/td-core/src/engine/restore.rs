@@ -5,6 +5,7 @@ use std::time::Instant;
 use crate::error::{TdError, TdResult};
 use crate::fsops::mover::{self, Progress};
 use crate::fsops::verify::TreeStats;
+use crate::i18n::{t, tf};
 use crate::link::create::{create_dir_link, ensure_dir, remove_dir_link};
 use crate::link::detect::{detect_link, LinkState};
 use crate::store::{Rule, Store};
@@ -33,7 +34,7 @@ pub fn restore_rule(
             return Ok(outcome(
                 rule,
                 "already_plain",
-                "本来就是真实目录，无需恢复".into(),
+                t("restore.already_plain").into(),
                 None,
                 started,
                 false,
@@ -44,28 +45,20 @@ pub fn restore_rule(
             return Ok(outcome(
                 rule,
                 "already_plain",
-                "源路径不存在，无需恢复".into(),
+                t("restore.source_missing").into(),
                 None,
                 started,
                 false,
             ));
         }
         LinkState::ForeignReparse { tag } => {
-            return Err(TdError::SafetyBlocked(format!(
-                "源路径是外来重解析点（tag {tag:#010x}），本工具不会触碰它"
-            )));
+            return Err(TdError::SafetyBlocked(tf("restore.foreign", &[("tag", &format!("{tag:#010x}"))])));
         }
         LinkState::PlainFile => {
-            return Err(TdError::InvalidPath(format!(
-                "源路径是文件，无法恢复：{}",
-                r.source.display()
-            )));
+            return Err(TdError::InvalidPath(tf("restore.is_file", &[("path", &r.source.display().to_string())])));
         }
         LinkState::AccessDenied => {
-            return Err(TdError::ElevationRequired(format!(
-                "读取源目录被拒绝，请以管理员身份重试：{}",
-                r.source.display()
-            )));
+            return Err(TdError::ElevationRequired(tf("apply.access_denied", &[("path", &r.source.display().to_string())])));
         }
         LinkState::IoError { message } => return Err(TdError::Other(message.clone())),
         LinkState::LinkOk { .. } | LinkState::LinkBroken { .. } => { /* 走恢复流程 */ }
@@ -73,9 +66,9 @@ pub fn restore_rule(
 
     let has_content = dir_has_content(&r.target);
     let plan = if has_content {
-        "将拆掉链接并把 RAM 盘中的内容搬回原位"
+        t("restore.dry_move_back")
     } else {
-        "将拆掉链接并重建空的原目录"
+        t("restore.dry_empty")
     };
     if opts.dry_run {
         return Ok(outcome(rule, "restored", plan.into(), None, started, true));
@@ -114,32 +107,33 @@ pub fn restore_rule(
                             "rolled_back",
                             None,
                             None,
-                            Some(&format!("{e}；已把链接建回，状态未变")),
+                            Some(&tf("restore.rollback_ok", &[("e", &e.to_string())])),
                         );
                         let _ = store.set_rule_state(rule.id, "link_ok", Some(&e.to_string()));
                         let _ = store.log_event(
                             Some(rule.id),
                             "error",
                             "restore_failed",
-                            &format!("{}：{e}（已把链接建回）", rule.name),
+                            &tf("restore.rollback_log", &[("name", &rule.name), ("e", &e.to_string())]),
                         );
                     }
                     Err(rb) => {
                         let _ = store.op_phase(
                             op,
                             "needs_manual",
-                            Some(&format!("{e}；且链接未能建回：{rb}")),
+                            Some(&tf("restore.rollback_fail", &[("e", &e.to_string()), ("rb", &rb.to_string())])),
                         );
                         let _ = store.log_event(
                             Some(rule.id),
                             "error",
                             "needs_manual",
-                            &format!(
-                                "{}：{e}；且链接未能建回：{rb}。RAM 盘内容仍在 {}，原路径 {}",
-                                rule.name,
-                                target.display(),
-                                r.source.display()
-                            ),
+                            &tf("restore.rollback_fail_log", &[
+                                ("name", &rule.name),
+                                ("e", &e.to_string()),
+                                ("rb", &rb.to_string()),
+                                ("tgt", &target.display().to_string()),
+                                ("src", &r.source.display().to_string()),
+                            ]),
                         );
                     }
                 }
@@ -163,16 +157,16 @@ pub fn restore_rule(
         Some(rule.id),
         "info",
         "restored",
-        &format!("{}：{plan}（{}）", rule.name, stats.summary()),
+        &tf("restore.restored_log", &[("name", &rule.name), ("plan", plan), ("summary", &stats.summary())]),
     )?;
 
     Ok(outcome(
         rule,
         "restored",
         if has_content {
-            format!("已恢复：{} 已搬回 {}", stats.summary(), r.source.display())
+            tf("restore.done_moved", &[("summary", &stats.summary()), ("src", &r.source.display().to_string())])
         } else {
-            format!("已拆掉链接并重建空目录：{}", r.source.display())
+            tf("restore.done_empty", &[("src", &r.source.display().to_string())])
         },
         Some(stats),
         started,
@@ -191,7 +185,7 @@ pub fn relink_rule(store: &Store, rule: &Rule) -> TdResult<Outcome> {
         return Ok(outcome(
             rule,
             "already_ok",
-            "链接已存在，无需重建".into(),
+            t("restore.relink_already").into(),
             None,
             started,
             false,
@@ -200,16 +194,10 @@ pub fn relink_rule(store: &Store, rule: &Rule) -> TdResult<Outcome> {
     // 先做「会不会破坏数据」的判定，再谈目标目录在不在。
     // 顺序反过来会给出误导性错误（"目标不存在"，而真正的问题是"源目录里有数据"）。
     if matches!(state, LinkState::PlainDir) && dir_has_content(&r.source) {
-        return Err(TdError::SafetyBlocked(format!(
-            "源是含内容的真实目录（{}），不能直接覆盖成链接。请改用 apply（会先搬运/合并）。",
-            r.source.display()
-        )));
+        return Err(TdError::SafetyBlocked(tf("restore.relink_blocked", &[("path", &r.source.display().to_string())])));
     }
     if !r.target.exists() {
-        return Err(TdError::InvalidPath(format!(
-            "目标目录不存在，无法只重建链接：{}",
-            r.target.display()
-        )));
+        return Err(TdError::InvalidPath(tf("restore.relink_no_target", &[("path", &r.target.display().to_string())])));
     }
     // 源是空壳目录：清掉再建链
     if matches!(state, LinkState::PlainDir) {
@@ -230,12 +218,12 @@ pub fn relink_rule(store: &Store, rule: &Rule) -> TdResult<Outcome> {
         Some(rule.id),
         "info",
         "relinked",
-        &format!("{}：链接已重建 → {}", rule.name, r.target.display()),
+        &tf("restore.relink_log", &[("name", &rule.name), ("target", &r.target.display().to_string())]),
     )?;
     Ok(outcome(
         rule,
         "relinked",
-        format!("链接已重建：{} → {}", r.source.display(), r.target.display()),
+        tf("restore.relink_done", &[("src", &r.source.display().to_string()), ("target", &r.target.display().to_string())]),
         None,
         started,
         false,
