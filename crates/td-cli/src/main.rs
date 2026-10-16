@@ -86,6 +86,7 @@ fn run() -> TdResult<()> {
         "import" => cmds::config::cmd_import(&store, &p),
         "events" => cmds::status::cmd_events(&store, &p),
         "ops" => cmds::status::cmd_ops(&store, &p),
+        "stats" => cmds::status::cmd_stats(&store, &p),
         other => {
             help::print_help();
             Err(TdError::Other(format!("未知命令：{other}")))

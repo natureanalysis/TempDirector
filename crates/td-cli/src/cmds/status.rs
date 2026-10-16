@@ -359,6 +359,30 @@ fn water_sweep(store: &Store, p: &Parsed) -> TdResult<()> {
     Ok(())
 }
 
+/// `stats`：效益统计 —— 三个可解释的数字（当前重定向 / 累计搬运 / 累计清理），
+/// 数据来自 operations 表结构化列，口径与 GUI 运维弹窗一致（usecase/stats.rs）。
+pub(crate) fn cmd_stats(store: &Store, p: &Parsed) -> TdResult<()> {
+    let v = td_core::usecase::savings(store)?;
+    if p.json() {
+        println!("{}", serde_json::to_string_pretty(&v)?);
+        return Ok(());
+    }
+    println!("== 效益统计 ==");
+    println!(
+        "当前重定向到 RAM 盘   {} 条规则 · {} 个文件 · {}（这些写入不落 SSD）",
+        v.redirected_rules, v.redirected_files, v.redirected_text
+    );
+    println!(
+        "累计搬运（SSD → RAM） {} 个文件 · {}",
+        v.moved_files, v.moved_text
+    );
+    println!(
+        "累计清理释放          {} 个文件 · {}",
+        v.cleaned_files, v.cleaned_text
+    );
+    Ok(())
+}
+
 pub(crate) fn cmd_events(store: &Store, p: &Parsed) -> TdResult<()> {
     let limit = p
         .value("limit")

@@ -280,6 +280,25 @@ pub struct CleanResultView {
     pub summary: String,
 }
 
+/// 效益统计：把「重定向到 RAM 盘」的收益量化（都是可解释的数字，不做估算）。
+#[derive(Debug, Clone, Serialize)]
+pub struct SavingsView {
+    /// 当前确实重定向到 RAM 盘的规则数（期望开启 且 上次检测链接正常）。
+    pub redirected_rules: usize,
+    /// 这些规则当前的缓存总量 —— 它们不写 SSD。
+    pub redirected_files: u64,
+    pub redirected_bytes: u64,
+    pub redirected_text: String,
+    /// 历次搬运累计（apply 成功终态）—— 从 SSD 搬到 RAM 盘的累计量。
+    pub moved_files: u64,
+    pub moved_bytes: u64,
+    pub moved_text: String,
+    /// 历次清理累计（clean 成功终态）—— 腾出来的空间。
+    pub cleaned_files: u64,
+    pub cleaned_bytes: u64,
+    pub cleaned_text: String,
+}
+
 /// 单条规则的缓存目录占用（实时扫描所得）。
 #[derive(Debug, Clone, Serialize)]
 pub struct DiskUsageEntry {

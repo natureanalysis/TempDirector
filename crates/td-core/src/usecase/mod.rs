@@ -14,6 +14,7 @@ pub mod lifecycle;
 pub mod overview;
 pub mod presets;
 pub mod rules;
+pub mod stats;
 pub mod view;
 pub mod water;
 
@@ -31,6 +32,7 @@ pub use presets::{preset_rules, user_presets_path};
 pub use rules::{
     add_root, add_rule, capture_acl, clear_acl, delete_root, delete_rules, set_enabled, update_rule,
 };
+pub use stats::savings;
 pub use view::*;
 pub use water::{water_levels, water_poll};
 

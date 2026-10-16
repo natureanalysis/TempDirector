@@ -437,6 +437,19 @@ table.rules tbody tr.picked { background: #eef4ff; box-shadow: inset 3px 0 0 var
 .log-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
 .log-tabs .btn.active { background: var(--brand); border-color: var(--brand); color: #fff; }
 .log-list { max-height: 380px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+
+/* 效益统计条：运维弹窗顶部三卡（当前重定向 / 累计搬运 / 累计清理） */
+.savings-strip { display: flex; gap: 10px; margin-bottom: 12px; }
+.saving-card {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.saving-title { color: var(--muted); margin-bottom: 4px; }
+.saving-value { font-size: 20px; font-weight: 600; color: var(--brand); }
+.saving-sub { color: var(--muted); margin-top: 4px; font-size: 12px; }
 .log-item { padding: 8px 12px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; }
 .log-item:last-child { border-bottom: none; }
 .log-time { color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; white-space: nowrap; }

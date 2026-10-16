@@ -824,6 +824,13 @@ async function doBoot() {
 
 async function openOps() {
   const body = document.createElement('div');
+  // 效益统计条：三个数字与下面的操作流水同源（operations 表），
+  // 放在运维弹窗里而不是首页 —— 它是"回顾"信息，不是"当前要处理"的信息。
+  const strip = document.createElement('div');
+  strip.className = 'savings-strip';
+  strip.textContent = '效益统计读取中…';
+  body.appendChild(strip);
+  loadSavings(strip);
   const tabs = document.createElement('div');
   tabs.className = 'log-tabs';
   body.appendChild(tabs);
@@ -870,6 +877,42 @@ async function openOps() {
   btnOps.addEventListener('click', function () { mode = 'ops'; load(); });
   await load();
   openModal({ title: '运维日志（事件 / 操作流水）', body: body, wide: true, actions: [{ label: '关闭', onClick: closeModal }] });
+}
+
+/** 效益统计三卡：当前重定向 / 累计搬运 / 累计清理。
+ * 只报可解释的数字，不做"节省 SSD 寿命"外推 —— 后端同此约定（usecase/stats.rs）。 */
+async function loadSavings(strip) {
+  try {
+    const v = await invoke('savings');
+    strip.textContent = '';
+    strip.appendChild(savingCard('当前重定向到 RAM 盘', v.redirected_text,
+      v.redirected_rules + ' 条规则生效 · ' + v.redirected_files + ' 个文件不写 SSD'));
+    strip.appendChild(savingCard('累计搬运', v.moved_text,
+      v.moved_files + ' 个文件从 SSD 搬入'));
+    strip.appendChild(savingCard('累计清理释放', v.cleaned_text,
+      v.cleaned_files + ' 个文件已删除'));
+  } catch (e) {
+    // 统计只是附属信息，拿不到就撤掉这块，别挡住下面的日志。
+    strip.remove();
+  }
+}
+
+function savingCard(title, value, sub) {
+  const card = document.createElement('div');
+  card.className = 'saving-card';
+  const t = document.createElement('div');
+  t.className = 'saving-title';
+  t.textContent = title;
+  const v = document.createElement('div');
+  v.className = 'saving-value';
+  v.textContent = value;
+  const s = document.createElement('div');
+  s.className = 'saving-sub';
+  s.textContent = sub;
+  card.appendChild(t);
+  card.appendChild(v);
+  card.appendChild(s);
+  return card;
 }
 
 function logRow(time, kind, msg, level) {
@@ -2244,6 +2287,23 @@ function createMockBackend() {
             { id: 3, rule_id: 5, kind: 'apply', phase: 'failed', source_path: 'C:\\Users\\me\\AppData\\Roaming\\Code\\Cache', target_path: 'R:\\dev\\vscode-cache', file_count: 120, bytes: 4096, error: '源目录正被占用，已中止', started_at: '2026-10-14 09:45:12', finished_at: '2026-10-14 09:45:12' },
             { id: 2, rule_id: 2, kind: 'apply', phase: 'done', source_path: 'C:\\Users\\me\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Cache', target_path: 'R:\\browsers\\edge-cache', file_count: 21002, bytes: 734003200, error: null, started_at: '2026-10-14 09:45:20', finished_at: '2026-10-14 09:45:56' },
           ]);
+        case 'savings': {
+          // 「当前重定向」与后端口径一致地实时算：期望开启 且 链接正常。
+          // moved / cleaned 是历史累计（不在规则快照里），给一组与
+          // recent_events / recent_ops 的 mock 流水对得上的数字。
+          let rr = 0, rf = 0, rb = 0;
+          rules.forEach(function (r) {
+            if (r.want_enabled && (r._state === 'link_ok' || r._state === 'link_ok_empty')) {
+              rr++; rf += r.last_files || 0; rb += r.last_bytes || 0;
+            }
+          });
+          return Promise.resolve({
+            redirected_rules: rr, redirected_files: rf, redirected_bytes: rb,
+            redirected_text: humanBytes(rb),
+            moved_files: 55523, moved_bytes: 2022493388, moved_text: humanBytes(2022493388),
+            cleaned_files: 12830, cleaned_bytes: 1879048192, cleaned_text: humanBytes(1879048192),
+          });
+        }
         case 'add_root':
           return Promise.resolve(1);
         case 'delete_root':

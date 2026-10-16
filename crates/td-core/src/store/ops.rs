@@ -69,6 +69,21 @@ impl Store {
         Ok(())
     }
 
+    /// 累计某类操作（仅成功终态 `done`）的文件数与字节数 —— 「效益统计」的数据源。
+    ///
+    /// 为什么不从 `events` 统计：那里的 `message` 是给人看的文本
+    /// （"清理「X」：N 个文件 / Y"），聚合不了；所以 clean 与 apply 一样落操作流水，
+    /// 统计只认结构化列。
+    pub fn sum_ops_done(&self, kind: &str) -> TdResult<(u64, u64)> {
+        let (files, bytes): (i64, i64) = self.conn().query_row(
+            "SELECT COALESCE(SUM(file_count), 0), COALESCE(SUM(bytes), 0)
+             FROM operations WHERE kind = ?1 AND phase = 'done'",
+            [kind],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok((files.max(0) as u64, bytes.max(0) as u64))
+    }
+
     /// 非终态的操作 —— 即"上次运行崩在中途"的待修复清单。
     pub fn list_open_ops(&self) -> TdResult<Vec<Operation>> {
         let sql = format!(

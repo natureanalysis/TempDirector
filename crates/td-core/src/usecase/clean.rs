@@ -88,15 +88,30 @@ pub fn clean_run(
     let summary = report.summary();
     let deleted_bytes_text = util::human_bytes(report.deleted_bytes);
     if !dry_run && report.deleted_files > 0 {
+        let rule_id = match target {
+            CleanTarget::Rule { id } => Some(*id),
+            CleanTarget::Folder { .. } => None,
+        };
         store.log_event(
-            match target {
-                CleanTarget::Rule { id } => Some(*id),
-                CleanTarget::Folder { .. } => None,
-            },
+            rule_id,
             "info",
             "clean",
             &format!("清理「{label}」：{summary}"),
         )?;
+        // 同时落一条操作流水：event 的 message 聚合不了，「效益统计」要从
+        // operations 的结构化列（file_count / bytes）上取数。
+        if let Some(id) = rule_id {
+            let dir_text = dir.display().to_string();
+            if let Ok(op) = store.op_begin(Some(id), "clean", Some(&dir_text), Some(&dir_text)) {
+                let _ = store.op_finish(
+                    op,
+                    "done",
+                    Some(report.deleted_files as i64),
+                    Some(report.deleted_bytes as i64),
+                    None,
+                );
+            }
+        }
     }
     Ok(CleanResultView {
         dir: dir.display().to_string(),

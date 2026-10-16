@@ -139,6 +139,11 @@ pub fn recent_ops(state: State<'_, AppState>, limit: i64) -> R<Vec<td_core::stor
     api::recent_ops(&*lock_store(&state)?, limit).map_err(map_err)
 }
 
+#[tauri::command]
+pub fn savings(state: State<'_, AppState>) -> R<api::SavingsView> {
+    api::savings(&*lock_store(&state)?).map_err(map_err)
+}
+
 // ---------------------------------------------------------------------------
 // 目标根
 // ---------------------------------------------------------------------------

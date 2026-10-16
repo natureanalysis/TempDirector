@@ -82,6 +82,7 @@ pub fn run() {
             commands::ui_snapshot,
             commands::recent_events,
             commands::recent_ops,
+            commands::savings,
             commands::add_root,
             commands::delete_root,
             commands::add_rule,

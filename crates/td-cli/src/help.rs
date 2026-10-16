@@ -68,6 +68,7 @@ pub(crate) fn print_help() {
 === 审计 ===
   events [--limit N]
   ops [--limit N]                            操作流水（含待修复项）
+  stats [--json]                             效益统计：重定向规模 / 累计搬运 / 累计清理
 
 分类取值：browser / design / dev / system / media / office / game / other
 
