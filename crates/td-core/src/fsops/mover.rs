@@ -130,7 +130,7 @@ pub fn volume_space(path: &Path) -> TdResult<(u64, u64)> {
 pub fn scan_links(src: &Path) -> TdResult<(u64, Vec<PathBuf>)> {
     let mut recreatable = 0u64;
     let mut foreign = Vec::new();
-    for entry in WalkDir::new(&util::to_verbatim(src))
+    for entry in WalkDir::new(util::to_verbatim(src))
         .follow_links(false)
         .into_iter()
     {
@@ -189,7 +189,7 @@ pub fn move_tree(
             )));
         }
     } else if let Some(parent) = dst.parent() {
-        fs::create_dir_all(&util::to_verbatim(parent))
+        fs::create_dir_all(util::to_verbatim(parent))
             .map_err(|e| io_ctx(e, parent, "创建目标父目录"))?;
     }
 
@@ -214,14 +214,14 @@ pub fn move_tree(
     if util::same_volume(src, dst) {
         if dst.exists() {
             // 只删空目录，不用 remove_dir_all
-            fs::remove_dir(&util::to_verbatim(dst))
+            fs::remove_dir(util::to_verbatim(dst))
                 .map_err(|e| io_ctx(e, dst, "清理空目标目录"))?;
         }
         sink(Progress::Renaming {
             from: src.display().to_string(),
             to: dst.display().to_string(),
         });
-        fs::rename(&util::to_verbatim(src), &util::to_verbatim(dst))
+        fs::rename(util::to_verbatim(src), util::to_verbatim(dst))
             .map_err(|e| io_ctx(e, src, "同卷重命名"))?;
         sink(Progress::Done {
             files: stats.files,
@@ -408,7 +408,7 @@ pub fn delete_tree(dir: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<u64> 
     let mut failures: Vec<String> = Vec::new();
 
     // contents_first：先删子项再删父项，这样父目录删的时候已经是空的。
-    for entry in WalkDir::new(&util::to_verbatim(dir))
+    for entry in WalkDir::new(util::to_verbatim(dir))
         .contents_first(true)
         .follow_links(false)
         .into_iter()
@@ -467,6 +467,8 @@ pub fn delete_tree(dir: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<u64> 
     Ok(removed)
 }
 
+// 仅 Windows：此处在 Unix 上会有 world-writable 顾虑，本工具不支持 Unix。
+#[allow(clippy::permissions_set_readonly_false)]
 fn clear_readonly(path: &Path) {
     if let Ok(md) = fs::symlink_metadata(path) {
         let mut perm = md.permissions();
@@ -727,10 +729,10 @@ mod tests {
 
         // 把 dst 的两个文件时间分别调成"更旧"和"更新"
         let now = filetime::FileTime::now();
-        filetime::set_file_mtime(&dst.join("stale.txt"), filetime::FileTime::from_unix_time(1_000_000, 0)).unwrap();
-        filetime::set_file_mtime(&src.join("stale.txt"), filetime::FileTime::from_unix_time(2_000_000, 0)).unwrap();
-        filetime::set_file_mtime(&src.join("fresh.txt"), filetime::FileTime::from_unix_time(1_000_000, 0)).unwrap();
-        filetime::set_file_mtime(&dst.join("fresh.txt"), filetime::FileTime::from_unix_time(2_000_000, 0)).unwrap();
+        filetime::set_file_mtime(dst.join("stale.txt"), filetime::FileTime::from_unix_time(1_000_000, 0)).unwrap();
+        filetime::set_file_mtime(src.join("stale.txt"), filetime::FileTime::from_unix_time(2_000_000, 0)).unwrap();
+        filetime::set_file_mtime(src.join("fresh.txt"), filetime::FileTime::from_unix_time(1_000_000, 0)).unwrap();
+        filetime::set_file_mtime(dst.join("fresh.txt"), filetime::FileTime::from_unix_time(2_000_000, 0)).unwrap();
         let _ = now;
 
         let rep = merge_into(&src, &dst, &mut noop).unwrap();

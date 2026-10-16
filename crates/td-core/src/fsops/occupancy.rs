@@ -166,7 +166,7 @@ pub fn scan_locks(root: &Path, opts: &LockScanOptions) -> TdResult<LockReport> {
     let started = std::time::Instant::now();
     let mut report = LockReport::default();
 
-    for entry in WalkDir::new(&util::to_verbatim(root))
+    for entry in WalkDir::new(util::to_verbatim(root))
         .follow_links(false)
         .sort_by_file_name()
         .into_iter()
@@ -407,7 +407,7 @@ pub fn probe_dir_handle(dir: &Path) -> Probe {
 
 /// 目录是否为空。
 pub fn dir_is_empty(dir: &Path) -> io::Result<bool> {
-    let mut rd = std::fs::read_dir(&util::to_verbatim(dir))?;
+    let mut rd = std::fs::read_dir(util::to_verbatim(dir))?;
     Ok(rd.next().is_none())
 }
 

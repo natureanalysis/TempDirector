@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(bundle.rules[0].root_ref, "r0");
 
         let json = serde_json::to_string_pretty(&bundle).unwrap();
-        assert!(json.contains("{RAM_ROOT}") == false); // 导出是实路径，占位符由使用者手改
+        assert!(!json.contains("{RAM_ROOT}")); // 导出是实路径，占位符由使用者手改
         let parsed: Bundle = serde_json::from_str(&json).unwrap();
 
         let dst = Store::open_in_memory().unwrap();

@@ -83,7 +83,7 @@ pub(super) fn validate_ready(r: &Resolved) -> TdResult<()> {
 }
 
 pub(super) fn dir_has_content(dir: &Path) -> bool {
-    std::fs::read_dir(&util::to_verbatim(dir))
+    std::fs::read_dir(util::to_verbatim(dir))
         .map(|mut it| it.next().is_some())
         .unwrap_or(false)
 }

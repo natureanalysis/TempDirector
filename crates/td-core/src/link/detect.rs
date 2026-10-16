@@ -265,7 +265,7 @@ pub fn detect_link(source: &Path, expected_target: Option<&Path>) -> LinkState {
 /// 只判断"有没有内容"。缓存目录动辄十万文件，全量计数太贵，
 /// 需要精确大小时由 `fsops::verify::measure` 按需在后台任务里做。
 fn probe_target(target: &Path) -> TargetState {
-    match fs::read_dir(&util::to_verbatim(target)) {
+    match fs::read_dir(util::to_verbatim(target)) {
         Ok(mut it) => match it.next() {
             None => TargetState::Empty,
             Some(_) => TargetState::HasContent,

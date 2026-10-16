@@ -182,7 +182,7 @@ pub fn run_boot_rebuild(store: &Store) -> TdResult<BootReport> {
     }
 
     report.elapsed_ms = started.elapsed().as_millis();
-    let _ = store.log_event(
+    store.log_event(
         None,
         if report.has_problem() { "warn" } else { "info" },
         "boot_rebuild",

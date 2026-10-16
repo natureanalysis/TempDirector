@@ -213,7 +213,7 @@ pub fn relink_rule(store: &Store, rule: &Rule) -> TdResult<Outcome> {
     }
     // 源是空壳目录：清掉再建链
     if matches!(state, LinkState::PlainDir) {
-        std::fs::remove_dir(&util::to_verbatim(&r.source))
+        std::fs::remove_dir(util::to_verbatim(&r.source))
             .map_err(|e| crate::error::io_ctx(e, &r.source, "清理空源目录"))?;
     }
     create_dir_link(&r.source, &r.target, lt)?;

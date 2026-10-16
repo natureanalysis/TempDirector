@@ -175,7 +175,7 @@ fn walk_files(dir: &Path, links_skipped: &mut u64) -> TdResult<Vec<Candidate>> {
     }
 
     let mut out = Vec::new();
-    for entry in WalkDir::new(&util::to_verbatim(dir))
+    for entry in WalkDir::new(util::to_verbatim(dir))
         .follow_links(false)
         .into_iter()
     {
@@ -309,6 +309,8 @@ pub fn run(
     Ok(report)
 }
 
+// 仅 Windows：此处在 Unix 上会有 world-writable 顾虑，本工具不支持 Unix。
+#[allow(clippy::permissions_set_readonly_false)]
 fn clear_readonly(path: &Path) {
     if let Ok(md) = fs::symlink_metadata(path) {
         let mut perm = md.permissions();
@@ -326,7 +328,7 @@ fn prune_empty_dirs(dir: &Path) -> TdResult<u64> {
     loop {
         let mut removed_this_pass = false;
         let mut dirs: Vec<PathBuf> = Vec::new();
-        for entry in WalkDir::new(&util::to_verbatim(dir))
+        for entry in WalkDir::new(util::to_verbatim(dir))
             .follow_links(false)
             .into_iter()
         {

@@ -270,7 +270,7 @@ pub fn ensure_dir(path: &Path) -> TdResult<bool> {
     if path.exists() {
         return Ok(false);
     }
-    fs::create_dir_all(&util::to_verbatim(path)).map_err(|e| io_ctx(e, path, "创建目录"))?;
+    fs::create_dir_all(util::to_verbatim(path)).map_err(|e| io_ctx(e, path, "创建目录"))?;
     Ok(true)
 }
 

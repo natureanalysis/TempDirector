@@ -73,7 +73,7 @@ pub fn measure(dir: &Path) -> TdResult<TreeStats> {
     if !dir.exists() {
         return Ok(st);
     }
-    for entry in WalkDir::new(&util::to_verbatim(dir))
+    for entry in WalkDir::new(util::to_verbatim(dir))
         .follow_links(false)
         .into_iter()
     {
@@ -104,7 +104,7 @@ pub fn measure(dir: &Path) -> TdResult<TreeStats> {
 /// 路径统一小写并用正斜杠，避免大小写与分隔符差异造成假阳性。
 pub fn hash_tree(dir: &Path) -> TdResult<String> {
     let mut files: BTreeMap<String, u64> = BTreeMap::new();
-    for entry in WalkDir::new(&util::to_verbatim(dir))
+    for entry in WalkDir::new(util::to_verbatim(dir))
         .follow_links(false)
         .into_iter()
     {
@@ -117,7 +117,7 @@ pub fn hash_tree(dir: &Path) -> TdResult<String> {
         }
         let rel = entry
             .path()
-            .strip_prefix(&util::to_verbatim(dir))
+            .strip_prefix(util::to_verbatim(dir))
             .unwrap_or(entry.path())
             .to_string_lossy()
             .replace('/', "\\")
@@ -133,7 +133,7 @@ pub fn hash_tree(dir: &Path) -> TdResult<String> {
         hasher.update(len.to_le_bytes());
         hasher.update([0u8]);
         let abs = Path::new(dir).join(rel.replace('\\', "/"));
-        let mut f = fs::File::open(&util::to_verbatim(&abs))
+        let mut f = fs::File::open(util::to_verbatim(&abs))
             .map_err(|e| io_ctx(e, &abs, "读取待哈希文件"))?;
         loop {
             let n = f
