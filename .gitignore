@@ -1,0 +1,42 @@
+
+# IDE / editor
+AGENTS.md
+.idea/
+.vscode/
+.arts/
+.codeartsdoer/
+.tmp_comment_backup/
+.trae/
+.workbuddy/
+.claude/
+.loomy-attachments/
+.target-b5/
+
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+.tmp_*
+*.log
+*.err
+
+# 本地回归实验目录 / 数据库 / 界面截图暂存
+.qa/
+.tdlab/
+.tdshots/
+*.db
+*.db-wal
+*.db-shm
+
+# Rust
+/target/
+
+# tauri-build 每次构建自动生成的 schema 产物（不是手写源文件）
+crates/td-gui/gen/
+# 本地启动脚本与运行时导出的个人配置（含本机 RAM 盘路径与个人软件缓存规则）
+start.bat
+tempdirector-config.json
+
+# 本地临时实验目录
+%TEMP%/
