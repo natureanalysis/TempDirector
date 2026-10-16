@@ -41,6 +41,7 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
         banners.push(Banner {
             level: "warn",
             text: format!("上次开机重建（{at}）有需要留意的地方：{summary}"),
+            action: None,
         });
     }
 
@@ -52,17 +53,20 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
         banners.push(Banner {
             level: "warn",
             text: "还没有配置目标根（RAM 盘），先在「设置」里添加一个，例如 R:".into(),
+            action: None,
         });
     } else if roots_ready == 0 {
         banners.push(Banner {
             level: "error",
             text: "所有目标根都不可用 —— RAM 盘可能没有创建或没有挂载，此时无法建立链接".into(),
+            action: None,
         });
     }
     if stats.needs_attention > 0 {
         banners.push(Banner {
             level: "warn",
             text: format!("有 {} 条规则需要处理（断链 / 真实目录 / 外来重解析点）", stats.needs_attention),
+            action: None,
         });
     }
     if !open_ops.is_empty() {
@@ -72,12 +76,14 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
                 "有 {} 条上次中断的操作未收尾，请查看「运维」面板确认后处理",
                 open_ops.len()
             ),
+            action: None,
         });
     }
     for r in roots.iter().filter(|r| r.state != "ready") {
         banners.push(Banner {
             level: "warn",
             text: format!("目标根 #{} {} 异常：{}", r.id, r.path, r.message),
+            action: None,
         });
     }
 
@@ -90,6 +96,7 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
                     "RAM 盘即将写满：{}（{}）已用 {:.1}%，仅剩 {} —— 建议清理或缩小规则",
                     w.label, w.path, w.used_pct, w.free_text
                 ),
+                action: Some("sweep".into()),
             }),
             "warn" => banners.push(Banner {
                 level: "warn",
@@ -97,6 +104,7 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
                     "RAM 盘水位偏高：{}（{}）已用 {:.1}%，剩余 {}",
                     w.label, w.path, w.used_pct, w.free_text
                 ),
+                action: Some("sweep".into()),
             }),
             _ => {}
         }

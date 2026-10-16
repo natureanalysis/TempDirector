@@ -94,6 +94,9 @@ pub struct Banner {
     /// `info` / `warn` / `error`
     pub level: &'static str,
     pub text: String,
+    /// 可选动作标识（前端据此渲按钮）：`sweep` = 一键清理。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

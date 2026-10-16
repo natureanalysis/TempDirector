@@ -59,6 +59,18 @@ input, select { font-family: inherit; font-size: 13px; }
   font-size: 12.5px;
 }
 .banner .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.banner-action {
+  margin-left: auto;
+  flex: none;
+  padding: 3px 12px;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.banner-action:hover { background: rgba(0, 0, 0, .06); }
 .banner.info { background: #eef4ff; color: #1e3a8a; }
 .banner.info .dot { background: var(--brand); }
 .banner.warn { background: var(--warn-bg); color: #92400e; }

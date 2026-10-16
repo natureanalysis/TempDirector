@@ -167,6 +167,13 @@ function renderBanners() {
     txt.textContent = b.text;
     d.appendChild(dot);
     d.appendChild(txt);
+    if (b.action === 'sweep') {
+      const btn = document.createElement('button');
+      btn.className = 'banner-action';
+      btn.textContent = '一键清理';
+      btn.addEventListener('click', openBatchCleanDialog);
+      d.appendChild(btn);
+    }
     host.appendChild(d);
   });
 }
@@ -2066,6 +2073,7 @@ function createMockBackend() {
       stats: stats(),
       banners: [
         { level: 'warn', text: '有 4 条规则需要处理（断链 / 真实目录 / 外来重解析点）' },
+        { level: 'error', text: 'RAM 盘即将写满：RAMDisk 4G（R:）已用 96.4%，仅剩 147.5 MB —— 建议清理或缩小规则', action: 'sweep' },
       ],
       open_ops: [],
     };

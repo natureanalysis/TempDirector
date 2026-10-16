@@ -13,6 +13,7 @@ use td_core::{TdError, TdResult};
 
 use crate::output::print_status_line;
 use crate::parse::Parsed;
+use crate::timefmt::{local_time_of_day_secs, now_utc_secs};
 
 pub(crate) fn cmd_version() -> TdResult<()> {
     println!("TempDirector {}", env!("CARGO_PKG_VERSION"));
@@ -260,7 +261,12 @@ pub(crate) fn cmd_volume(p: &Parsed) -> TdResult<()> {
 
 /// `water`：一次水位巡检（与 GUI 定时器同源）。**会落事件**：级别变化才落，
 /// 平稳期重复执行零副作用 —— 适合放计划任务低频跑。
+/// `water sweep <策略> [--yes]`：水位一键清理 —— 对全部规则按统一策略
+/// 预演/批量执行（等价 GUI 横幅上的「一键清理」按钮，破坏性操作同样两步走）。
 pub(crate) fn cmd_water(store: &Store, p: &Parsed) -> TdResult<()> {
+    if p.pos(0) == Some("sweep") {
+        return water_sweep(store, p);
+    }
     let levels = td_core::usecase::water_poll(store)?;
     if p.json() {
         println!("{}", serde_json::to_string_pretty(&levels)?);
@@ -278,6 +284,77 @@ pub(crate) fn cmd_water(store: &Store, p: &Parsed) -> TdResult<()> {
             _ => "❓",
         };
         println!("{icon} #{} {}  {}  {}", w.root_id, w.label, w.path, w.message);
+    }
+    Ok(())
+}
+
+fn water_sweep(store: &Store, p: &Parsed) -> TdResult<()> {
+    use td_core::usecase::{clean_preview, clean_run, CleanTarget};
+
+    let now_utc = now_utc_secs();
+    let tod = local_time_of_day_secs() as i64;
+    let policy = crate::cmds::clean::build_clean_policy(p, now_utc, tod)?;
+    let rules = store.list_rules()?;
+    if rules.is_empty() {
+        println!("（没有规则，无可清理对象）");
+        return Ok(());
+    }
+
+    if !p.has("yes") {
+        let mut files = 0u64;
+        let mut bytes = 0u64;
+        for r in &rules {
+            let pv = clean_preview(store, &CleanTarget::Rule { id: r.id }, &policy)?;
+            files += pv.files;
+            bytes += pv.bytes;
+            if pv.files > 0 {
+                println!("  · {}（#{:<3}）  {}  {}", r.name, r.id, pv.summary, pv.dir);
+            }
+        }
+        println!();
+        println!("策略：{}", crate::cmds::clean::describe_policy(&policy, now_utc));
+        if files == 0 {
+            println!("✅ 没有符合条件的文件，无需清理。");
+        } else {
+            println!(
+                "共将删除：{} 个文件 / {}（{} 条规则）",
+                files,
+                td_core::util::human_bytes(bytes),
+                rules.len()
+            );
+            println!();
+            println!("（这是预演，未删除任何文件。确认无误后加 --yes 执行）");
+        }
+        return Ok(());
+    }
+
+    let quiet = p.json();
+    let mut deleted_files = 0u64;
+    let mut deleted_bytes = 0u64;
+    let mut failed = 0u32;
+    let total = rules.len();
+    for (i, r) in rules.iter().enumerate() {
+        if !quiet {
+            print!("\r清理中 {}/{}：{}…           ", i + 1, total, r.name);
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+        }
+        match clean_run(store, &CleanTarget::Rule { id: r.id }, &policy, false, &mut |_| {}) {
+            Ok(rep) => {
+                deleted_files += rep.deleted_files;
+                deleted_bytes += rep.deleted_bytes;
+            }
+            Err(_) => failed += 1,
+        }
+    }
+    if !quiet {
+        println!();
+        println!(
+            "✅ 一键清理完成：删除 {} 个文件 / {}{}",
+            deleted_files,
+            td_core::util::human_bytes(deleted_bytes),
+            if failed > 0 { format!("，{failed} 条规则失败") } else { String::new() }
+        );
     }
     Ok(())
 }

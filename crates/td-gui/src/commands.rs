@@ -71,6 +71,7 @@ pub fn ui_snapshot(state: State<'_, AppState>) -> R<api::UiSnapshot> {
                 text: format!(
                     "数据目录初始化失败，当前运行在临时内存库（本次改动不会保存）：{err}"
                 ),
+                action: None,
             },
         );
     }

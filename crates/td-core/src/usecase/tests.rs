@@ -653,6 +653,7 @@ fn snapshot_banners_warn_on_high_water_level() {
     let hit: Vec<_> = snap.banners.iter().filter(|b| b.text.contains("水位偏高")).collect();
     assert_eq!(hit.len(), 1);
     assert_eq!(hit[0].level, "warn");
+    assert_eq!(hit[0].action.as_deref(), Some("sweep"), "水位横幅要带一键清理入口");
     assert!(
         env.store.recent_events(10).unwrap().is_empty(),
         "snapshot 只读，事件只能由 water_poll 落"

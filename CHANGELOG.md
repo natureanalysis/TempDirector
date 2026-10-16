@@ -2,6 +2,24 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-10-16（功能：水位越线一键清理）
+
+### 功能 —— 水位横幅带「一键清理」入口 + CLI `water sweep` 批量清理
+
+* **`Banner.action`（新字段，`#[serde(default)]`）**：横幅可携带动作标识，水位
+  warn/critical 横幅带 `action: "sweep"`——看到"RAM 盘即将写满"时一步直达清理，
+  不用在规则列表里逐条找。
+* GUI：`renderBanners` 按动作渲按钮，「一键清理」**复用现成的批量清理对话框**
+  （`openBatchCleanDialog`，先预演、看到清单再确认删除的两步语义不变）。
+* CLI：`water sweep <策略> [--yes]`——对全部规则批量预演/执行，复用 `clean`
+  子命令的策略解析（`build_clean_policy`/`describe_policy` 提为 `pub(crate)`），
+  输出逐规则预演清单 + 汇总，加 `--yes` 才真删。
+
+### 验证
+
+* `cargo test --workspace` 全绿；clippy 0 告警；`node --check` 通过。
+* CLI 冒烟：2 条规则预演 2 文件 → `--yes` 执行 → `clean` 事件逐条落库。
+
 ## 2026-10-16（功能：RAM 盘水位监控）
 
 ### 功能 —— 目标根水位分级 + 阈值事件 + 全端展示（只告警，不自动删文件）

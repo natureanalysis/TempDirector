@@ -18,9 +18,12 @@ pub(crate) fn print_help() {
   roots add <名称> <路径> [--timeout 毫秒] [--hdd]
   roots rm <id>
   volume <R: 或 R:\Dir> [--timeout 毫秒]     探测 / 等待卷就绪
-  water [--json]                             RAM 盘水位巡检（级别变化才落事件，
-                                             阈值默认 85%/95%，settings 的
-                                             water_warn_pct / water_critical_pct 可覆盖）
+   water [--json]                             RAM 盘水位巡检（级别变化才落事件，
+                                              阈值默认 85%/95%，settings 的
+                                              water_warn_pct / water_critical_pct 可覆盖）
+   water sweep <策略> [--yes]                 水位一键清理：全部规则按统一策略批量
+                                              预演/执行（策略与 clean 相同：
+                                              --empty / --yesterday / --older-than 1h …）
 
 === 规则 ===
   rules list [--enabled] [--category 分类] [--search 关键词] [--json]

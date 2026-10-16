@@ -10,8 +10,8 @@ use td_core::{TdError, TdResult};
 use crate::parse::Parsed;
 use crate::timefmt::{ago_text, human_duration, local_time_of_day_secs, now_utc_secs, parse_when};
 
-/// 从参数装配四策略之一（互斥）。
-fn build_clean_policy(p: &Parsed, now_utc: i64, tod_secs: i64) -> TdResult<CleanPolicy> {
+/// 从参数装配四策略之一（互斥）。`water sweep` 复用同一套策略参数。
+pub(crate) fn build_clean_policy(p: &Parsed, now_utc: i64, tod_secs: i64) -> TdResult<CleanPolicy> {
     let empty = p.has("empty");
     let yesterday = p.has("yesterday");
     let older = p.value("older-than");
@@ -53,8 +53,8 @@ fn build_clean_policy(p: &Parsed, now_utc: i64, tod_secs: i64) -> TdResult<Clean
     })
 }
 
-/// 把策略渲染成中文（相对时长口径，供预演展示）。
-fn describe_policy(policy: &CleanPolicy, now_utc: i64) -> String {
+/// 把策略渲染成中文（相对时长口径，供预演展示）。`water sweep` 复用。
+pub(crate) fn describe_policy(policy: &CleanPolicy, now_utc: i64) -> String {
     match policy {
         CleanPolicy::Empty => "清空全部文件".into(),
         CleanPolicy::Before { cutoff } => {
