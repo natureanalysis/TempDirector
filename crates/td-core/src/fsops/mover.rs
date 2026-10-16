@@ -24,6 +24,7 @@ use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use crate::error::{io_ctx, TdError, TdResult};
 use crate::fsops::occupancy;
 use crate::fsops::verify::{self, TreeStats, VerifyMode};
+use crate::i18n::{t, tf};
 use crate::link::create::{
     read_link_target, read_reparse_tag, IO_REPARSE_TAG_MOUNT_POINT, IO_REPARSE_TAG_SYMLINK,
 };
@@ -90,7 +91,7 @@ pub fn free_space(path: &Path) -> TdResult<u64> {
         return Err(io_ctx(
             std::io::Error::last_os_error(),
             path,
-            crate::i18n::t("io.action.query_free_space"),
+            t("io.action.query_free_space"),
         ));
     }
     Ok(free)
@@ -116,7 +117,7 @@ pub fn volume_space(path: &Path) -> TdResult<(u64, u64)> {
         return Err(io_ctx(
             std::io::Error::last_os_error(),
             path,
-            crate::i18n::t("io.action.query_volume"),
+            t("io.action.query_volume"),
         ));
     }
     Ok((total, free))
@@ -158,39 +159,35 @@ pub fn move_tree(
 ) -> TdResult<MoveReport> {
     let started = std::time::Instant::now();
 
-    let md = fs::symlink_metadata(src).map_err(|e| io_ctx(e, src, crate::i18n::t("io.action.read_source")))?;
+    let md = fs::symlink_metadata(src).map_err(|e| io_ctx(e, src, t("io.action.read_source")))?;
     if md.file_type().is_symlink() {
-        return Err(TdError::SafetyBlocked(format!(
-            "源目录已经是链接，不需要搬运：{}",
-            src.display()
-        )));
+        return Err(TdError::SafetyBlocked(tf("move.src_is_link", &[
+            ("path", &src.display().to_string()),
+        ])));
     }
     if !md.is_dir() {
-        return Err(TdError::InvalidPath(format!(
-            "源路径不是目录：{}",
-            src.display()
-        )));
+        return Err(TdError::InvalidPath(tf("move.src_not_dir", &[
+            ("path", &src.display().to_string()),
+        ])));
     }
     if util::path_eq(src, dst) {
-        return Err(TdError::SafetyBlocked("源与目标是同一个路径".into()));
+        return Err(TdError::SafetyBlocked(t("move.same_path").into()));
     }
 
     if dst.exists() {
         if !dst.is_dir() {
-            return Err(TdError::InvalidPath(format!(
-                "目标路径已存在且不是目录：{}",
-                dst.display()
-            )));
+            return Err(TdError::InvalidPath(tf("move.dst_not_dir", &[
+                ("path", &dst.display().to_string()),
+            ])));
         }
         if !occupancy::dir_is_empty(dst)? {
-            return Err(TdError::SafetyBlocked(format!(
-                "目标目录非空，拒绝覆盖：{}",
-                dst.display()
-            )));
+            return Err(TdError::SafetyBlocked(tf("move.dst_not_empty", &[
+                ("path", &dst.display().to_string()),
+            ])));
         }
     } else if let Some(parent) = dst.parent() {
         fs::create_dir_all(util::to_verbatim(parent))
-            .map_err(|e| io_ctx(e, parent, crate::i18n::t("io.action.create_parent")))?;
+            .map_err(|e| io_ctx(e, parent, t("io.action.create_parent")))?;
     }
 
     // 预扫描：外来重解析点 → 立刻失败，此时什么都还没动。
@@ -202,10 +199,10 @@ pub fn move_tree(
             .map(|p| p.display().to_string())
             .collect::<Vec<_>>()
             .join("；");
-        return Err(TdError::SafetyBlocked(format!(
-            "源目录内含 {} 个不支持的重解析点（云盘占位符等），无法忠实搬运，已放弃：{list}",
-            foreign.len()
-        )));
+        return Err(TdError::SafetyBlocked(tf("move.foreign_reparse", &[
+            ("n", &foreign.len().to_string()),
+            ("list", &list),
+        ])));
     }
 
     let stats = verify::measure(src)?;
@@ -215,21 +212,21 @@ pub fn move_tree(
         if dst.exists() {
             // 只删空目录，不用 remove_dir_all
             fs::remove_dir(util::to_verbatim(dst))
-                .map_err(|e| io_ctx(e, dst, crate::i18n::t("io.action.clean_empty_target")))?;
+                .map_err(|e| io_ctx(e, dst, t("io.action.clean_empty_target")))?;
         }
         sink(Progress::Renaming {
             from: src.display().to_string(),
             to: dst.display().to_string(),
         });
         fs::rename(util::to_verbatim(src), util::to_verbatim(dst))
-            .map_err(|e| io_ctx(e, src, crate::i18n::t("io.action.rename")))?;
+            .map_err(|e| io_ctx(e, src, t("io.action.rename")))?;
         sink(Progress::Done {
             files: stats.files,
             bytes: stats.bytes,
         });
         return Ok(MoveReport {
             stats,
-            method: crate::i18n::t("move.method.rename"),
+            method: t("move.method.rename"),
             links_recreated: 0,
             elapsed_ms: started.elapsed().as_millis(),
         });
@@ -255,20 +252,21 @@ pub fn move_tree(
     sink(Progress::Verifying);
     let actual = verify::measure(dst)?;
     if copied != actual.files {
-        return Err(TdError::VerifyFailed(format!(
-            "复制计数异常：函数返回 {copied} 个文件，实测 {actual_files} 个",
-            actual_files = actual.files
-        )));
+        return Err(TdError::VerifyFailed(tf("move.count_mismatch", &[
+            ("copied", &copied.to_string()),
+            ("actual", &actual.files.to_string()),
+        ])));
     }
-    verify::compare_stats(&stats, &actual, "搬运核对")?;
+    verify::compare_stats(&stats, &actual, t("move.verify_ctx"))?;
 
     if verify_mode == VerifyMode::Sha256 {
         let h_src = verify::hash_tree(src)?;
         let h_dst = verify::hash_tree(dst)?;
         if h_src != h_dst {
-            return Err(TdError::VerifyFailed(format!(
-                "SHA-256 不一致（源 {h_src}，目标 {h_dst}）"
-            )));
+            return Err(TdError::VerifyFailed(tf("move.sha_mismatch", &[
+                ("src", &h_src),
+                ("dst", &h_dst),
+            ])));
         }
     }
 
@@ -281,7 +279,7 @@ pub fn move_tree(
     });
     Ok(MoveReport {
         stats,
-        method: crate::i18n::t("move.method.copy"),
+        method: t("move.method.copy"),
         links_recreated,
         elapsed_ms: started.elapsed().as_millis(),
     })
@@ -291,7 +289,7 @@ pub fn move_tree(
 pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<(u64, u64)> {
     let src_v = util::to_verbatim(src);
     let dst_v = util::to_verbatim(dst);
-    fs::create_dir_all(&dst_v).map_err(|e| io_ctx(e, dst, crate::i18n::t("io.action.create_target")))?;
+    fs::create_dir_all(&dst_v).map_err(|e| io_ctx(e, dst, t("io.action.create_target")))?;
 
     let mut files = 0u64;
     let mut bytes = 0u64;
@@ -303,7 +301,10 @@ pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdRe
         .into_iter()
     {
         let entry = entry.map_err(|e| {
-            TdError::Other(format!("遍历源目录失败：{e}（路径：{}）", src.display()))
+            TdError::Other(tf("move.walk_failed", &[
+                ("err", &e.to_string()),
+                ("path", &src.display().to_string()),
+            ]))
         })?;
         let rel = match entry.path().strip_prefix(&src_v) {
             Ok(r) => r.to_path_buf(),
@@ -323,25 +324,25 @@ pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdRe
                 Some(IO_REPARSE_TAG_MOUNT_POINT) => {
                     // junction crate 的参数顺序是 (target, junction)
                     junction::create(&target_v, &to).map_err(|e| {
-                        TdError::Other(format!(
-                            "重建 Junction 失败：{e}（{} → {}）",
-                            entry.path().display(),
-                            target.display()
-                        ))
+                        TdError::Other(tf("move.recreate_junction_failed", &[
+                            ("err", &e.to_string()),
+                            ("from", &entry.path().display().to_string()),
+                            ("to", &target.display().to_string()),
+                        ]))
                     })?;
                 }
                 Some(IO_REPARSE_TAG_SYMLINK) => {
                     std::os::windows::fs::symlink_dir(&target_v, &to).map_err(|e| {
-                        TdError::Other(format!(
-                            "重建符号链接失败：{e}（可能需要管理员权限）"
-                        ))
+                        TdError::Other(tf("move.recreate_symlink_failed", &[
+                            ("err", &e.to_string()),
+                        ]))
                     })?;
                 }
                 other => {
-                    return Err(TdError::SafetyBlocked(format!(
-                        "遇到不支持的重解析点（tag {other:?}）：{}",
-                        entry.path().display()
-                    )));
+                    return Err(TdError::SafetyBlocked(tf("move.unsupported_reparse", &[
+                        ("tag", &format!("{other:?}")),
+                        ("path", &entry.path().display().to_string()),
+                    ])));
                 }
             }
             links += 1;
@@ -349,13 +350,13 @@ pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdRe
         }
 
         if ft.is_dir() {
-            fs::create_dir_all(&to).map_err(|e| io_ctx(e, entry.path(), crate::i18n::t("io.action.create_subdir")))?;
+            fs::create_dir_all(&to).map_err(|e| io_ctx(e, entry.path(), t("io.action.create_subdir")))?;
             continue;
         }
 
         if ft.is_file() {
             let n = fs::copy(entry.path(), &to)
-                .map_err(|e| io_ctx(e, entry.path(), crate::i18n::t("io.action.copy_file")))?;
+                .map_err(|e| io_ctx(e, entry.path(), t("io.action.copy_file")))?;
             files += 1;
             bytes += n;
 
@@ -390,18 +391,16 @@ pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdRe
 /// * 子项是重解析点 → 只删链接条目本身，**不跟随**。
 /// * 只读文件先清掉只读属性再删（Windows 上只读文件无法直接删除）。
 pub fn delete_tree(dir: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<u64> {
-    let md = fs::symlink_metadata(dir).map_err(|e| io_ctx(e, dir, crate::i18n::t("io.action.read_delete_dir")))?;
+    let md = fs::symlink_metadata(dir).map_err(|e| io_ctx(e, dir, t("io.action.read_delete_dir")))?;
     if md.file_type().is_symlink() {
-        return Err(TdError::SafetyBlocked(format!(
-            "拒绝递归删除重解析点（这是链接，请用删除链接的接口）：{}",
-            dir.display()
-        )));
+        return Err(TdError::SafetyBlocked(tf("move.refuse_delete_reparse", &[
+            ("path", &dir.display().to_string()),
+        ])));
     }
     if !md.is_dir() {
-        return Err(TdError::InvalidPath(format!(
-            "待删除路径不是目录：{}",
-            dir.display()
-        )));
+        return Err(TdError::InvalidPath(tf("move.delete_not_dir", &[
+            ("path", &dir.display().to_string()),
+        ])));
     }
 
     let mut removed = 0u64;
@@ -448,21 +447,18 @@ pub fn delete_tree(dir: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<u64> 
                     }
                 }
             }
-            Err(e) => failures.push(format!("{}（{e}）", util::simplify(path).display())),
+            Err(e) => failures.push(tf("move.delete_failure_entry", &[
+                ("path", &util::simplify(path).display().to_string()),
+                ("err", &e.to_string()),
+            ])),
         }
     }
 
     if !failures.is_empty() {
-        return Err(TdError::Busy(format!(
-            "有 {} 个条目未能删除，通常是被占用或无权限。例如：{}",
-            failures.len(),
-            failures
-                .iter()
-                .take(3)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("；")
-        )));
+        return Err(TdError::Busy(tf("move.delete_failures", &[
+            ("n", &failures.len().to_string()),
+            ("list", &failures.iter().take(3).cloned().collect::<Vec<_>>().join("；")),
+        ])));
     }
     Ok(removed)
 }
@@ -504,10 +500,9 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
     let dst_v = util::to_verbatim(dst);
 
     if !dst.is_dir() {
-        return Err(TdError::InvalidPath(format!(
-            "合并的目标必须是已存在的目录：{}",
-            dst.display()
-        )));
+        return Err(TdError::InvalidPath(tf("move.merge_dst_missing", &[
+            ("path", &dst.display().to_string()),
+        ])));
     }
 
     let mut report = MergeReport {
@@ -523,7 +518,10 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
         .into_iter()
     {
         let entry = entry.map_err(|e| {
-            TdError::Other(format!("遍历源目录失败：{e}（路径：{}）", src.display()))
+            TdError::Other(tf("move.walk_failed", &[
+                ("err", &e.to_string()),
+                ("path", &src.display().to_string()),
+            ]))
         })?;
         let rel = match entry.path().strip_prefix(&src_v) {
             Ok(r) => r.to_path_buf(),
@@ -547,19 +545,24 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
                 Some(IO_REPARSE_TAG_MOUNT_POINT) => {
                     // junction crate 的参数顺序是 (target, junction)
                     junction::create(&target_v, &to).map_err(|e| {
-                        TdError::Other(format!("重建 Junction 失败：{e}（目标 {})", to.display()))
+                        TdError::Other(tf("move.recreate_junction_failed_merge", &[
+                            ("err", &e.to_string()),
+                            ("to", &to.display().to_string()),
+                        ]))
                     })?;
                 }
                 Some(IO_REPARSE_TAG_SYMLINK) => {
                     std::os::windows::fs::symlink_dir(&target_v, &to).map_err(|e| {
-                        TdError::Other(format!("重建符号链接失败：{e}（可能需要管理员权限）"))
+                        TdError::Other(tf("move.recreate_symlink_failed", &[
+                            ("err", &e.to_string()),
+                        ]))
                     })?;
                 }
                 other => {
-                    return Err(TdError::SafetyBlocked(format!(
-                        "遇到不支持的重解析点（tag {other:?}）：{}",
-                        entry.path().display()
-                    )));
+                    return Err(TdError::SafetyBlocked(tf("move.unsupported_reparse", &[
+                        ("tag", &format!("{other:?}")),
+                        ("path", &entry.path().display().to_string()),
+                    ])));
                 }
             }
             report.copied += 1;
@@ -567,7 +570,7 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
         }
 
         if ft.is_dir() {
-            fs::create_dir_all(&to).map_err(|e| io_ctx(e, entry.path(), crate::i18n::t("io.action.create_subdir")))?;
+            fs::create_dir_all(&to).map_err(|e| io_ctx(e, entry.path(), t("io.action.create_subdir")))?;
             continue;
         }
 
@@ -598,7 +601,7 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
             }
 
             let n = fs::copy(entry.path(), &to)
-                .map_err(|e| io_ctx(e, entry.path(), crate::i18n::t("io.action.merge_file")))?;
+                .map_err(|e| io_ctx(e, entry.path(), t("io.action.merge_file")))?;
             report.bytes += n;
 
             if let Some(md) = src_md {
@@ -639,11 +642,10 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
         }
     }
     if !missing.is_empty() {
-        return Err(TdError::VerifyFailed(format!(
-            "合并后仍有 {} 个源条目未出现在目标里，已中止后续删除动作：{}",
-            missing.len(),
-            missing.join("；")
-        )));
+        return Err(TdError::VerifyFailed(tf("move.merge_missing", &[
+            ("n", &missing.len().to_string()),
+            ("list", &missing.join("；")),
+        ])));
     }
 
     Ok(report)

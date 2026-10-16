@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::error::{io_ctx, TdError, TdResult};
+use crate::i18n::tf;
 use crate::util;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,23 +152,25 @@ pub fn hash_tree(dir: &Path) -> TdResult<String> {
 /// 核对两侧统计是否一致。不一致直接返回错误（调用方据此**放弃删除源**）。
 pub fn compare_stats(expected: &TreeStats, actual: &TreeStats, ctx: &str) -> TdResult<()> {
     if expected.files != actual.files {
-        return Err(TdError::VerifyFailed(format!(
-            "{ctx}：文件数不一致（源 {}，目标 {}）",
-            expected.files, actual.files
-        )));
+        return Err(TdError::VerifyFailed(tf("verify.file_count_mismatch", &[
+            ("ctx", ctx),
+            ("expected", &expected.files.to_string()),
+            ("actual", &actual.files.to_string()),
+        ])));
     }
     if expected.bytes != actual.bytes {
-        return Err(TdError::VerifyFailed(format!(
-            "{ctx}：总字节数不一致（源 {}，目标 {}）",
-            util::human_bytes(expected.bytes),
-            util::human_bytes(actual.bytes)
-        )));
+        return Err(TdError::VerifyFailed(tf("verify.byte_count_mismatch", &[
+            ("ctx", ctx),
+            ("expected", &util::human_bytes(expected.bytes)),
+            ("actual", &util::human_bytes(actual.bytes)),
+        ])));
     }
     if expected.links != actual.links {
-        return Err(TdError::VerifyFailed(format!(
-            "{ctx}：链接数不一致（源 {}，目标 {}）",
-            expected.links, actual.links
-        )));
+        return Err(TdError::VerifyFailed(tf("verify.link_count_mismatch", &[
+            ("ctx", ctx),
+            ("expected", &expected.links.to_string()),
+            ("actual", &actual.links.to_string()),
+        ])));
     }
     Ok(())
 }
