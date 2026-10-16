@@ -100,7 +100,10 @@ pub fn water_levels(store: &Store) -> TdResult<Vec<WaterLevel>> {
                     let used = total.saturating_sub(free_b);
                     let pct = used as f64 / total as f64 * 100.0;
                     let lv = classify(pct, warn, crit);
-                    let msg = format!("已用 {pct:.1}%，剩余 {}", util::human_bytes(free_b));
+                    let msg = crate::i18n::tf("water.message.ok", &[
+                        ("pct", &format!("{pct:.1}")),
+                        ("free", &util::human_bytes(free_b)),
+                    ]);
                     (lv.to_string(), pct, free_b, util::human_bytes(free_b), util::human_bytes(total), msg)
                 }
                 Ok((total, _)) => (
@@ -109,7 +112,7 @@ pub fn water_levels(store: &Store) -> TdResult<Vec<WaterLevel>> {
                     0,
                     util::human_bytes(0),
                     util::human_bytes(total),
-                    "卷容量为 0，无法判断水位".into(),
+                    crate::i18n::t("water.message.zero").into(),
                 ),
                 Err(_) => (
                     "unknown".into(),
@@ -117,7 +120,7 @@ pub fn water_levels(store: &Store) -> TdResult<Vec<WaterLevel>> {
                     0,
                     util::human_bytes(0),
                     util::human_bytes(0),
-                    "卷不可用（未挂载？），无法读取水位".into(),
+                    crate::i18n::t("water.message.unavailable").into(),
                 ),
             };
         out.push(WaterLevel {

@@ -97,14 +97,14 @@ pub fn disk_usage(
     for r in store.list_roots()? {
         let (path, _unknown) = r.resolved_path();
         if let Some(root) = util::volume_root(&path) {
-            let role = if r.is_ramdisk { "RAM 盘" } else { "目标盘" };
+            let role = if r.is_ramdisk { crate::i18n::t("disk.role.ram") } else { crate::i18n::t("disk.role.target") };
             merge_volume(&mut vol_map, volume_usage_of(&root, r.is_ramdisk, role));
         }
     }
     for rule in &rules {
         if let Ok(resolved) = engine::resolve(store, rule) {
             if let Some(root) = util::volume_root(&resolved.source) {
-                merge_volume(&mut vol_map, volume_usage_of(&root, false, "源盘"));
+                merge_volume(&mut vol_map, volume_usage_of(&root, false, crate::i18n::t("disk.role.source")));
             }
         }
     }

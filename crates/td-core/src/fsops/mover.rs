@@ -229,7 +229,7 @@ pub fn move_tree(
         });
         return Ok(MoveReport {
             stats,
-            method: "同卷重命名",
+            method: crate::i18n::t("move.method.rename"),
             links_recreated: 0,
             elapsed_ms: started.elapsed().as_millis(),
         });
@@ -281,7 +281,7 @@ pub fn move_tree(
     });
     Ok(MoveReport {
         stats,
-        method: "跨卷复制",
+        method: crate::i18n::t("move.method.copy"),
         links_recreated,
         elapsed_ms: started.elapsed().as_millis(),
     })

@@ -103,14 +103,14 @@ impl Rule {
 
 pub fn category_label(cat: &str) -> &'static str {
     match cat {
-        "browser" => "浏览器",
-        "design" => "设计",
-        "dev" => "开发",
-        "system" => "系统",
-        "media" => "影音",
-        "office" => "办公",
-        "game" => "游戏",
-        _ => "其他",
+        "browser" => crate::i18n::t("cat.browser"),
+        "design" => crate::i18n::t("cat.design"),
+        "dev" => crate::i18n::t("cat.dev"),
+        "system" => crate::i18n::t("cat.system"),
+        "media" => crate::i18n::t("cat.media"),
+        "office" => crate::i18n::t("cat.office"),
+        "game" => crate::i18n::t("cat.game"),
+        _ => crate::i18n::t("cat.other"),
     }
 }
 

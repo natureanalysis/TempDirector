@@ -180,7 +180,7 @@ pub fn status() -> AutostartStatus {
         }
     };
     if code != 0 {
-        st.message = "未注册（登录时不会自动重建）".into();
+        st.message = crate::i18n::t("autostart.unregistered").into();
         return st;
     }
     st.registered = true;
@@ -192,9 +192,9 @@ pub fn status() -> AutostartStatus {
         st.command = format!("{} {}", cmd, args).trim().to_string();
     }
     st.message = if st.command.is_empty() {
-        "已注册".into()
+        crate::i18n::t("autostart.registered").into()
     } else {
-        format!("已注册：{}", st.command)
+        crate::i18n::tf("autostart.registered_cmd", &[("cmd", &st.command)])
     };
     st
 }
@@ -240,14 +240,14 @@ pub fn disable() -> TdResult<String> {
     if code != 0 {
         // 本来就不存在也算成功（幂等）
         if text.contains("cannot find") || text.contains("找不到") {
-            return Ok("该任务本来就没有注册".into());
+            return Ok(crate::i18n::t("autostart.not_registered").into());
         }
         return Err(TdError::Other(format!(
             "删除开机任务失败（schtasks 退出码 {code}）：{}",
             text.trim()
         )));
     }
-    Ok("已取消开机自启".into())
+    Ok(crate::i18n::t("autostart.disabled").into())
 }
 
 /// 立刻手动触发一次（等价于"登录时那次"），用于验证任务是否配好。
@@ -259,7 +259,7 @@ pub fn run_now() -> TdResult<String> {
             text.trim()
         )));
     }
-    Ok("已触发一次开机重建任务".into())
+    Ok(crate::i18n::t("autostart.triggered").into())
 }
 
 /// 挑一个合适的可执行文件去注册：优先同目录下的 GUI（release 下无控制台窗口），

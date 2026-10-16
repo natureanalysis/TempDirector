@@ -3,6 +3,7 @@
 use crate::boot::{probe_volume, BootReport};
 use crate::engine;
 use crate::error::TdResult;
+use crate::i18n::{t, tf};
 use crate::paths;
 use crate::store::{EventRow, Operation, Rule, Store, CATEGORIES};
 
@@ -40,7 +41,7 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
     if let Some((at, summary)) = last_boot_problem(store) {
         banners.push(Banner {
             level: "warn",
-            text: format!("上次开机重建（{at}）有需要留意的地方：{summary}"),
+            text: tf("banner.boot_problem", &[("at", &at), ("summary", &summary)]),
             action: None,
         });
     }
@@ -52,37 +53,38 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
     if roots.is_empty() {
         banners.push(Banner {
             level: "warn",
-            text: "还没有配置目标根（RAM 盘），先在「设置」里添加一个，例如 R:".into(),
+            text: t("banner.no_roots").into(),
             action: None,
         });
     } else if roots_ready == 0 {
         banners.push(Banner {
             level: "error",
-            text: "所有目标根都不可用 —— RAM 盘可能没有创建或没有挂载，此时无法建立链接".into(),
+            text: t("banner.all_roots_down").into(),
             action: None,
         });
     }
     if stats.needs_attention > 0 {
         banners.push(Banner {
             level: "warn",
-            text: format!("有 {} 条规则需要处理（断链 / 真实目录 / 外来重解析点）", stats.needs_attention),
+            text: tf("banner.needs_attention", &[("n", &stats.needs_attention.to_string())]),
             action: None,
         });
     }
     if !open_ops.is_empty() {
         banners.push(Banner {
             level: "error",
-            text: format!(
-                "有 {} 条上次中断的操作未收尾，请查看「运维」面板确认后处理",
-                open_ops.len()
-            ),
+            text: tf("banner.open_ops", &[("n", &open_ops.len().to_string())]),
             action: None,
         });
     }
     for r in roots.iter().filter(|r| r.state != "ready") {
         banners.push(Banner {
             level: "warn",
-            text: format!("目标根 #{} {} 异常：{}", r.id, r.path, r.message),
+            text: tf("banner.root_error", &[
+                ("id", &r.id.to_string()),
+                ("path", &r.path),
+                ("message", &r.message),
+            ]),
             action: None,
         });
     }
@@ -92,18 +94,22 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
         match w.level.as_str() {
             "critical" => banners.push(Banner {
                 level: "error",
-                text: format!(
-                    "RAM 盘即将写满：{}（{}）已用 {:.1}%，仅剩 {} —— 建议清理或缩小规则",
-                    w.label, w.path, w.used_pct, w.free_text
-                ),
+                text: tf("banner.disk_critical", &[
+                    ("label", &w.label),
+                    ("path", &w.path),
+                    ("pct", &format!("{:.1}", w.used_pct)),
+                    ("free", &w.free_text),
+                ]),
                 action: Some("sweep".into()),
             }),
             "warn" => banners.push(Banner {
                 level: "warn",
-                text: format!(
-                    "RAM 盘水位偏高：{}（{}）已用 {:.1}%，剩余 {}",
-                    w.label, w.path, w.used_pct, w.free_text
-                ),
+                text: tf("banner.disk_warn", &[
+                    ("label", &w.label),
+                    ("path", &w.path),
+                    ("pct", &format!("{:.1}", w.used_pct)),
+                    ("free", &w.free_text),
+                ]),
                 action: Some("sweep".into()),
             }),
             _ => {}

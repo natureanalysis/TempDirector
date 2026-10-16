@@ -233,7 +233,7 @@ pub fn run_job(job_path: &Path) -> TdResult<JobResult> {
         "boot_rebuild" => match crate::boot::run_boot_rebuild(&store) {
             Ok(report) => items.push(JobItem {
                 rule_id: 0,
-                name: "开机重建".into(),
+                name: crate::i18n::t("worker.boot_rebuild").into(),
                 ok: !report.has_problem(),
                 action: "boot_rebuild".into(),
                 message: report.one_line(),
