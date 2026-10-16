@@ -266,6 +266,15 @@ fn zh(key: &str) -> &'static str {
         "safety.same" => "源路径与目标路径相同：{s}",
         "safety.target_in_source" => "目标目录位于源目录内部（{t} 在 {s} 内），会形成自环",
         "safety.source_in_target" => "源目录位于目标目录内部（{s} 在 {t} 内），会形成自环",
+        "db.root_not_in_lib" => "规则库中没有 id={id} 的目标根",
+        "db.root_path_empty" => "目标根路径不能为空",
+        "db.root_not_found" => "没有 id={id} 的目标根",
+        "db.root_in_use" => "还有 {used} 条规则在引用这个目标根，请先删除或改绑这些规则",
+        "db.rule_not_found" => "没有 id={id} 的规则",
+        "db.unresolved_vars" => "源路径模板里有无法解析的环境变量：{vars}",
+        "db.must_be_absolute" => "源路径必须是绝对路径（可用 %VAR% 模板）",
+        "db.duplicate_rule" => "已存在指向同一路径的规则：{norm}",
+        "db.duplicate_rule_other" => "另一条规则（#{id}）已经指向该路径",
         _ => "",
     }
 }
@@ -447,6 +456,15 @@ fn en(key: &str) -> &'static str {
         "safety.same" => "Source and target paths are the same: {s}",
         "safety.target_in_source" => "Target is inside source ({t} within {s}); would form a loop",
         "safety.source_in_target" => "Source is inside target ({s} within {t}); would form a loop",
+        "db.root_not_in_lib" => "No target root with id={id} in the rule library",
+        "db.root_path_empty" => "Target root path cannot be empty",
+        "db.root_not_found" => "No target root with id={id}",
+        "db.root_in_use" => "{used} rules still reference this target root; delete or rebind them first",
+        "db.rule_not_found" => "No rule with id={id}",
+        "db.unresolved_vars" => "Source path template has unresolved environment variables: {vars}",
+        "db.must_be_absolute" => "Source path must be absolute (can use %VAR% templates)",
+        "db.duplicate_rule" => "A rule already points to the same path: {norm}",
+        "db.duplicate_rule_other" => "Another rule (#{id}) already points to this path",
         _ => "",
     }
 }

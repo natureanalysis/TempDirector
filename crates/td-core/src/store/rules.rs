@@ -38,7 +38,7 @@ impl Store {
         self.conn()
             .query_row(&sql, [id], root_from_row)
             .optional()?
-            .ok_or_else(|| TdError::NotFound(format!("规则库中没有 id={id} 的目标根")))
+            .ok_or_else(|| TdError::NotFound(crate::i18n::tf("db.root_not_in_lib", &[("id", &id.to_string())])))
     }
 
     /// 按路径查找目标根（不存在则创建）。`path` 可为模板，入库前会规范化。
@@ -59,7 +59,7 @@ impl Store {
     pub fn insert_root(&self, label: &str, path: &str, is_ramdisk: bool, wait_timeout_ms: i64) -> TdResult<i64> {
         let norm = util::normalize_root_path(path);
         if norm.trim().is_empty() {
-            return Err(TdError::InvalidPath("目标根路径不能为空".into()));
+            return Err(TdError::InvalidPath(crate::i18n::t("db.root_path_empty").into()));
         }
         self.conn().execute(
             "INSERT INTO roots(label, path, is_ramdisk, wait_timeout_ms) VALUES(?1, ?2, ?3, ?4)",
@@ -75,7 +75,7 @@ impl Store {
             params![id, label, norm, is_ramdisk, wait_timeout_ms],
         )?;
         if n == 0 {
-            return Err(TdError::NotFound(format!("没有 id={id} 的目标根")));
+            return Err(TdError::NotFound(crate::i18n::tf("db.root_not_found", &[("id", &id.to_string())])));
         }
         Ok(())
     }
@@ -91,7 +91,7 @@ impl Store {
         }
         let n = self.conn().execute("DELETE FROM roots WHERE id = ?1", [id])?;
         if n == 0 {
-            return Err(TdError::NotFound(format!("没有 id={id} 的目标根")));
+            return Err(TdError::NotFound(crate::i18n::tf("db.root_not_found", &[("id", &id.to_string())])));
         }
         Ok(())
     }
@@ -154,7 +154,7 @@ impl Store {
         self.conn()
             .query_row(&sql, [id], rule_from_row)
             .optional()?
-            .ok_or_else(|| TdError::NotFound(format!("没有 id={id} 的规则")))
+            .ok_or_else(|| TdError::NotFound(crate::i18n::tf("db.rule_not_found", &[("id", &id.to_string())])))
     }
 
     pub fn find_rule_by_source(&self, source_norm: &str) -> TdResult<Option<Rule>> {
@@ -170,21 +170,14 @@ impl Store {
     pub fn insert_rule(&self, nr: &NewRule) -> TdResult<i64> {
         let (source, unknown) = util::expand_path(&nr.source_template);
         if !unknown.is_empty() {
-            return Err(TdError::InvalidPath(format!(
-                "源路径模板里有无法解析的环境变量：{}",
-                unknown.join("、")
-            )));
+            return Err(TdError::InvalidPath(crate::i18n::tf("db.unresolved_vars", &[("vars", &unknown.join("、"))])));
         }
         if !source.is_absolute() {
-            return Err(TdError::InvalidPath(
-                "源路径必须是绝对路径（可用 %VAR% 模板）".into(),
-            ));
+            return Err(TdError::InvalidPath(crate::i18n::t("db.must_be_absolute").into()));
         }
         let norm = util::normalize_key(&source.to_string_lossy());
         if self.find_rule_by_source(&norm)?.is_some() {
-            return Err(TdError::Other(format!(
-                "已存在指向同一路径的规则：{norm}"
-            )));
+            return Err(TdError::Other(crate::i18n::tf("db.duplicate_rule", &[("norm", &norm)])));
         }
         let pf = crate::safety::preflight_source(&source);
         if pf.is_blocked() {
@@ -219,18 +212,12 @@ impl Store {
     pub fn update_rule(&self, id: i64, nr: &NewRule) -> TdResult<()> {
         let (source, unknown) = util::expand_path(&nr.source_template);
         if !unknown.is_empty() {
-            return Err(TdError::InvalidPath(format!(
-                "源路径模板里有无法解析的环境变量：{}",
-                unknown.join("、")
-            )));
+            return Err(TdError::InvalidPath(crate::i18n::tf("db.unresolved_vars", &[("vars", &unknown.join("、"))])));
         }
         let norm = util::normalize_key(&source.to_string_lossy());
         if let Some(other) = self.find_rule_by_source(&norm)? {
             if other.id != id {
-                return Err(TdError::Other(format!(
-                    "另一条规则（#{}）已经指向该路径",
-                    other.id
-                )));
+                return Err(TdError::Other(crate::i18n::tf("db.duplicate_rule_other", &[("id", &other.id.to_string())])));
             }
         }
 
@@ -257,7 +244,7 @@ impl Store {
             ],
         )?;
         if n == 0 {
-            return Err(TdError::NotFound(format!("没有 id={id} 的规则")));
+            return Err(TdError::NotFound(crate::i18n::tf("db.rule_not_found", &[("id", &id.to_string())])));
         }
         Ok(())
     }
@@ -265,7 +252,7 @@ impl Store {
     pub fn delete_rule(&self, id: i64) -> TdResult<()> {
         let n = self.conn().execute("DELETE FROM rules WHERE id = ?1", [id])?;
         if n == 0 {
-            return Err(TdError::NotFound(format!("没有 id={id} 的规则")));
+            return Err(TdError::NotFound(crate::i18n::tf("db.rule_not_found", &[("id", &id.to_string())])));
         }
         Ok(())
     }
@@ -276,7 +263,7 @@ impl Store {
             params![id, enabled],
         )?;
         if n == 0 {
-            return Err(TdError::NotFound(format!("没有 id={id} 的规则")));
+            return Err(TdError::NotFound(crate::i18n::tf("db.rule_not_found", &[("id", &id.to_string())])));
         }
         Ok(())
     }
@@ -294,7 +281,7 @@ impl Store {
                 params![id, (i + 1) as i64],
             )?;
             if n == 0 {
-                return Err(TdError::NotFound(format!("没有 id={id} 的规则")));
+                return Err(TdError::NotFound(crate::i18n::tf("db.rule_not_found", &[("id", &id.to_string())])));
             }
         }
         tx.commit()?;
