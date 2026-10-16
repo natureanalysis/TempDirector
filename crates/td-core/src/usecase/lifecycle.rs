@@ -1,0 +1,35 @@
+//! 生命周期用例：开机重建、配置导出/导入。
+
+use std::path::Path;
+
+use crate::boot::run_boot_rebuild;
+use crate::error::{TdError, TdResult};
+use crate::portable;
+use crate::store::Store;
+
+use super::view::{BootReport, ImportReport};
+
+pub fn boot_rebuild(store: &Store) -> TdResult<BootReport> {
+    run_boot_rebuild(store)
+}
+
+pub fn export_config(store: &Store, path: &Path) -> TdResult<(usize, usize)> {
+    let bundle = portable::export_bundle(store)?;
+    let json = serde_json::to_string_pretty(&bundle)?;
+    std::fs::write(path, json.as_bytes())
+        .map_err(|e| TdError::Other(format!("写入 {} 失败：{e}", path.display())))?;
+    Ok((bundle.roots.len(), bundle.rules.len()))
+}
+
+pub fn import_config(
+    store: &Store,
+    path: &Path,
+    ram_root: Option<&str>,
+    dry_run: bool,
+) -> TdResult<ImportReport> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| TdError::Other(format!("读取 {} 失败：{e}", path.display())))?;
+    let bundle: portable::Bundle = serde_json::from_str(&text)
+        .map_err(|e| TdError::Other(format!("解析 {} 失败：{e}", path.display())))?;
+    portable::import_bundle(store, &bundle, ram_root, dry_run)
+}

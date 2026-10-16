@@ -1,0 +1,77 @@
+//! 提权用例：把 apply/restore 交给一次性管理员进程执行，再读回结果。
+
+use crate::elevate;
+use crate::error::{TdError, TdResult};
+use crate::store::Store;
+use crate::worker;
+
+use super::view::{ApplyOpts, ItemOutcome};
+
+/// 通过提权 worker 执行 apply / restore。
+///
+/// 父进程**不开新连接也不加锁**：worker 是独立进程、自己开库（WAL 下多连接没问题），
+/// 干完写一份 result.json，这里读回来转成界面用的结果。
+pub fn run_elevated_job(
+    store: &Store,
+    kind: &str,
+    ids: &[i64],
+    opts: &ApplyOpts,
+) -> TdResult<Vec<ItemOutcome>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    if opts.dry_run {
+        return Err(TdError::Other(
+            "预演不需要提权：请先直接预演（它只读不写）".into(),
+        ));
+    }
+
+    let job = worker::Job {
+        schema: worker::JOB_VERSION,
+        kind: kind.to_string(),
+        rules: ids.to_vec(),
+        dry_run: false,
+        allow_merge: opts.allow_merge,
+        sha256: opts.sha256,
+        origin_pid: std::process::id(),
+    };
+    let job_path = worker::write_job(&job)?;
+    let exe = std::env::current_exe()
+        .map_err(|e| TdError::Other(format!("取当前程序路径失败：{e}")))?;
+    let args = format!(
+        "elevated {}",
+        elevate::quote_arg(&job_path.to_string_lossy())
+    );
+
+    let code = elevate::run_elevated_wait(&exe, &args)?;
+    let result = worker::read_result(&job_path);
+    // 清理：job 与结果文件都是一次性的
+    let _ = std::fs::remove_file(&job_path);
+    let _ = std::fs::remove_file(worker::result_path_for(&job_path));
+
+    match result {
+        Some(r) => {
+            store.log_event(
+                None,
+                if r.ok { "info" } else { "warn" },
+                "elevated_job",
+                &format!("{kind}（提权）：{}", r.one_line()),
+            )?;
+            Ok(r
+                .items
+                .into_iter()
+                .map(|i| ItemOutcome {
+                    rule_id: i.rule_id,
+                    name: i.name,
+                    ok: i.ok,
+                    action: i.action,
+                    message: i.message,
+                    elapsed_ms: i.elapsed_ms,
+                })
+                .collect())
+        }
+        None => Err(TdError::Other(format!(
+            "提权进程没留下结果（退出码 {code}）。可能是它启动失败，或被安全软件拦下了。"
+        ))),
+    }
+}

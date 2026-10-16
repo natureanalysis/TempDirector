@@ -1,0 +1,150 @@
+//! `apply` / `restore` / `relink`：把规则真正落地或撤销。
+//!
+//! 这里直接编排 `engine::apply_rule` / `engine::restore_rule`（而不是走
+//! `td_core::usecase` 的批量门面）：CLI 需要 `engine::Outcome` 里的搬运规模
+//! 与耗时明细（`print_outcome` 依赖 `stats` 字段），那是 GUI 契约
+//! `usecase::ItemOutcome` 没有的信息。
+
+use td_core::engine::{self, apply_rule, restore_rule, ApplyOptions};
+use td_core::fsops::verify::VerifyMode;
+use td_core::store::Store;
+use td_core::{TdError, TdResult};
+
+use crate::output::print_outcome;
+use crate::parse::Parsed;
+
+pub(crate) fn cmd_apply(store: &Store, p: &Parsed) -> TdResult<()> {
+    let opts = ApplyOptions {
+        dry_run: p.has("dry-run"),
+        verify: if p.has("sha256") {
+            VerifyMode::Sha256
+        } else {
+            VerifyMode::CountAndSize
+        },
+        skip_lock_check: p.has("skip-lock-check"),
+        allow_merge: p.has("merge"),
+    };
+
+    let ids = collect_target_ids(store, p, "apply")?;
+    let mut noop = |_p: td_core::fsops::mover::Progress| {};
+
+    let mut ok = 0usize;
+    let mut failed = 0usize;
+    let multiple = ids.len() > 1;
+    for id in ids {
+        let rule = match store.get_rule(id) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("  [失败] #{id}：{e}");
+                failed += 1;
+                continue;
+            }
+        };
+        if multiple {
+            println!("── #{id} {} ──", rule.name);
+        }
+        match apply_rule(store, &rule, &opts, &mut noop) {
+            Ok(o) => {
+                print_outcome(&o);
+                ok += 1;
+            }
+            Err(e) => {
+                println!("  [失败] #{id} {:<20} {e}", rule.name);
+                failed += 1;
+            }
+        }
+    }
+    println!();
+    println!(
+        "{}：成功 {} 条，失败 {} 条",
+        if opts.dry_run { "预演结束" } else { "执行结束" },
+        ok,
+        failed
+    );
+    if failed > 0 {
+        return Err(TdError::Other(format!("有 {failed} 条未成功")));
+    }
+    Ok(())
+}
+
+pub(crate) fn cmd_restore(store: &Store, p: &Parsed) -> TdResult<()> {
+    let opts = ApplyOptions {
+        dry_run: p.has("dry-run"),
+        verify: if p.has("sha256") {
+            VerifyMode::Sha256
+        } else {
+            VerifyMode::CountAndSize
+        },
+        skip_lock_check: true,
+        allow_merge: true,
+    };
+    let ids = collect_target_ids(store, p, "restore")?;
+    let mut noop = |_p: td_core::fsops::mover::Progress| {};
+    let mut ok = 0usize;
+    let mut failed = 0usize;
+    for id in ids {
+        let rule = match store.get_rule(id) {
+            Ok(r) => r,
+            Err(e) => {
+                println!("  [失败] #{id}：{e}");
+                failed += 1;
+                continue;
+            }
+        };
+        match restore_rule(store, &rule, &opts, &mut noop) {
+            Ok(o) => {
+                print_outcome(&o);
+                ok += 1;
+            }
+            Err(e) => {
+                println!("  [失败] #{id} {:<20} {e}", rule.name);
+                failed += 1;
+            }
+        }
+    }
+    println!();
+    println!(
+        "{}：成功 {} 条，失败 {} 条",
+        if opts.dry_run { "预演结束" } else { "执行结束" },
+        ok,
+        failed
+    );
+    if failed > 0 {
+        return Err(TdError::Other(format!("有 {failed} 条未成功")));
+    }
+    Ok(())
+}
+
+pub(crate) fn cmd_relink(store: &Store, p: &Parsed) -> TdResult<()> {
+    let id = p
+        .required(0, "<规则id>")?
+        .parse::<i64>()
+        .map_err(|_| TdError::Other("规则 id 必须是整数".into()))?;
+    let rule = store.get_rule(id)?;
+    let o = engine::relink_rule(store, &rule)?;
+    print_outcome(&o);
+    Ok(())
+}
+
+/// `--all` 时取所有规则，否则取显式列出的 id。`apply` 只处理"期望开启"的规则。
+fn collect_target_ids(store: &Store, p: &Parsed, kind: &str) -> TdResult<Vec<i64>> {
+    if p.has("all") {
+        let rules = store.list_rules()?;
+        let ids: Vec<i64> = rules
+            .iter()
+            .filter(|r| kind == "restore" || r.want_enabled || p.has("include-disabled"))
+            .map(|r| r.id)
+            .collect();
+        if ids.is_empty() {
+            println!("没有需要处理的规则");
+        }
+        return Ok(ids);
+    }
+    let ids = p.ids(0)?;
+    if ids.is_empty() {
+        return Err(TdError::Other(format!(
+            "请指定规则 id，或用 `{kind} --all` 处理全部"
+        )));
+    }
+    Ok(ids)
+}

@@ -1,0 +1,175 @@
+//! 概览用例：界面快照、目标根/规则视图、事件与操作流水、上次开机报告。
+
+use crate::boot::{probe_volume, BootReport};
+use crate::engine;
+use crate::error::TdResult;
+use crate::paths;
+use crate::store::{EventRow, Operation, Rule, Store, CATEGORIES};
+
+use super::view::{
+    Banner, RootView, RuleView, Stats, UiSnapshot, VERSION,
+};
+
+pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
+    let roots = root_views(store)?;
+    let rules = rule_views(store)?;
+
+    let mut stats = Stats {
+        total: rules.len(),
+        ..Default::default()
+    };
+    for r in &rules {
+        if r.want_enabled {
+            stats.enabled += 1;
+        }
+        if r.needs_attention {
+            stats.needs_attention += 1;
+        }
+        match r.badge.as_str() {
+            "✅" => stats.ok += 1,
+            "⚠️" => stats.warn += 1,
+            "❌" => stats.plain += 1,
+            _ => stats.other += 1,
+        }
+    }
+
+    let open_ops = store.list_open_ops()?;
+    let mut banners: Vec<Banner> = Vec::new();
+
+    // 登录任务是静默跑的：它出问题必须在这里被看到，而不是躺在日志里
+    if let Some((at, summary)) = last_boot_problem(store) {
+        banners.push(Banner {
+            level: "warn",
+            text: format!("上次开机重建（{at}）有需要留意的地方：{summary}"),
+        });
+    }
+
+    let roots_ready = roots
+        .iter()
+        .filter(|r| r.state == "ready" || r.state == "not_created")
+        .count();
+    if roots.is_empty() {
+        banners.push(Banner {
+            level: "warn",
+            text: "还没有配置目标根（RAM 盘），先在「设置」里添加一个，例如 R:".into(),
+        });
+    } else if roots_ready == 0 {
+        banners.push(Banner {
+            level: "error",
+            text: "所有目标根都不可用 —— RAM 盘可能没有创建或没有挂载，此时无法建立链接".into(),
+        });
+    }
+    if stats.needs_attention > 0 {
+        banners.push(Banner {
+            level: "warn",
+            text: format!("有 {} 条规则需要处理（断链 / 真实目录 / 外来重解析点）", stats.needs_attention),
+        });
+    }
+    if !open_ops.is_empty() {
+        banners.push(Banner {
+            level: "error",
+            text: format!(
+                "有 {} 条上次中断的操作未收尾，请查看「运维」面板确认后处理",
+                open_ops.len()
+            ),
+        });
+    }
+    for r in roots.iter().filter(|r| r.state != "ready") {
+        banners.push(Banner {
+            level: "warn",
+            text: format!("目标根 #{} {} 异常：{}", r.id, r.path, r.message),
+        });
+    }
+
+    Ok(UiSnapshot {
+        version: VERSION.to_string(),
+        schema_version: store.user_version()?,
+        data_dir: paths::data_dir().display().to_string(),
+        db_path: paths::db_path().display().to_string(),
+        categories: CATEGORIES.iter().map(|s| s.to_string()).collect(),
+        roots,
+        rules,
+        stats,
+        banners,
+        open_ops,
+    })
+}
+
+pub fn root_views(store: &Store) -> TdResult<Vec<RootView>> {
+    let mut out = Vec::new();
+    for r in store.list_roots()? {
+        let (path, unknown) = r.resolved_path();
+        let (state, message) = probe_volume(&path);
+        out.push(RootView {
+            id: r.id,
+            label: r.label,
+            path: r.path,
+            is_ramdisk: r.is_ramdisk,
+            wait_timeout_ms: r.wait_timeout_ms,
+            state,
+            message,
+            unknown_vars: unknown,
+        });
+    }
+    Ok(out)
+}
+
+pub fn rule_views(store: &Store) -> TdResult<Vec<RuleView>> {
+    let mut out = Vec::new();
+    for rule in store.list_rules()? {
+        let resolved = engine::resolve(store, &rule)?;
+        let status = engine::rule_status(store, &rule)?;
+        out.push(merge_view(rule, resolved, status));
+    }
+    Ok(out)
+}
+
+fn merge_view(rule: Rule, resolved: engine::Resolved, status: engine::RuleStatus) -> RuleView {
+    RuleView {
+        id: rule.id,
+        name: rule.name,
+        category: rule.category,
+        source_template: rule.source_template,
+        source: resolved.source.display().to_string(),
+        target: resolved.target.display().to_string(),
+        target_root_id: rule.target_root_id,
+        target_subpath: rule.target_subpath,
+        link_type: rule.link_type,
+        want_enabled: rule.want_enabled,
+        rebuild_on_boot: rule.rebuild_on_boot,
+        has_acl: rule.acl_sddl.is_some(),
+        needs_elevation: rule.needs_elevation,
+        notes: rule.notes,
+        badge: status.badge.to_string(),
+        label: status.label,
+        needs_attention: status.needs_attention,
+        warnings: status.warnings,
+        unknown_vars: status.unknown_vars,
+        last_files: rule.last_files,
+        last_bytes: rule.last_bytes,
+        applied_at: rule.applied_at,
+    }
+}
+
+pub fn recent_events(store: &Store, limit: i64) -> TdResult<Vec<EventRow>> {
+    store.recent_events(limit)
+}
+
+pub fn recent_ops(store: &Store, limit: i64) -> TdResult<Vec<Operation>> {
+    store.recent_ops(limit)
+}
+
+/// 上一次开机重建是不是有问题（界面顶部提示用）。返回 `(时间, 摘要)`。
+pub fn last_boot_problem(store: &Store) -> Option<(String, String)> {
+    let json = store.get_setting("last_boot_report").ok().flatten()?;
+    let report: BootReport = serde_json::from_str(&json).ok()?;
+    if !report.has_problem() {
+        return None;
+    }
+    let at = store
+        .get_setting("last_boot_at")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    Some((at, report.one_line()))
+}

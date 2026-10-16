@@ -2,6 +2,39 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-10-16（架构重构）
+
+### 重构 —— td-core 引入用例门面层 `usecase`，GUI/CLI 收敛调用面
+
+* **新增 `td-core::usecase`**（`crates/td-core/src/usecase/`）：按领域拆子模块
+  （overview / rules / apply / lifecycle / presets / clean / disk / inspect / autostart /
+  elevated / view），GUI、CLI、无界面子模式的**默认入口**；前端 JSON 契约结构
+  （`RuleForm` / `UiSnapshot` / `CleanTarget` 等）统一定义在 `view.rs`。
+  收益：core 内部模块重命名/拆分不再穿透前端；用例测试脱离 GUI crate 即可运行。
+* **`td-gui/src/api.rs` 从 1818 行收敛为 8 行薄再导出**（`pub use td_core::usecase::*`），
+  `commands.rs` 的 `api::Xxx` 符号路径不变；原 24 个界面业务单测随逻辑迁至
+  `crates/td-core/src/usecase/tests.rs`，`cargo test -p td-core` 即可覆盖。
+* `presets.json` 随预设逻辑从 `crates/td-gui/` 迁到 `crates/td-core/`（内嵌进 core），
+  GUI 集成测试 `preset_override.rs` 走 `td_gui::api::preset_rules` 的真实链路不变。
+* **`td-cli/src/main.rs` 从 1435 行拆为 6 个模块**：`parse.rs`（参数解析 + 新增 4 个单测）、
+  `output.rs`（控制台格式化）、`timefmt.rs`（时间参数/相对时长 + 3 个单测随迁）、
+  `help.rs`、`cmds/{roots,rules,status,apply,clean,boot,config}.rs`（子命令按域分组）。
+  `boot-rebuild` / `export` / `autostart status|disable|run` 迁到 `usecase` 门面；
+  `apply`/`restore`（需要 `engine::Outcome` 的规模与耗时明细）、`import`
+  （app-tag 警告）保留低层调用并注明原因。CLI 行为与输出逐字不变（`--help` /
+  `version` 冒烟核对）。
+* `docs/ARCHITECTURE.md`：§1 补 usecase 门面与三圈分层、§2 数据流图加门面行、
+  模块表与测试数（141→145）同步 `td-core/src/lib.rs`。
+
+### 验证
+
+* `cargo test --workspace --no-fail-fast`：144 通过、1 失败 —— 失败的是
+  `boot::acl::tests::export_apply_roundtrip`，**在重构前的基线上同样失败**
+  （`git stash` 对照验证过）：本机 `%TEMP%` 的 ACL 组成导致"导出 SDDL → 回灌 → 回读"
+  的字符集合不一致，属环境敏感的既有问题，与本轮改动无关。
+* 测试总数 141 → 145（净增 4 个 `parse.rs` 参数解析单测）。
+* CLI 冒烟：`tempdirector version` / `--help` / 无参数输出与重构前一致。
+
 ## 2026-10-16
 
 ### 新增 —— 一键全量重建脚本 + 桌面快捷方式

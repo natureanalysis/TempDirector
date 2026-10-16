@@ -1,0 +1,36 @@
+//! 用例门面层。
+//!
+//! GUI（Tauri 命令层）/ CLI / 无界面子模式**只依赖这一层**，不直接编排
+//! `engine` / `fsops` / `link` 等内部模块 —— 内部重构只影响本层。
+//! 本层函数返回 serde 可序列化结构（前端 JSON 契约），故可脱离窗口单测。
+
+pub mod apply;
+pub mod autostart;
+pub mod clean;
+pub mod disk;
+pub mod elevated;
+pub mod inspect;
+pub mod lifecycle;
+pub mod overview;
+pub mod presets;
+pub mod rules;
+pub mod view;
+
+pub use apply::{apply_rules, check_locks, relink, restore_rules};
+pub use autostart::{autostart_disable, autostart_enable, autostart_run_now, autostart_status};
+pub use clean::{clean_preview, clean_run};
+pub use disk::disk_usage;
+pub use elevated::run_elevated_job;
+pub use inspect::{describe_state, human_bytes, inspect_source, inspect_target, parent_of_display};
+pub use lifecycle::{boot_rebuild, export_config, import_config};
+pub use overview::{
+    last_boot_problem, recent_events, recent_ops, root_views, rule_views, snapshot,
+};
+pub use presets::{preset_rules, user_presets_path};
+pub use rules::{
+    add_root, add_rule, capture_acl, clear_acl, delete_root, delete_rules, set_enabled, update_rule,
+};
+pub use view::*;
+
+#[cfg(test)]
+mod tests;

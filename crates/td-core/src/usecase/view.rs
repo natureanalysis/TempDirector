@@ -1,0 +1,321 @@
+//! 视图结构：前端 JSON 契约 + 用例层常用核心类型的再导出。
+//!
+//! 这些结构的字段名就是线上契约（前端 `app.js` 依赖），改动需同步前端与命令层。
+//! 之所以放在 core 的用例层：GUI 的 `api` 模块只是本层的薄再导出，
+//! 逻辑脱离窗口即可单测，也便于将来接到服务端或别的 UI。
+
+use serde::{Deserialize, Serialize};
+
+use crate::engine::ApplyOptions;
+use crate::fsops::verify::VerifyMode;
+use crate::store::NewRule;
+
+// ---- 核心类型再导出：让前端适配层只依赖 `usecase`，不直接触达领域模块。----
+pub use crate::boot::BootReport;
+pub use crate::error::{TdError, TdResult};
+pub use crate::fsops::clean::{CleanPolicy, CleanReport, CleanSampleEntry};
+pub use crate::fsops::mover::Progress;
+pub use crate::fsops::occupancy::LockReport;
+pub use crate::portable::ImportReport;
+pub use crate::store::{EventRow, Operation, Store};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RootView {
+    pub id: i64,
+    pub label: String,
+    pub path: String,
+    pub is_ramdisk: bool,
+    pub wait_timeout_ms: i64,
+    /// `ready` / `missing` / `not_dir` / `readonly` / `no_space_info`
+    pub state: &'static str,
+    pub message: String,
+    pub unknown_vars: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuleView {
+    pub id: i64,
+    pub name: String,
+    pub category: String,
+    /// 未展开的模板（编辑表单用）。
+    pub source_template: String,
+    /// 展开后的真实源路径（展示用）。
+    pub source: String,
+    pub target: String,
+    pub target_root_id: i64,
+    pub target_subpath: String,
+    pub link_type: String,
+    pub want_enabled: bool,
+    pub rebuild_on_boot: bool,
+    /// 是否已存有 DACL 模板。
+    pub has_acl: bool,
+    pub needs_elevation: bool,
+    pub notes: Option<String>,
+    pub badge: String,
+    pub label: String,
+    pub needs_attention: bool,
+    pub warnings: Vec<String>,
+    pub unknown_vars: Vec<String>,
+    pub last_files: Option<i64>,
+    pub last_bytes: Option<i64>,
+    pub applied_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Stats {
+    pub total: usize,
+    pub enabled: usize,
+    pub ok: usize,
+    pub warn: usize,
+    pub plain: usize,
+    pub other: usize,
+    pub needs_attention: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UiSnapshot {
+    pub version: String,
+    pub schema_version: i32,
+    pub data_dir: String,
+    pub db_path: String,
+    pub categories: Vec<String>,
+    pub roots: Vec<RootView>,
+    pub rules: Vec<RuleView>,
+    pub stats: Stats,
+    /// 顶部横幅（就绪状态 / 待处理项 / 上次中断的操作）。
+    pub banners: Vec<Banner>,
+    pub open_ops: Vec<Operation>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Banner {
+    /// `info` / `warn` / `error`
+    pub level: &'static str,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ItemOutcome {
+    pub rule_id: i64,
+    pub name: String,
+    pub ok: bool,
+    pub action: String,
+    pub message: String,
+    pub elapsed_ms: u128,
+}
+
+/// 新增/编辑规则的表单。
+///
+/// ⚠️ **线格式统一用 snake_case，两个方向一致**（读视图 `RuleView` 也是 snake_case）。
+/// 这里不要加 `rename_all = "camelCase"`：Tauri 只把**命令参数名**从 camelCase
+/// 转成 snake_case（`rootId` → `root_id`），**嵌套结构体的字段不转**。
+/// 一旦前端发 `sourceTemplate` 而这里要 `source_template`，界面保存就会报
+/// `missing field source_template` —— 而这种错在 mock 后端里看不出来
+/// （mock 不校验形状）。`rule_form_wire_contract` 测试钉住这个约定。
+#[derive(Debug, Clone, Deserialize)]
+pub struct RuleForm {
+    pub name: String,
+    pub category: String,
+    pub source_template: String,
+    pub target_root_id: i64,
+    pub target_subpath: String,
+    pub link_type: String,
+    #[serde(default)]
+    pub want_enabled: bool,
+    #[serde(default = "yes")]
+    pub rebuild_on_boot: bool,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl RuleForm {
+    pub(crate) fn to_new_rule(&self) -> NewRule {
+        NewRule {
+            name: self.name.clone(),
+            category: self.category.clone(),
+            source_template: self.source_template.clone(),
+            target_root_id: self.target_root_id,
+            target_subpath: self.target_subpath.clone(),
+            link_type: self.link_type.clone(),
+            want_enabled: self.want_enabled,
+            rebuild_on_boot: self.rebuild_on_boot,
+            notes: self.notes.clone(),
+        }
+    }
+}
+
+/// 应用/恢复的选项。字段同样是 snake_case（约定见 [`RuleForm`]）。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ApplyOpts {
+    #[serde(default)]
+    pub dry_run: bool,
+    /// 目标目录非空时允许合并（同路径取较新者）。
+    #[serde(default)]
+    pub allow_merge: bool,
+    /// 跳过占用检测（危险）。
+    #[serde(default)]
+    pub skip_lock_check: bool,
+    /// 逐文件 SHA-256（慢）。
+    #[serde(default)]
+    pub sha256: bool,
+}
+
+impl ApplyOpts {
+    pub(crate) fn to_engine(&self) -> ApplyOptions {
+        ApplyOptions {
+            dry_run: self.dry_run,
+            verify: if self.sha256 {
+                VerifyMode::Sha256
+            } else {
+                VerifyMode::CountAndSize
+            },
+            skip_lock_check: self.skip_lock_check,
+            allow_merge: self.allow_merge,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceInspection {
+    pub expanded: String,
+    pub exists: bool,
+    pub blocking: Vec<String>,
+    pub warnings: Vec<String>,
+    pub requires_elevation: bool,
+    pub unknown_vars: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TargetInspection {
+    pub target: String,
+    pub root_ready: bool,
+    pub exists: bool,
+    /// 目标位置已有真实文件/目录 —— apply 需要 `allow_merge` 才能继续。
+    pub occupied: bool,
+    pub state: String,
+    pub unknown_vars: Vec<String>,
+}
+
+/// 一条预设。与 `presets.json` 的字段一一对应（serde 反序列化目标）。
+///
+/// `note` 可空：值得让用户看到的坑（版本号目录、占用频繁、索引重建等）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct PresetDef {
+    pub name: String,
+    pub category: String,
+    pub source_template: String,
+    /// RAM 盘下的默认子路径（可被用户改写）。
+    pub target_subpath: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PresetView {
+    pub name: String,
+    pub category: String,
+    pub source_template: String,
+    pub target_subpath: String,
+    pub note: Option<String>,
+    /// 展开后的源目录（展示用）。
+    pub source: String,
+    /// 本机是否真的存在这个目录 —— 不存在的说明软件没装，直接不返回给前端。
+    pub exists: bool,
+}
+
+/// 清理对象：要么是一条规则（清它真正落地的目录），要么是一个任意文件夹。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CleanTarget {
+    Rule { id: i64 },
+    Folder { path: String },
+}
+
+/// 预演视图（执行前给用户确认用）。
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanPreviewView {
+    pub dir: String,
+    pub label: String,
+    pub files: u64,
+    pub bytes: u64,
+    pub bytes_text: String,
+    pub links_skipped: u64,
+    pub sample: Vec<CleanSampleEntry>,
+    pub summary: String,
+}
+
+/// 执行结果视图。
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanResultView {
+    pub dir: String,
+    pub label: String,
+    pub deleted_files: u64,
+    pub deleted_bytes: u64,
+    pub deleted_bytes_text: String,
+    pub dirs_pruned: u64,
+    pub skipped: u64,
+    pub skip_examples: Vec<String>,
+    pub links_skipped: u64,
+    pub summary: String,
+}
+
+/// 单条规则的缓存目录占用（实时扫描所得）。
+#[derive(Debug, Clone, Serialize)]
+pub struct DiskUsageEntry {
+    pub id: i64,
+    pub name: String,
+    pub dir: String,
+    pub files: u64,
+    pub bytes: u64,
+    pub bytes_text: String,
+    /// 目录当前是否存在（不存在时占用为 0）。
+    pub exists: bool,
+}
+
+/// 一个卷的容量占用。
+#[derive(Debug, Clone, Serialize)]
+pub struct VolumeUsage {
+    /// 卷根，如 `C:\` 或 `R:\`。
+    pub path: String,
+    pub total: u64,
+    pub free: u64,
+    pub used: u64,
+    pub total_text: String,
+    pub free_text: String,
+    pub used_text: String,
+    /// 已用百分比（0～100）。
+    pub used_pct: f64,
+    pub is_ramdisk: bool,
+    /// 该卷在本应用里扮演的角色：`RAM 盘` / `目标盘` / `源盘`。
+    pub roles: Vec<String>,
+}
+
+/// 「磁盘空间占用统计」的完整视图。
+#[derive(Debug, Clone, Serialize)]
+pub struct DiskUsageView {
+    pub rules: Vec<DiskUsageEntry>,
+    pub volumes: Vec<VolumeUsage>,
+    pub total_bytes: u64,
+    pub total_bytes_text: String,
+    pub rule_count: usize,
+    pub elapsed_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AutostartView {
+    pub registered: bool,
+    pub task_name: String,
+    pub command: String,
+    pub message: String,
+    /// 当前进程是否已提权（界面据此解释"为什么这次不用弹 UAC"）。
+    pub elevated: bool,
+    pub data_dir: String,
+    /// 便携模式下会写进任务的参数尾巴。
+    pub extra_args: String,
+    pub recommended_exe: String,
+}
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

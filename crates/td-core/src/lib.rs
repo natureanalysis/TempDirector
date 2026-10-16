@@ -14,6 +14,7 @@
 //! | [`fsops`] | 占用检测、跨卷安全搬运、数据核对 | 否 |
 //! | [`engine`] | 编排：检测 → 搬运 → 建链 → 回滚 → 落库 | 是 |
 //! | [`store`] | SQLite 规则库与操作流水 | 是 |
+//! | [`usecase`] | 用例门面：GUI/CLI/submode 的默认入口，前端 JSON 契约 | 是 |
 //! | [`boot`] | 等待卷就绪、开机批量重建、ACL 回灌 | 是 |
 //! | [`autostart`] | 注册/取消"登录时自动重建"的用户级任务计划 | 否 |
 //! | [`worker`] | 提权 worker 的 job 协议与执行体 | 是 |
@@ -38,6 +39,7 @@ pub mod paths;
 pub mod portable;
 pub mod safety;
 pub mod store;
+pub mod usecase;
 pub mod util;
 pub mod worker;
 

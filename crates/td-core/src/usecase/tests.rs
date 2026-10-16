@@ -1,0 +1,555 @@
+//! 用例层单元测试。
+//!
+//! 原先位于 `td-gui/src/api.rs`（界面业务层）。逻辑下沉到 core 后随之迁移 ——
+//! 这样这些用例测试不再需要 GUI crate，`cargo test -p td-core` 即可覆盖。
+
+use std::fs;
+use std::path::PathBuf;
+
+use super::presets::{load_user_presets, merge_presets, validate_preset, PRESETS_JSON};
+use super::rules::validate_form;
+use super::*;
+use crate::error::TdError;
+use crate::store::Store;
+
+struct Env {
+    base: PathBuf,
+    store: Store,
+    source: PathBuf,
+    ram: PathBuf,
+}
+
+fn setup(tag: &str) -> Env {
+    let base = std::env::temp_dir().join(format!("td_gui_{tag}_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let source = base.join("cache");
+    let ram = base.join("ram");
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&ram).unwrap();
+    fs::write(source.join("a.bin"), vec![1u8; 1024]).unwrap();
+
+    let store = Store::open_in_memory().unwrap();
+    store
+        .insert_root("RAM", &ram.to_string_lossy(), true, 5000)
+        .unwrap();
+    Env {
+        base,
+        store,
+        source,
+        ram,
+    }
+}
+
+fn form(env: &Env, name: &str, sub: &str) -> RuleForm {
+    RuleForm {
+        name: name.into(),
+        category: "dev".into(),
+        source_template: env.source.to_string_lossy().into_owned(),
+        target_root_id: 1,
+        target_subpath: sub.into(),
+        link_type: "junction".into(),
+        want_enabled: true,
+        rebuild_on_boot: true,
+        notes: None,
+    }
+}
+
+#[test]
+fn rule_form_wire_contract_is_snake_case() {
+    // 这段 JSON 就是前端 app.js 里实际发出来的形状（与读视图同一种命名）。
+    // 字段名一旦对不上，界面点「保存」就会报 missing field ...，
+    // 而这在 mock 后端里完全测不出来（mock 不校验形状）——
+    // 所以这条测试专门钉住"线上真实线格式"。
+    let json = r#"{
+            "name": "Chrome 缓存",
+            "category": "browser",
+            "source_template": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache",
+            "target_root_id": 1,
+            "target_subpath": "browsers\\chrome-cache",
+            "link_type": "junction",
+            "want_enabled": true,
+            "rebuild_on_boot": true,
+            "notes": null
+        }"#;
+    let form: RuleForm =
+        serde_json::from_str(json).expect("前端发送的表单必须能反序列化");
+    assert_eq!(form.name, "Chrome 缓存");
+    assert_eq!(form.category, "browser");
+    assert_eq!(form.target_root_id, 1);
+    assert_eq!(form.target_subpath, r"browsers\chrome-cache");
+    assert_eq!(form.link_type, "junction");
+    assert!(form.want_enabled);
+    assert!(form.rebuild_on_boot);
+    assert!(form.notes.is_none());
+}
+
+#[test]
+fn apply_opts_wire_contract_is_snake_case() {
+    let json = r#"{"dry_run":true,"allow_merge":false,"skip_lock_check":true,"sha256":false}"#;
+    let opts: ApplyOpts = serde_json::from_str(json).expect("选项字段名必须一致");
+    assert!(opts.dry_run);
+    assert!(!opts.allow_merge);
+    assert!(opts.skip_lock_check);
+    assert!(!opts.sha256);
+
+    // 缺字段时应有默认值（前端只传关心的那几个）
+    let opts: ApplyOpts = serde_json::from_str("{}").unwrap();
+    assert!(!opts.dry_run && !opts.allow_merge && !opts.skip_lock_check && !opts.sha256);
+}
+
+#[test]
+fn snapshot_reports_banners_and_stats() {
+    let env = setup("snapshot");
+    let s = snapshot(&env.store).unwrap();
+    assert_eq!(s.stats.total, 0);
+    assert_eq!(s.roots.len(), 1);
+    assert_eq!(s.roots[0].state, "ready");
+    assert!(
+        !s.banners
+            .iter()
+            .any(|b| b.text.contains("还没有配置目标根")),
+        "目标根就绪时不应出现「未配置」横幅：{:?}",
+        s.banners
+    );
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn add_rule_then_apply_then_restore_through_api() {
+    let env = setup("roundtrip");
+    let id = add_rule(&env.store, &form(&env, "测试", "dev\\x")).unwrap();
+
+    let snap = snapshot(&env.store).unwrap();
+    assert_eq!(snap.stats.total, 1);
+    assert_eq!(snap.rules[0].badge, "❌", "初始应是未链接");
+
+    let opts = ApplyOpts::default();
+    let mut calls = 0usize;
+    let res = apply_rules(&env.store, &[id], &opts, &mut |i, total, name, _p| {
+        calls += 1;
+        assert_eq!(i, 0);
+        assert_eq!(total, 1);
+        assert!(!name.is_empty());
+    });
+    assert_eq!(res.len(), 1);
+    assert!(res[0].ok, "{}", res[0].message);
+    assert_eq!(res[0].action, "moved_and_linked");
+    assert!(calls > 0);
+
+    let snap = snapshot(&env.store).unwrap();
+    assert_eq!(snap.rules[0].badge, "✅");
+    assert_eq!(snap.stats.ok, 1);
+
+    let res = restore_rules(&env.store, &[id], &opts, &mut |_, _, _, _| {});
+    assert!(res[0].ok, "{}", res[0].message);
+    let snap = snapshot(&env.store).unwrap();
+    assert_eq!(snap.stats.plain, 1);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+/// 同一测试里加多条规则时，源路径必须互不相同 —— 规则库对 `source_norm`
+/// 有 UNIQUE 约束（同一个缓存目录配两条规则是错的），这是有意的。
+fn form_at(env: &Env, name: &str, src: &str, sub: &str) -> RuleForm {
+    let mut f = form(env, name, sub);
+    f.source_template = src.to_string();
+    f
+}
+
+#[test]
+fn batch_apply_collects_failures_without_aborting() {
+    let env = setup("batch");
+    let good_src = env.base.join("cache-good");
+    fs::create_dir_all(&good_src).unwrap();
+    fs::write(good_src.join("f.bin"), b"x").unwrap();
+    let good = add_rule(
+        &env.store,
+        &form_at(&env, "好的", &good_src.to_string_lossy(), "dev\\good"),
+    )
+    .unwrap();
+    // 源在一个不存在的盘上 → 必然失败
+    let bad = add_rule(
+        &env.store,
+        &form_at(&env, "坏的", r"Z:\Nope\Cache", "dev\\bad"),
+    )
+    .unwrap();
+
+    let res = apply_rules(&env.store, &[bad, good], &ApplyOpts::default(), &mut |_, _, _, _| {});
+    assert_eq!(res.len(), 2);
+    assert!(!res[0].ok, "坏规则应当失败");
+    assert!(res[1].ok, "好规则不受影响：{}", res[1].message);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn acl_capture_and_clear() {
+    let env = setup("acl");
+    let id = add_rule(&env.store, &form(&env, "权限", "dev\\acl")).unwrap();
+
+    let sddl = capture_acl(&env.store, id).unwrap();
+    assert!(sddl.starts_with('D'), "SDDL 应以 D 开头：{sddl}");
+    assert!(snapshot(&env.store).unwrap().rules[0].has_acl);
+
+    clear_acl(&env.store, id).unwrap();
+    assert!(!snapshot(&env.store).unwrap().rules[0].has_acl);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn form_validation_rejects_bad_input() {
+    let env = setup("validate");
+    let mut f = form(&env, "x", "dev\\x");
+    f.name = "  ".into();
+    assert!(add_rule(&env.store, &f).is_err());
+
+    let mut f = form(&env, "x", "dev\\x");
+    f.category = "nonsense".into();
+    assert!(add_rule(&env.store, &f).is_err());
+
+    let mut f = form(&env, "x", "  ");
+    f.target_subpath = "   ".into();
+    assert!(add_rule(&env.store, &f).is_err());
+
+    let mut f = form(&env, "x", "dev\\x");
+    f.link_type = "hardlink".into();
+    assert!(add_rule(&env.store, &f).is_err());
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn export_import_roundtrip_through_api() {
+    let env = setup("portable");
+    add_rule(&env.store, &form(&env, "导出测试", "dev\\p")).unwrap();
+    let file = env.base.join("cfg.json");
+
+    let (roots, rules) = export_config(&env.store, &file).unwrap();
+    assert_eq!((roots, rules), (1, 1));
+
+    let other = Store::open_in_memory().unwrap();
+    let rep = import_config(&other, &file, None, false).unwrap();
+    assert_eq!(rep.rules_created, 1);
+    assert_eq!(rule_views(&other).unwrap()[0].name, "导出测试");
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn inspect_source_flags_system_dirs_and_elevation() {
+    let ins = inspect_source(r"C:\Windows\System32").unwrap();
+    assert!(!ins.blocking.is_empty());
+
+    let ins = inspect_source(r"C:\Program Files\Foo\Cache").unwrap();
+    assert!(ins.requires_elevation);
+    assert!(ins.blocking.is_empty());
+
+    let ins = inspect_source(r"%NO_SUCH_VAR_XYZ%\cache").unwrap();
+    assert_eq!(ins.unknown_vars.len(), 1);
+}
+
+#[test]
+fn inspect_target_detects_occupancy() {
+    let env = setup("target");
+    let occupied = env.ram.join("dev").join("busy");
+    fs::create_dir_all(&occupied).unwrap();
+    fs::write(occupied.join("x"), b"1").unwrap();
+
+    let t = inspect_target(&env.store, 1, "dev\\busy").unwrap();
+    assert!(t.root_ready);
+    assert!(t.occupied, "已有内容的目录应报占用");
+
+    let t = inspect_target(&env.store, 1, "dev\\free").unwrap();
+    assert!(!t.occupied);
+    assert!(!t.exists);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn check_locks_on_clean_dir_is_clear() {
+    let env = setup("locks");
+    let id = add_rule(&env.store, &form(&env, "占用", "dev\\l")).unwrap();
+    let report = check_locks(&env.store, id).unwrap();
+    assert!(report.is_clear(), "{}", report.summary());
+    assert_eq!(report.scanned, 1);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn boot_rebuild_through_api_recovers_from_ram_loss() {
+    let env = setup("boot");
+    let id = add_rule(&env.store, &form(&env, "开机", "dev\\b")).unwrap();
+    apply_rules(&env.store, &[id], &ApplyOpts::default(), &mut |_, _, _, _| {});
+    // 模拟 RAM 盘重启
+    fs::remove_dir_all(env.ram.join("dev")).unwrap();
+
+    let report = boot_rebuild(&env.store).unwrap();
+    assert_eq!(report.dirs_created, 1);
+    assert_eq!(report.links_recovered, 1);
+    assert!(!report.has_problem(), "{}", report.one_line());
+
+    let snap = snapshot(&env.store).unwrap();
+    assert_eq!(snap.rules[0].badge, "⚠️", "目标为空 → 警告徽标");
+    assert_eq!(snap.stats.warn, 1);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn delete_rules_and_set_enabled() {
+    let env = setup("enabled");
+    let a = add_rule(
+        &env.store,
+        &form_at(&env, "A", &env.base.join("srcA").to_string_lossy(), "dev\\a"),
+    )
+    .unwrap();
+    let b = add_rule(
+        &env.store,
+        &form_at(&env, "B", &env.base.join("srcB").to_string_lossy(), "dev\\b"),
+    )
+    .unwrap();
+    assert_eq!(set_enabled(&env.store, &[b], false).unwrap(), 1);
+    assert_eq!(snapshot(&env.store).unwrap().stats.enabled, 1);
+    assert_eq!(delete_rules(&env.store, &[a]).unwrap(), 1);
+    assert_eq!(snapshot(&env.store).unwrap().stats.total, 1);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn duplicate_source_path_is_rejected() {
+    let env = setup("dup");
+    add_rule(&env.store, &form(&env, "第一条", "dev\\one")).unwrap();
+    let err = add_rule(&env.store, &form(&env, "第二条", "dev\\two")).unwrap_err();
+    assert!(err.to_string().contains("已存在指向同一路径的规则"), "{err}");
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+// -----------------------------------------------------------------------
+// 内置预设
+// -----------------------------------------------------------------------
+
+/// 造一条合法预设的捷径。
+fn preset(name: &str, src: &str, sub: &str) -> PresetDef {
+    PresetDef {
+        name: name.into(),
+        category: "dev".into(),
+        source_template: src.into(),
+        target_subpath: sub.into(),
+        note: None,
+    }
+}
+
+#[test]
+fn builtin_presets_parse() {
+    // 内嵌 JSON 解析失败会在 builtin_presets() 里 panic，这里先显式解析拿到好报错。
+    let all: Vec<PresetDef> = serde_json::from_str(PRESETS_JSON).expect("presets.json 必须能解析");
+    assert!(all.len() >= 20, "预设清单不应莫名缩水：{}", all.len());
+
+    // 分类合法、名字/模板/子路径非空且唯一 —— 这几条任何一条坏了，
+    // 表单按预设填充后保存就会报错，或两条规则撞 UNIQUE 约束。
+    let mut seen_src = std::collections::HashSet::new();
+    let mut seen_sub = std::collections::HashSet::new();
+    for p in &all {
+        validate_preset(p).unwrap_or_else(|e| panic!("内置预设「{}」非法：{e}", p.name));
+        assert!(
+            p.source_template.starts_with('%'),
+            "预设 {} 应使用 %VAR% 模板以便跨机器：{}",
+            p.name,
+            p.source_template
+        );
+        assert!(
+            seen_src.insert(p.source_template.to_lowercase()),
+            "预设 {} 源模板重复",
+            p.name
+        );
+        assert!(
+            seen_sub.insert(p.target_subpath.to_lowercase()),
+            "预设 {} 子路径重复",
+            p.name
+        );
+    }
+    assert!(
+        all.iter().any(|p| p.source_template == r"%LOCALAPPDATA%\Temp"),
+        "任何 Windows 机器上都该有「用户 TEMP」预设兜底"
+    );
+}
+
+#[test]
+fn merge_presets_overrides_by_source_and_appends() {
+    let builtin = vec![
+        preset("A", r"%LOCALAPPDATA%\A\cache", r"dev\a"),
+        preset("B", r"%LOCALAPPDATA%\B\cache", r"dev\b"),
+    ];
+    // 同源覆盖（改子路径/备注），新源追加
+    let user = vec![
+        preset("B 改", r"%LOCALAPPDATA%\B\Cache", r"dev\b2"), // 大小写不同也应命中
+        preset("C", r"%LOCALAPPDATA%\C\cache", r"dev\c"),
+    ];
+    let merged = merge_presets(&builtin, &user);
+    assert_eq!(merged.len(), 3);
+    assert_eq!(merged[0].name, "A");
+    assert_eq!(merged[1].name, "B 改");
+    assert_eq!(merged[1].target_subpath, r"dev\b2");
+    assert_eq!(merged[2].name, "C");
+}
+
+#[test]
+fn load_user_presets_skips_bad_entries_not_whole_file() {
+    let dir = std::env::temp_dir().join(format!("td_gui_preset_user_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("presets.json");
+
+    // 文件不存在 → 空、无告警
+    let (ok, skipped) = load_user_presets(&file);
+    assert!(ok.is_empty() && skipped.is_empty());
+
+    // 一好一坏 → 好的留下，坏的跳过（不会整个文件报废）
+    fs::write(
+        &file,
+        r#"[{"name":"好","category":"dev","source_template":"%LOCALAPPDATA%\\X","target_subpath":"dev\\x","note":null},
+                {"name":"坏","category":"nonsense","source_template":"%LOCALAPPDATA%\\Y","target_subpath":"dev\\y","note":null}]"#,
+    )
+    .unwrap();
+    let (ok, skipped) = load_user_presets(&file);
+    assert_eq!(ok.len(), 1);
+    assert_eq!(ok[0].name, "好");
+    assert_eq!(skipped.len(), 1, "坏条目要有跳过原因：{skipped:?}");
+
+    // 整个文件语法坏 → 全部忽略，但不 panic
+    fs::write(&file, "{oops").unwrap();
+    let (ok, skipped) = load_user_presets(&file);
+    assert!(ok.is_empty());
+    assert_eq!(skipped.len(), 1);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn preset_rules_filters_by_existence() {
+    let out = preset_rules();
+    assert!(
+        out.iter().all(|v| v.exists),
+        "返回的预设必须全部存在：{:?}",
+        out.iter().filter(|v| !v.exists).map(|v| &v.name).collect::<Vec<_>>()
+    );
+    // %LOCALAPPDATA%\Temp 在任何 Windows 上都有 —— 至少「用户 TEMP」会在
+    assert!(
+        out.iter().any(|v| v.source_template == r"%LOCALAPPDATA%\Temp"),
+        "本机应至少命中「用户 TEMP」预设，实际命中 {} 条",
+        out.len()
+    );
+    // 每条预设都能直接走表单校验（预设→添加规则 这条链路不能断）
+    let env = setup("presets");
+    for v in &out {
+        let f = RuleForm {
+            name: v.name.clone(),
+            category: v.category.clone(),
+            source_template: v.source_template.clone(),
+            target_root_id: 1,
+            target_subpath: v.target_subpath.clone(),
+            link_type: "junction".into(),
+            want_enabled: true,
+            rebuild_on_boot: true,
+            notes: v.note.clone(),
+        };
+        validate_form(&f).unwrap_or_else(|e| panic!("预设 {} 没通过表单校验：{e}", v.name));
+    }
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+// -----------------------------------------------------------------------
+// 文件夹清理
+// -----------------------------------------------------------------------
+
+fn empty_policy() -> CleanPolicy {
+    CleanPolicy::Empty
+}
+
+#[test]
+fn clean_preview_counts_folder_contents() {
+    let env = setup("cleanprev");
+    let dir = env.base.join("toclean");
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(dir.join("a.bin"), b"12345").unwrap();
+    fs::write(dir.join("sub/b.bin"), b"678").unwrap();
+
+    let t = CleanTarget::Folder {
+        path: dir.to_string_lossy().into_owned(),
+    };
+    let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+    assert_eq!(pv.files, 2, "递归应数到子目录里的文件");
+    assert_eq!(pv.bytes, 8);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn clean_run_empty_removes_files_but_keeps_root() {
+    let env = setup("cleanrun");
+    let dir = env.base.join("toclean");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("a.bin"), b"12345").unwrap();
+
+    let t = CleanTarget::Folder {
+        path: dir.to_string_lossy().into_owned(),
+    };
+    let r = clean_run(&env.store, &t, &empty_policy(), false, &mut |_| {}).unwrap();
+    assert_eq!(r.deleted_files, 1);
+    assert!(dir.is_dir(), "清理后根目录必须保留");
+    assert!(!dir.join("a.bin").exists());
+    // 事件流水留痕（清理是破坏性操作，必须可回溯）
+    let evs = recent_events(&env.store, 10).unwrap();
+    assert!(evs.iter().any(|e| e.kind == "clean"), "清理要落事件流水");
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn clean_blocks_system_folders() {
+    let env = setup("cleanblock");
+    let t = CleanTarget::Folder {
+        path: r"C:\Windows".into(),
+    };
+    let err = clean_preview(&env.store, &t, &empty_policy()).unwrap_err();
+    assert!(matches!(err, TdError::SafetyBlocked(_)), "{err}");
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn clean_rule_target_resolves_to_source_when_unlinked() {
+    let env = setup("cleanrule");
+    // setup 造的 env.source 是普通目录，含 1 个 1024 字节的 a.bin；规则未链接 → 清源
+    let id = add_rule(&env.store, &form(&env, "清理我", "dev\\clean")).unwrap();
+    let t = CleanTarget::Rule { id };
+    let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+    assert_eq!(pv.files, 1);
+    assert_eq!(pv.bytes, 1024);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn clean_preview_on_missing_dir_is_empty_not_error() {
+    let env = setup("cleanmissing");
+    let t = CleanTarget::Folder {
+        path: env.base.join("never-existed").to_string_lossy().into_owned(),
+    };
+    let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+    assert_eq!(pv.files, 0, "清理一个还没内容的目录是常见的，不该报错");
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn disk_usage_scans_rule_dir_and_volumes() {
+    let env = setup("diskusage");
+    add_rule(&env.store, &form(&env, "缓存", "ram\\cache")).unwrap();
+    let mut seen_total = 0usize;
+    let view = disk_usage(&env.store, &mut |_i, total, _name| {
+        seen_total = total;
+    })
+    .unwrap();
+    assert_eq!(view.rule_count, 1);
+    assert_eq!(seen_total, 1, "应按规则条数回吐进度");
+    assert_eq!(view.rules.len(), 1);
+    // setup 里 source/a.bin 是 1024 字节的真实文件，未链接目录直接量源。
+    assert_eq!(view.rules[0].bytes, 1024);
+    assert_eq!(view.rules[0].files, 1);
+    assert!(view.rules[0].exists);
+    assert!(view.total_bytes >= 1024);
+    assert!(!view.volumes.is_empty(), "至少应统计到一个卷的容量");
+    assert!(view.volumes[0].total >= view.volumes[0].free);
+    let _ = fs::remove_dir_all(&env.base);
+}
