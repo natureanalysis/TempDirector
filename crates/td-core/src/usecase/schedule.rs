@@ -12,6 +12,7 @@
 //! 到点且当天没跑过才执行，**每自然日最多一次**（`scheduled_clean_last_run`
 //! 记本地日期）。默认关闭（破坏性操作必须显式 opt-in）。
 
+use crate::i18n::tf;
 use crate::store::Store;
 use crate::util;
 
@@ -86,7 +87,7 @@ pub(crate) fn scheduled_clean_at(
                 None,
                 "warn",
                 "scheduled_clean",
-                &format!("定时清理的时刻格式不对：{time:?}（应为 HH:MM），本次跳过"),
+                &tf("schedule.bad_time", &[("time", &time)]),
             )?;
             return Ok(v);
         }
@@ -109,10 +110,10 @@ pub(crate) fn scheduled_clean_at(
                 Some(rule.id),
                 "warn",
                 "scheduled_clean",
-                &format!(
-                    "规则「{}」的自动清理策略不合法：{:?}，已跳过（可用：empty / older:<秒>）",
-                    rule.name, rule.auto_clean_policy
-                ),
+                &tf("schedule.bad_rule_policy", &[
+                    ("name", &rule.name),
+                    ("s", &rule.auto_clean_policy),
+                ]),
             )?;
             continue;
         };
@@ -139,17 +140,16 @@ pub(crate) fn scheduled_clean_at(
             None,
             level,
             "scheduled_clean",
-            &format!(
-                "定时清理：{} 条预授权规则，删除 {} 个文件 / {}{}",
-                v.done + v.failed,
-                v.deleted_files,
-                v.deleted_text,
-                if v.failed > 0 {
-                    format!("，{} 条失败", v.failed)
+            &tf("schedule.log", &[
+                ("n", &(v.done + v.failed).to_string()),
+                ("files", &v.deleted_files.to_string()),
+                ("size", &v.deleted_text),
+                ("failed", &if v.failed > 0 {
+                    tf("schedule.failed_suffix", &[("n", &v.failed.to_string())])
                 } else {
                     String::new()
-                },
-            ),
+                }),
+            ]),
         )?;
     }
     Ok(v)

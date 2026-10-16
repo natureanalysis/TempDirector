@@ -16,6 +16,7 @@ use std::path::Path;
 use crate::error::{TdError, TdResult};
 use crate::fsops::clean::CleanPolicy;
 use crate::fsops::mover::volume_space;
+use crate::i18n::tf;
 use crate::store::Store;
 use crate::util;
 
@@ -36,13 +37,11 @@ const AUTO_CLEAN_COOLDOWN_SECS: i64 = 30 * 60;
 /// 校验预授权策略串：`''`（未启用）/ `empty` / `older:<正整数秒>`。
 /// 空串是合法值（未启用），只有「非空但解析不了」才报错。
 pub fn validate_auto_policy(s: &str) -> TdResult<()> {
-    let t = s.trim();
-    if t.is_empty() || parse_auto_policy(t).is_some() {
+    let trimmed = s.trim();
+    if trimmed.is_empty() || parse_auto_policy(trimmed).is_some() {
         Ok(())
     } else {
-        Err(TdError::InvalidPath(format!(
-            "水位自动清理策略不合法：{s:?}（可用：空 / empty / older:<秒>）"
-        )))
+        Err(TdError::InvalidPath(tf("water.invalid_policy", &[("s", s)])))
     }
 }
 
@@ -163,24 +162,30 @@ pub fn water_poll(store: &Store) -> TdResult<Vec<WaterLevel>> {
         let (ev_level, msg) = match lv.level.as_str() {
             "critical" => (
                 "error",
-                format!(
-                    "RAM 盘即将写满：{}（{}）已用 {:.1}%，仅剩 {}，写满会导致软件写缓存失败",
-                    lv.label, lv.path, lv.used_pct, lv.free_text
-                ),
+                tf("water.critical", &[
+                    ("label", &lv.label),
+                    ("path", &lv.path),
+                    ("pct", &format!("{:.1}", lv.used_pct)),
+                    ("free", &lv.free_text),
+                ]),
             ),
             "warn" => (
                 "warn",
-                format!(
-                    "RAM 盘水位偏高：{}（{}）已用 {:.1}%，剩余 {}",
-                    lv.label, lv.path, lv.used_pct, lv.free_text
-                ),
+                tf("water.warn", &[
+                    ("label", &lv.label),
+                    ("path", &lv.path),
+                    ("pct", &format!("{:.1}", lv.used_pct)),
+                    ("free", &lv.free_text),
+                ]),
             ),
             _ => (
                 "info",
-                format!(
-                    "水位恢复：{}（{}）已用 {:.1}%，剩余 {}",
-                    lv.label, lv.path, lv.used_pct, lv.free_text
-                ),
+                tf("water.recovered", &[
+                    ("label", &lv.label),
+                    ("path", &lv.path),
+                    ("pct", &format!("{:.1}", lv.used_pct)),
+                    ("free", &lv.free_text),
+                ]),
             ),
         };
         store.log_event(None, ev_level, "water", &msg)?;
@@ -238,10 +243,10 @@ fn run_auto_clean(store: &Store, levels: &[WaterLevel]) -> TdResult<()> {
                 Some(rule.id),
                 "warn",
                 "auto_clean",
-                &format!(
-                    "规则「{}」的水位自动清理策略不合法：{:?}，已跳过（可用：empty / older:<秒>）",
-                    rule.name, rule.auto_clean_policy
-                ),
+                &tf("water.bad_rule_policy", &[
+                    ("name", &rule.name),
+                    ("s", &rule.auto_clean_policy),
+                ]),
             )?;
             continue;
         };
@@ -267,12 +272,16 @@ fn run_auto_clean(store: &Store, levels: &[WaterLevel]) -> TdResult<()> {
             None,
             level,
             "auto_clean",
-            &format!(
-                "水位触线，自动清理 {done} 条预授权规则：删除 {} 个文件 / {}{}",
-                deleted_files,
-                util::human_bytes(deleted_bytes),
-                if failed > 0 { format!("，{failed} 条失败") } else { String::new() },
-            ),
+            &tf("water.auto_clean_log", &[
+                ("done", &done.to_string()),
+                ("files", &deleted_files.to_string()),
+                ("size", &util::human_bytes(deleted_bytes)),
+                ("failed", &if failed > 0 {
+                    tf("water.failed_suffix", &[("n", &failed.to_string())])
+                } else {
+                    String::new()
+                }),
+            ]),
         )?;
         store.set_setting(LAST_AUTO_CLEAN_KEY, &now.to_string())?;
     }
