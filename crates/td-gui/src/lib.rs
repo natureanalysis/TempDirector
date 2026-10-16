@@ -119,6 +119,8 @@ pub fn run() {
             commands::quit_app,
             commands::ui_settings,
             commands::set_close_to_tray,
+            commands::set_locale,
+            commands::get_locale,
             commands::scheduled_clean_poll,
             commands::scheduled_clean_settings,
             commands::set_scheduled_clean,

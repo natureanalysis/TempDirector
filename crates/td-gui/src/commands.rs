@@ -585,6 +585,21 @@ pub fn set_close_to_tray(state: State<'_, AppState>, enabled: bool) -> R<()> {
         .map_err(map_err)
 }
 
+/// 前端切换语言后写回内核全局语言状态（错误 / 提示文案随之换语言）。
+/// 无法识别的标签静默忽略，保留当前语言。
+#[tauri::command]
+pub fn set_locale(locale: String) {
+    if let Some(l) = td_core::i18n::Locale::parse(&locale) {
+        td_core::i18n::set_locale(l);
+    }
+}
+
+/// 读取内核当前语言标签（前端首屏对齐用）。
+#[tauri::command]
+pub fn get_locale() -> String {
+    td_core::i18n::locale().tag().to_string()
+}
+
 // ---------------------------------------------------------------------------
 // 定时（低峰期）自动清理
 // ---------------------------------------------------------------------------

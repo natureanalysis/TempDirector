@@ -121,6 +121,9 @@ input, select { font-family: inherit; font-size: 13px; }
   white-space: nowrap;
 }
 
+/* 语言切换下拉：与顶栏其他控件同高、不抢眼 */
+.lang-switch { font-size: 12px; padding: 4px 6px; border-radius: 8px; }
+
 /* ---------------- 按钮 ---------------- */
 
 .btn {

@@ -60,12 +60,12 @@ const state = {
   sort: { key: null, dir: 'asc' },
 };
 
-const CATEGORY_LABEL = {
-  browser: '浏览器', design: '设计', dev: '开发', system: '系统',
-  media: '影音', office: '办公', game: '游戏', other: '其他',
-};
-
-function categoryLabel(c) { return CATEGORY_LABEL[c] || c; }
+// 分类标签走 i18n（键 cat.<category>）；未收录的分类回退原始值。
+function categoryLabel(c) {
+  if (!c) return c;
+  const label = t('cat.' + c);
+  return label === 'cat.' + c ? c : label;
+}
 
 // ---------------------------------------------------------------------------
 // 小工具
@@ -99,22 +99,22 @@ function badgeClass(badge) {
  * 否则会出现「❌ 联接」这种自相矛盾的显示。 */
 function badgeSuffix(rule) {
   if (rule.badge === '✅' || rule.badge === '⚠️') {
-    return rule.link_type === 'symlink_dir' ? '符号链接' : '联接';
+    return rule.link_type === 'symlink_dir' ? t('badge.symlink') : t('badge.junction');
   }
-  if (rule.badge === '❌') return '未链接';
-  if (rule.badge === '🚫') return '外来';
-  return '未知';
+  if (rule.badge === '❌') return t('badge.unlinked');
+  if (rule.badge === '🚫') return t('badge.foreign');
+  return t('badge.unknown');
 }
 
 function toast(title, message, kind) {
   const box = document.createElement('div');
   box.className = 'toast ' + (kind || '');
-  const t = document.createElement('div');
-  t.className = 'toast-title';
-  t.textContent = title;
+  const titleEl = document.createElement('div');
+  titleEl.className = 'toast-title';
+  titleEl.textContent = title;
   const m = document.createElement('div');
   m.textContent = message || '';
-  box.appendChild(t);
+  box.appendChild(titleEl);
   if (message) box.appendChild(m);
   $('toasts').appendChild(box);
   setTimeout(function () { box.remove(); }, kind === 'error' ? 9000 : 4500);
@@ -123,9 +123,9 @@ function toast(title, message, kind) {
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
-    toast('已复制', text.length > 60 ? text.slice(0, 60) + '…' : text, 'ok');
+    toast(t('common.copied'), text.length > 60 ? text.slice(0, 60) + '…' : text, 'ok');
   } catch (e) {
-    toast('复制失败', '请手动选择文本复制', 'warn');
+    toast(t('common.copy_failed'), t('common.copy_manual'), 'warn');
   }
 }
 
@@ -143,7 +143,7 @@ async function refresh(keepFocus) {
     state.picked.forEach(function (id) { if (!ids.has(id)) state.picked.delete(id); });
     render();
   } catch (e) {
-    toast('读取状态失败', e.message, 'error');
+    toast(t('toast.load_failed'), e.message, 'error');
   }
 }
 
@@ -175,7 +175,7 @@ function renderBanners() {
     if (b.action === 'sweep') {
       const btn = document.createElement('button');
       btn.className = 'banner-action';
-      btn.textContent = '一键清理';
+      btn.textContent = t('banner.clean_now');
       btn.addEventListener('click', openBatchCleanDialog);
       d.appendChild(btn);
     }
@@ -188,20 +188,21 @@ function renderHeader() {
   const ready = roots.filter(function (r) { return r.state === 'ready'; });
   let sub;
   if (!roots.length) {
-    sub = '未配置目标根 —— 先到「设置」里添加 RAM 盘';
+    sub = t('header.no_root');
   } else {
     const first = ready[0] || roots[0];
-    const mark = first.state === 'ready' ? '就绪' : '不可用（' + first.message + '）';
-    sub = '目标根 ' + first.path + ' ' + mark;
+    const mark = first.state === 'ready'
+      ? t('header.root_ready')
+      : tf('header.root_unavailable', { msg: first.message });
+    sub = tf('header.root_prefix', { path: first.path, mark: mark });
     if (ready.length && first.message && first.state === 'ready') sub += ' · ' + first.message;
-    if (roots.length > 1) sub += ' · 共 ' + roots.length + ' 个目标根';
+    if (roots.length > 1) sub += tf('header.roots_more', { n: roots.length });
   }
   $('root-summary').textContent = sub;
 
   const s = state.snap.stats;
   $('stat-summary').textContent =
-    '共 ' + s.total + ' 条 · 已开启 ' + s.enabled +
-    ' · ✅ ' + s.ok + ' ⚠️ ' + s.warn + ' ❌ ' + s.plain +
+    tf('stat.summary', { total: s.total, enabled: s.enabled, ok: s.ok, warn: s.warn, plain: s.plain }) +
     (s.other ? ' ❔ ' + s.other : '');
 }
 
@@ -210,7 +211,7 @@ function renderFilterOptions() {
   if (sel.options.length === 0) {
     const all = document.createElement('option');
     all.value = '';
-    all.textContent = '全部分类';
+    all.textContent = t('filter.all_categories');
     sel.appendChild(all);
     (state.snap.categories || []).forEach(function (c) {
       const o = document.createElement('option');
@@ -298,16 +299,16 @@ function renderRows() {
   tbody.textContent = '';
 
   $('filter-summary').textContent =
-    '显示 ' + rows.length + ' / ' + (state.snap.rules || []).length + ' 条' +
-    (state.picked.size ? ' · 已勾选 ' + state.picked.size + ' 条' : '');
+    tf('filter.summary', { shown: rows.length, total: (state.snap.rules || []).length }) +
+    (state.picked.size ? tf('filter.summary_picked', { n: state.picked.size }) : '');
   syncSelectAll(rows);
 
   const empty = $('empty');
   if (!rows.length) {
     empty.classList.remove('hidden');
     empty.textContent = state.snap.rules.length
-      ? '没有符合筛选条件的规则'
-      : '还没有任何规则 —— 点左上角「＋ 添加规则」开始';
+      ? t('empty.no_match')
+      : t('empty.no_rules');
     return;
   }
   empty.classList.add('hidden');
@@ -324,7 +325,7 @@ function renderRows() {
     const handle = document.createElement('span');
     handle.className = 'drag-handle';
     handle.textContent = '⋮⋮';
-    handle.title = '拖动调整顺序（同一分类内）';
+    handle.title = t('row.drag_tip');
     tdCheck.appendChild(handle);
     const cb = document.createElement('input');
     cb.type = 'checkbox';
@@ -397,12 +398,12 @@ function renderRows() {
     const on = document.createElement('span');
     on.className = 'toggle ' + (r.want_enabled ? 'on' : 'off');
     on.textContent = r.want_enabled ? '●' : '○';
-    on.title = r.want_enabled ? '期望开启（参与「应用选中」）' : '期望关闭';
+    on.title = r.want_enabled ? t('row.expect_on') : t('row.expect_off');
     flags.appendChild(on);
     const bt = document.createElement('span');
     bt.className = 'toggle ' + (r.rebuild_on_boot ? 'on' : 'off');
     bt.textContent = r.rebuild_on_boot ? '⟳' : '·';
-    bt.title = r.rebuild_on_boot ? '开机自动重建目标目录' : '不参与开机重建';
+    bt.title = r.rebuild_on_boot ? t('row.rebuild_on') : t('row.rebuild_off');
     flags.appendChild(bt);
     tdFlags.appendChild(flags);
     tr.appendChild(tdFlags);
@@ -412,11 +413,11 @@ function renderRows() {
     const wrap = document.createElement('div');
     wrap.className = 'row-actions';
     [
-      { act: 'apply', label: '应用', primary: true, when: r.badge !== '✅' },
-      { act: 'restore', label: '恢复', when: r.badge === '✅' || r.badge === '⚠️' },
-      { act: 'relink', label: '重链', when: r.badge === '⚠️' || r.badge === '❌' },
-      { act: 'clean', label: '清理…', when: true },
-      { act: 'edit', label: '编辑', when: true },
+      { act: 'apply', label: t('row.act.apply'), primary: true, when: r.badge !== '✅' },
+      { act: 'restore', label: t('row.act.restore'), when: r.badge === '✅' || r.badge === '⚠️' },
+      { act: 'relink', label: t('row.act.relink'), when: r.badge === '⚠️' || r.badge === '❌' },
+      { act: 'clean', label: t('row.act.clean'), when: true },
+      { act: 'edit', label: t('row.act.edit'), when: true },
     ].forEach(function (b) {
       if (!b.when) return;
       const btn = document.createElement('button');
@@ -461,61 +462,61 @@ function renderDetail() {
   head.appendChild(cat);
   const chips = document.createElement('span');
   chips.className = 'chips';
-  if (rule.want_enabled) chips.appendChild(chip('期望开启'));
-  if (rule.rebuild_on_boot) chips.appendChild(chip('开机重建'));
-  if (rule.needs_elevation) chips.appendChild(chip('需要管理员权限'));
-  if (rule.has_acl) chips.appendChild(chip('已存权限模板'));
-  if (rule.last_files) chips.appendChild(chip(rule.last_files + ' 个文件 · ' + humanBytes(rule.last_bytes || 0)));
+  if (rule.want_enabled) chips.appendChild(chip(t('detail.chip.want_enabled')));
+  if (rule.rebuild_on_boot) chips.appendChild(chip(t('detail.chip.rebuild')));
+  if (rule.needs_elevation) chips.appendChild(chip(t('detail.chip.needs_elevation')));
+  if (rule.has_acl) chips.appendChild(chip(t('detail.chip.has_acl')));
+  if (rule.last_files) chips.appendChild(chip(tf('detail.chip.files', { n: rule.last_files, size: humanBytes(rule.last_bytes || 0) })));
   head.appendChild(chips);
   host.appendChild(head);
 
   const grid = document.createElement('div');
   grid.className = 'detail-grid';
-  addRow(grid, '状态', rule.label, true);
-  addRow(grid, '源路径模板', rule.source_template);
-  addRow(grid, '展开后', rule.source);
-  addRow(grid, '目标路径', rule.target);
-  addRow(grid, '链接类型', rule.link_type === 'symlink_dir' ? '目录符号链接（需要特权）' : '目录联接 Junction（免提权）');
-  if (rule.notes) addRow(grid, '备注', rule.notes, true);
+  addRow(grid, t('detail.key.status'), rule.label, true);
+  addRow(grid, t('detail.key.source_template'), rule.source_template);
+  addRow(grid, t('detail.key.expanded'), rule.source);
+  addRow(grid, t('detail.key.target'), rule.target);
+  addRow(grid, t('detail.key.link_type'), rule.link_type === 'symlink_dir' ? t('detail.link.symlink') : t('detail.link.junction'));
+  if (rule.notes) addRow(grid, t('detail.key.notes'), rule.notes, true);
   if (rule.excludes && rule.excludes.length) {
-    addRow(grid, '清理排除', rule.excludes.join('；'), true);
+    addRow(grid, t('detail.key.excludes'), rule.excludes.join(t('list.sep')), true);
   }
   if (rule.auto_clean_policy) {
-    addRow(grid, '水位自动清理', describeAutoPolicy(rule.auto_clean_policy), true);
+    addRow(grid, t('detail.key.auto_clean'), describeAutoPolicy(rule.auto_clean_policy), true);
   }
   if (rule.unknown_vars && rule.unknown_vars.length) {
-    addRow(grid, '未解析变量', rule.unknown_vars.join('、'), true);
+    addRow(grid, t('detail.key.unknown_vars'), rule.unknown_vars.join(t('list.sep')), true);
   }
   (rule.warnings || []).forEach(function (w, i) {
-    addRow(grid, i === 0 ? '警告' : '', w, true);
+    addRow(grid, i === 0 ? t('detail.key.warning') : '', w, true);
   });
-  if (rule.applied_at) addRow(grid, '上次应用', rule.applied_at, true);
+  if (rule.applied_at) addRow(grid, t('detail.key.applied_at'), rule.applied_at, true);
   host.appendChild(grid);
 
   const actions = document.createElement('div');
   actions.className = 'detail-actions';
   host.appendChild(actions);
-  actions.appendChild(mkBtn('应用（搬运 + 建链）', 'apply', rule.id, true));
+  actions.appendChild(mkBtn(t('detail.act.apply'), 'apply', rule.id, true));
   if (rule.needs_elevation && rule.badge !== '✅') {
-    actions.appendChild(mkBtn('以管理员身份应用', 'apply-elevated', rule.id));
+    actions.appendChild(mkBtn(t('detail.act.apply_elevated'), 'apply-elevated', rule.id));
   }
-  actions.appendChild(mkBtn('恢复（拆链 + 搬回）', 'restore', rule.id));
-  actions.appendChild(mkBtn('仅重建链接', 'relink', rule.id));
-  actions.appendChild(mkBtn('检测占用', 'locks', rule.id));
-  actions.appendChild(mkBtn('清理…', 'clean', rule.id));
-  actions.appendChild(mkBtn('复制源路径', 'copy-source', rule.id));
-  actions.appendChild(mkBtn('打开位置', 'reveal', rule.id));
-  actions.appendChild(mkBtn('编辑', 'edit', rule.id));
+  actions.appendChild(mkBtn(t('detail.act.restore'), 'restore', rule.id));
+  actions.appendChild(mkBtn(t('detail.act.relink'), 'relink', rule.id));
+  actions.appendChild(mkBtn(t('detail.act.locks'), 'locks', rule.id));
+  actions.appendChild(mkBtn(t('detail.act.clean'), 'clean', rule.id));
+  actions.appendChild(mkBtn(t('detail.act.copy_source'), 'copy-source', rule.id));
+  actions.appendChild(mkBtn(t('detail.act.reveal'), 'reveal', rule.id));
+  actions.appendChild(mkBtn(t('detail.act.edit'), 'edit', rule.id));
 }
 
 function describeAutoPolicy(p) {
-  if (p === 'empty') return '水位到严重线时清空全部';
+  if (p === 'empty') return t('detail.auto.empty');
   const m = /older:(\d+)/.exec(p);
   if (m) {
     const secs = Number(m[1]);
-    if (secs % 86400 === 0) return '水位到严重线时清空早于 ' + (secs / 86400) + ' 天修改的';
-    if (secs % 3600 === 0) return '水位到严重线时清空早于 ' + (secs / 3600) + ' 小时修改的';
-    return '水位到严重线时清空早于 ' + secs + ' 秒修改的';
+    if (secs % 86400 === 0) return tf('detail.auto.days', { n: secs / 86400 });
+    if (secs % 3600 === 0) return tf('detail.auto.hours', { n: secs / 3600 });
+    return tf('detail.auto.secs', { n: secs });
   }
   return p;
 }
@@ -598,10 +599,10 @@ function askChoice(opts) {
     modalResolver = finish;
 
     const body = document.createElement('div');
-    (opts.lines || []).forEach(function (t) {
+    (opts.lines || []).forEach(function (line) {
       const p = document.createElement('div');
-      p.className = t.kind ? 'hint ' + t.kind : 'field';
-      p.textContent = t.text;
+      p.className = line.kind ? 'hint ' + line.kind : 'field';
+      p.textContent = line.text;
       body.appendChild(p);
     });
     openModal({
@@ -644,7 +645,7 @@ function pickedIds() { return Array.from(state.picked); }
 
 function requirePicked(what) {
   if (!state.picked.size) {
-    toast('没有选中规则', '先用左侧复选框勾选要' + what + '的规则', 'warn');
+    toast(t('toast.no_pick'), tf('toast.no_pick_hint', { what: what }), 'warn');
     return false;
   }
   return true;
@@ -995,16 +996,16 @@ async function loadSavings(strip) {
 function savingCard(title, value, sub) {
   const card = document.createElement('div');
   card.className = 'saving-card';
-  const t = document.createElement('div');
-  t.className = 'saving-title';
-  t.textContent = title;
+  const titleEl = document.createElement('div');
+  titleEl.className = 'saving-title';
+  titleEl.textContent = title;
   const v = document.createElement('div');
   v.className = 'saving-value';
   v.textContent = value;
   const s = document.createElement('div');
   s.className = 'saving-sub';
   s.textContent = sub;
-  card.appendChild(t);
+  card.appendChild(titleEl);
   card.appendChild(v);
   card.appendChild(s);
   return card;
@@ -1013,16 +1014,16 @@ function savingCard(title, value, sub) {
 function logRow(time, kind, msg, level) {
   const row = document.createElement('div');
   row.className = 'log-item ' + (level === 'error' ? 'error' : level === 'warn' ? 'warn' : '');
-  const t = document.createElement('div');
-  t.className = 'log-time';
-  t.textContent = time;
+  const timeEl = document.createElement('div');
+  timeEl.className = 'log-time';
+  timeEl.textContent = time;
   const k = document.createElement('div');
   k.className = 'log-kind';
   k.textContent = kind;
   const m = document.createElement('div');
   m.className = 'log-msg';
   m.textContent = msg;
-  row.appendChild(t);
+  row.appendChild(timeEl);
   row.appendChild(k);
   row.appendChild(m);
   return row;
@@ -2596,12 +2597,12 @@ function createMockBackend() {
             { name: '微信网页缓存', category: 'office', source_template: '%APPDATA%\\Tencent\\xwechat\\radium\\web', target_subpath: 'office\\wechat-radium-web', note: '只迁这个子目录；整个 xwechat 里有聊天记录，切勿整体迁移', source: 'C:\\Users\\me\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web', exists: true },
           ]);
         case 'clean_preview': {
-          const t = args.target || {};
+          const tgt = args.target || {};
           return Promise.resolve({
-            dir: t.kind === 'folder' ? t.path : 'R:\\dev\\vscode-cache',
+            dir: tgt.kind === 'folder' ? tgt.path : 'R:\\dev\\vscode-cache',
             label: '（模拟）VS Code 缓存',
             files: 1280, bytes: 536870912, bytes_text: '512.0 MB', links_skipped: 0,
-            excluded_skipped: t.kind === 'rule' ? 12 : 0,
+            excluded_skipped: tgt.kind === 'rule' ? 12 : 0,
             sample: [
               { path: 'Cache\\f1', bytes: 1048576, mtime: Math.floor(Date.now() / 1000) - 86400 * 3 },
               { path: 'Cache\\f2', bytes: 2097152, mtime: Math.floor(Date.now() / 1000) - 3600 * 5 },
@@ -2739,14 +2740,19 @@ function createMockBackend() {
         case 'scheduled_clean_settings':
           return Promise.resolve({ enabled: mockSched.enabled, time: mockSched.time });
         case 'set_scheduled_clean': {
-          const t = (args.time || '').trim();
-          if (!/^\d{2}:\d{2}$/.test(t)) return Promise.reject(new Error('时刻格式应为 HH:MM（如 03:00）'));
-          mockSched = { enabled: !!args.enabled, time: t };
+          const tm = (args.time || '').trim();
+          if (!/^\d{2}:\d{2}$/.test(tm)) return Promise.reject(new Error(t('toast.bad_time_format')));
+          mockSched = { enabled: !!args.enabled, time: tm };
           return Promise.resolve(null);
         }
         case 'scheduled_clean_poll':
           // mock 永远"未到点"（避免预览界面真的删东西的错觉）
           return Promise.resolve({ ran: false, done: 0, failed: 0, skipped: 0, deleted_files: 0, deleted_bytes: 0, deleted_text: '0 B' });
+        case 'set_locale':
+          try { localStorage.setItem(LOCALE_KEY, args.locale); } catch (e) { /* 忽略 */ }
+          return Promise.resolve(null);
+        case 'get_locale':
+          return Promise.resolve(getLang());
         default: return Promise.reject(new Error('mock 未实现命令：' + name));
       }
     },
@@ -2765,13 +2771,31 @@ function simulateProgress(total) {
 }
 
 // ---------------------------------------------------------------------------
+// 语言切换
+// ---------------------------------------------------------------------------
+
+// 下拉框初值取自 i18n（localStorage / 系统语言）；切换时通知后端并整体重渲染。
+(function initLang() {
+  const sel = $('lang-switch');
+  if (sel) {
+    sel.value = getLang();
+    sel.addEventListener('change', function () { setLang(sel.value); });
+  }
+  window.addEventListener('td-lang-change', function (ev) {
+    const lang = ev.detail.lang;
+    invoke('set_locale', { locale: lang }).catch(function () { /* mock 或旧后端可忽略 */ });
+    if (state.snap) render();
+  });
+})();
+
+// ---------------------------------------------------------------------------
 // 启动
 // ---------------------------------------------------------------------------
 
 (async function boot() {
   await refresh(false);
   if (PARAMS.has('progress')) {
-    showProgress('正在处理 3 条规则…');
+    showProgress(t('mock.progress_title'));
     setProgress(46, '#2/3 Edge 缓存 · 已复制 12800 个文件 / 512.4 MB');
   }
   if (PARAMS.has('modal')) {
