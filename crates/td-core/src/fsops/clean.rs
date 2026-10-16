@@ -118,9 +118,12 @@ impl CleanPlan {
 
     pub fn summary(&self) -> String {
         if self.is_empty() {
-            return "没有符合条件的文件".to_string();
+            return crate::i18n::t("clean.stats.empty").to_string();
         }
-        format!("{} 个文件 / {}", self.files, util::human_bytes(self.bytes))
+        crate::i18n::tf("clean.stats.count", &[
+            ("n", &self.files.to_string()),
+            ("size", &util::human_bytes(self.bytes)),
+        ])
     }
 }
 
@@ -141,26 +144,24 @@ pub struct CleanReport {
 
 impl CleanReport {
     pub fn summary(&self) -> String {
-        let mut s = format!(
-            "已删除 {} 个文件 / {}",
-            self.deleted_files,
-            util::human_bytes(self.deleted_bytes)
-        );
+        let mut s = crate::i18n::tf("clean.report.deleted", &[
+            ("n", &self.deleted_files.to_string()),
+            ("size", &util::human_bytes(self.deleted_bytes)),
+        ]);
         if self.dirs_pruned > 0 {
-            s += &format!("，剪除 {} 个空目录", self.dirs_pruned);
+            s += &crate::i18n::tf("clean.report.pruned", &[("n", &self.dirs_pruned.to_string())]);
         }
         if self.links_skipped > 0 {
-            s += &format!("；{} 个链接未触碰", self.links_skipped);
+            s += &crate::i18n::tf("clean.report.links", &[("n", &self.links_skipped.to_string())]);
         }
         if self.excluded_skipped > 0 {
-            s += &format!("；{} 个条目按排除规则保留", self.excluded_skipped);
+            s += &crate::i18n::tf("clean.report.excluded", &[("n", &self.excluded_skipped.to_string())]);
         }
         if self.skipped > 0 {
-            s += &format!(
-                "；{} 个文件被占用或无权限已跳过（例如：{}）",
-                self.skipped,
-                self.skip_examples.join("；")
-            );
+            s += &crate::i18n::tf("clean.report.skipped", &[
+                ("n", &self.skipped.to_string()),
+                ("examples", &self.skip_examples.join("；")),
+            ]);
         }
         s
     }

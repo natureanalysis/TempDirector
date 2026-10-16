@@ -53,17 +53,17 @@ pub struct TreeStats {
 
 impl TreeStats {
     pub fn summary(&self) -> String {
-        format!(
-            "{} 个文件 / {} / {} 个子目录{}",
-            self.files,
-            util::human_bytes(self.bytes),
-            self.dirs,
-            if self.links > 0 {
-                format!(" / {} 个链接", self.links)
-            } else {
-                String::new()
-            }
-        )
+        let links = if self.links > 0 {
+            crate::i18n::tf("tree.links", &[("n", &self.links.to_string())])
+        } else {
+            String::new()
+        };
+        crate::i18n::tf("tree.summary", &[
+            ("files", &self.files.to_string()),
+            ("size", &util::human_bytes(self.bytes)),
+            ("dirs", &self.dirs.to_string()),
+            ("links", &links),
+        ])
     }
 }
 

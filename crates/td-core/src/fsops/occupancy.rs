@@ -87,9 +87,9 @@ impl Blocker {
     /// 给用户看的文案。
     pub fn describe(&self) -> String {
         if self.is_service {
-            format!("{}（服务，PID {}）", self.app, self.pid)
+            crate::i18n::tf("blocker.service", &[("app", &self.app), ("pid", &self.pid.to_string())])
         } else {
-            format!("{}（PID {}）", self.app, self.pid)
+            crate::i18n::tf("blocker.process", &[("app", &self.app), ("pid", &self.pid.to_string())])
         }
     }
 }
@@ -116,10 +116,10 @@ impl LockReport {
     /// 给用户看的一句话结论。
     pub fn summary(&self) -> String {
         if self.is_clear() {
-            return format!("未发现占用（已扫描 {} 个文件）", self.scanned);
+            return crate::i18n::tf("lock.clear", &[("n", &self.scanned.to_string())]);
         }
         let who = if self.blockers.is_empty() {
-            "无法确定具体进程".to_string()
+            crate::i18n::t("lock.unknown").to_string()
         } else {
             self.blockers
                 .iter()
@@ -127,16 +127,16 @@ impl LockReport {
                 .collect::<Vec<_>>()
                 .join("、")
         };
-        let mut s = format!(
-            "{} 个文件被占用{}，占用者：{who}",
-            self.locked_files.len(),
-            if self.truncated { "（已截断）" } else { "" }
-        );
+        let trunc = if self.truncated { crate::i18n::t("lock.truncated") } else { "" };
+        let mut s = crate::i18n::tf("lock.locked", &[
+            ("n", &self.locked_files.len().to_string()),
+            ("trunc", trunc),
+            ("who", &who),
+        ]);
         if !self.denied_files.is_empty() {
-            s.push_str(&format!(
-                "；另有 {} 个文件无权限访问，需要以管理员身份重试",
-                self.denied_files.len()
-            ));
+            s.push_str(&crate::i18n::tf("lock.denied", &[
+                ("n", &self.denied_files.len().to_string()),
+            ]));
         }
         s
     }

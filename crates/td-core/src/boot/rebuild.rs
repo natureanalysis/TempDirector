@@ -66,19 +66,18 @@ impl BootReport {
     }
 
     pub fn one_line(&self) -> String {
-        format!(
-            "目标卷 {}/{} 就绪；规则 {} 条：新建目录 {}，链接自动恢复 {}，链接重建 {}，本就正常 {}，告警 {}，失败 {}（耗时 {}）",
-            self.roots.iter().filter(|r| r.ready).count(),
-            self.roots.len(),
-            self.rules_total,
-            self.dirs_created,
-            self.links_recovered,
-            self.links_repaired,
-            self.already_ok,
-            self.warnings.len(),
-            self.failed.len(),
-            crate::util::human_dur_ms(self.elapsed_ms)
-        )
+        crate::i18n::tf("boot.one_line", &[
+            ("ready", &self.roots.iter().filter(|r| r.ready).count().to_string()),
+            ("total", &self.roots.len().to_string()),
+            ("rules", &self.rules_total.to_string()),
+            ("dirs", &self.dirs_created.to_string()),
+            ("recovered", &self.links_recovered.to_string()),
+            ("repaired", &self.links_repaired.to_string()),
+            ("ok", &self.already_ok.to_string()),
+            ("warn", &self.warnings.len().to_string()),
+            ("failed", &self.failed.len().to_string()),
+            ("ms", &crate::util::human_dur_ms(self.elapsed_ms)),
+        ])
     }
 }
 
