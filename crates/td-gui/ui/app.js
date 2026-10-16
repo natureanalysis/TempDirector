@@ -55,6 +55,9 @@ const state = {
   filters: { q: '', category: '', onlyEnabled: false, onlyAttention: false },
   busy: false,
   drag: null,
+  // 表头点击排序：key=null 表示用后端返回顺序（category, sort_order, id）。
+  // 客户端排序只影响展示，不写库 —— 拖拽排序（sort_order）才是持久顺序。
+  sort: { key: null, dir: 'asc' },
 };
 
 const CATEGORY_LABEL = {
@@ -154,6 +157,7 @@ function render() {
   renderFilterOptions();
   renderRows();
   renderDetail();
+  renderSortIndicators();
 }
 
 function renderBanners() {
@@ -221,7 +225,7 @@ function renderFilterOptions() {
 function filteredRules() {
   const f = state.filters;
   const q = f.q.trim().toLowerCase();
-  return (state.snap.rules || []).filter(function (r) {
+  const rows = (state.snap.rules || []).filter(function (r) {
     if (f.category && r.category !== f.category) return false;
     if (f.onlyEnabled && !r.want_enabled) return false;
     if (f.onlyAttention && !r.needs_attention) return false;
@@ -230,6 +234,47 @@ function filteredRules() {
       if (hay.indexOf(q) < 0) return false;
     }
     return true;
+  });
+  return sortRows(rows);
+}
+
+/** 表头点击排序：客户端、不写库（持久顺序靠拖拽 sort_order）。
+ *  key=null 时原样返回（保持后端顺序）。badge 按"好→坏"排，旗标按
+ *  期望开启优先、再按开机重建。 */
+function sortRows(rows) {
+  const s = state.sort;
+  if (!s.key) return rows;
+  const dir = s.dir === 'desc' ? -1 : 1;
+  const badgeRank = { '✅': 0, '⚠️': 1, '❌': 2, '🚫': 3 };
+  const val = function (r) {
+    switch (s.key) {
+      case 'badge': return badgeRank[r.badge] !== undefined ? badgeRank[r.badge] : 9;
+      case 'name': return r.name || '';
+      case 'category': return r.category || '';
+      case 'source': return r.source || '';
+      case 'target': return r.target || '';
+      case 'flag': return (r.want_enabled ? 0 : 1) + ',' + (r.rebuild_on_boot ? 0 : 1);
+      default: return '';
+    }
+  };
+  return rows.slice().sort(function (a, b) {
+    const va = val(a), vb = val(b);
+    if (va < vb) return -dir;
+    if (va > vb) return dir;
+    return 0;
+  });
+}
+
+/** 在当前排序列表头显示 ↑/↓，其余列清掉。表头是静态 HTML，每次 render 重画指示。 */
+function renderSortIndicators() {
+  document.querySelectorAll('th[data-sort]').forEach(function (th) {
+    const old = th.querySelector('.sort-ind');
+    if (old) old.remove();
+    if (th.dataset.sort !== state.sort.key) return;
+    const ind = document.createElement('span');
+    ind.className = 'sort-ind';
+    ind.textContent = state.sort.dir === 'desc' ? ' ↓' : ' ↑';
+    th.appendChild(ind);
   });
 }
 
@@ -393,11 +438,11 @@ function renderDetail() {
   const host = $('detail');
   const rule = (state.snap.rules || []).find(function (r) { return r.id === state.focusId; });
   if (!rule) {
-    // 只收起、不清空内容：滑出动画期间还要有东西可看，下次打开时再重建。
-    host.classList.remove('open');
+    host.classList.add('hidden');
+    host.textContent = '';
     return;
   }
-  host.classList.add('open');
+  host.classList.remove('hidden');
   host.textContent = '';
 
   const head = document.createElement('div');
@@ -422,18 +467,6 @@ function renderDetail() {
   if (rule.has_acl) chips.appendChild(chip('已存权限模板'));
   if (rule.last_files) chips.appendChild(chip(rule.last_files + ' 个文件 · ' + humanBytes(rule.last_bytes || 0)));
   head.appendChild(chips);
-  // 关闭按钮必须最后 append：`.detail-close { margin-left: auto }` 靠"最后一个
-  // 弹性项"把它顶到最右，若它后面还有 chips，chips 会被挤到它右边。
-  const close = document.createElement('button');
-  close.className = 'icon-btn detail-close';
-  close.textContent = '✕';
-  close.title = '关闭详情（Esc）';
-  close.addEventListener('click', function () {
-    state.focusId = null;
-    renderDetail();
-    renderRows();
-  });
-  head.appendChild(close);
   host.appendChild(head);
 
   const grid = document.createElement('div');
@@ -2152,6 +2185,19 @@ document.addEventListener('click', async function (ev) {
 
   const el = ev.target;
   const closest = el.closest ? el.closest.bind(el) : function () { return null; };
+  // 表头点击排序（th[data-sort]）：同列切换升降序，新列默认升序。
+  const sortTh = closest('th[data-sort]');
+  if (sortTh) {
+    const key = sortTh.dataset.sort;
+    if (state.sort.key === key) {
+      state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sort = { key: key, dir: 'asc' };
+    }
+    renderRows();
+    renderSortIndicators();
+    return;
+  }
   // 「更多」菜单：点菜单外任意处收起；点「更多」切换；点菜单项后收起再走下面的分支。
   if (!closest('.more-wrap')) hideMoreMenu();
   if (el.id === 'btn-more') { toggleMoreMenu(); return; }
@@ -2261,7 +2307,7 @@ document.addEventListener('keydown', function (ev) {
     // 弹窗优先于详情：弹窗开着时 Esc 只关弹窗，不顺手把详情也收掉。
     if (!$('modal').classList.contains('hidden')) {
       closeModal();
-    } else if ($('detail').classList.contains('open')) {
+    } else if (!$('detail').classList.contains('hidden')) {
       state.focusId = null;
       renderDetail();
       renderRows();

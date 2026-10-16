@@ -65,12 +65,12 @@
       <thead>
         <tr>
           <th class="col-check"><input type="checkbox" id="sel-all-head" title="全选 / 取消全选当前结果"></th>
-          <th class="col-badge">状态</th>
-          <th class="col-name">名称</th>
-          <th class="col-cat">分类</th>
-          <th class="col-source">源路径</th>
-          <th class="col-target">目标（RAM 盘）</th>
-          <th class="col-flag" title="左：期望开启（● 开 / ○ 关）；右：开机自动重建（⟳ 参与）">旗标</th>
+          <th class="col-badge" data-sort="badge">状态</th>
+          <th class="col-name" data-sort="name">名称</th>
+          <th class="col-cat" data-sort="category">分类</th>
+          <th class="col-source" data-sort="source">源路径</th>
+          <th class="col-target" data-sort="target">目标（RAM 盘）</th>
+          <th class="col-flag" data-sort="flag" title="左：期望开启（● 开 / ○ 关）；右：开机自动重建（⟳ 参与）">旗标</th>
           <th class="col-actions"></th>
         </tr>
       </thead>
@@ -79,7 +79,7 @@
     <div id="empty" class="empty hidden"></div>
   </main>
 
-  <section id="detail" class="detail"></section>
+  <section id="detail" class="detail hidden"></section>
 
   <div id="progress" class="progress hidden">
     <div class="progress-inner">

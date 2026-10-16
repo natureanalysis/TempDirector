@@ -248,6 +248,10 @@ table.rules thead th {
   padding: 8px 10px;
   white-space: nowrap;
 }
+/* 可排序表头：点击切换升降序，当前列显示 ↑/↓ */
+table.rules thead th[data-sort] { cursor: pointer; user-select: none; }
+table.rules thead th[data-sort]:hover { color: var(--ink); }
+.sort-ind { color: var(--brand); font-weight: 700; }
 
 table.rules td {
   border-bottom: 1px solid var(--line);
@@ -327,29 +331,17 @@ table.rules tbody tr.picked { background: #eef4ff; box-shadow: inset 3px 0 0 var
 .empty { padding: 48px 16px; text-align: center; color: var(--muted); }
 .hidden { display: none !important; }
 
-/* ---------------- 详情面板（右侧滑出 drawer） ----------------
-   为什么不用常驻底部面板：点一行展开时会把表格整体上推，视线要重新定位；
-   滑出式保持表格位置稳定 —— 表格才是主场景。关闭态平移出屏幕外（不占位、
-   不拦截点击），打开态滑入。 */
+/* ---------------- 详情面板（表格下方常驻区块） ----------------
+   点一行在表格下方展开详情；空时整块 hidden 不占位。 */
 
 .detail {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 460px;
-  max-width: 94vw;
-  background: var(--card);
-  border-left: 1px solid var(--line-strong);
-  box-shadow: -14px 0 34px rgba(15, 23, 42, .13);
-  padding: 14px 16px 20px;
-  overflow-y: auto;
-  z-index: 60;
-  transform: translateX(100%);
-  transition: transform .18s ease;
+  flex: none;
+  border-top: 1px solid var(--line-strong);
+  background: #fbfdff;
+  padding: 12px 16px;
+  max-height: 240px;
+  overflow: auto;
 }
-.detail.open { transform: translateX(0); }
-.detail-close { margin-left: auto; }
 .detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .detail-title { font-size: 14px; font-weight: 600; }
 .detail-grid { display: grid; grid-template-columns: 88px 1fr; gap: 6px 12px; align-items: start; }
