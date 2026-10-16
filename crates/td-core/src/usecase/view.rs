@@ -359,6 +359,21 @@ pub struct WaterLevel {
     pub message: String,
 }
 
+/// 定时清理一次巡检的结果（「未到点 / 未启用」时是全零 + `ran=false`）。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ScheduledCleanView {
+    /// 本次是否真的执行了清理（到点且当天首次）。
+    pub ran: bool,
+    /// 成功执行的规则数。
+    pub done: usize,
+    pub failed: usize,
+    /// 配了策略但策略不合法、被跳过的规则数。
+    pub skipped: usize,
+    pub deleted_files: u64,
+    pub deleted_bytes: u64,
+    pub deleted_text: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AutostartView {
     pub registered: bool,

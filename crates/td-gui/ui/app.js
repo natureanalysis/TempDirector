@@ -995,6 +995,48 @@ async function openSettings() {
   closeField.appendChild(closeHint);
   body.appendChild(closeField);
 
+  // ---- 定时（低峰期）自动清理 ----
+  // 例行维护：每天到点把所有配了预授权策略（auto_clean_policy）的规则清一遍，
+  // 让缓存别攒到触发水位。与水位自动清理共用同一套规则级授权，默认关闭。
+  const schedField = document.createElement('div');
+  schedField.className = 'field';
+  const schedLabel = document.createElement('label');
+  schedLabel.textContent = '定时自动清理';
+  schedField.appendChild(schedLabel);
+  let sched = { enabled: false, time: '03:00' };
+  try { sched = await invoke('scheduled_clean_settings', {}); } catch (e) { /* 默认值 */ }
+  const schedInline = document.createElement('label');
+  schedInline.className = 'inline-check';
+  const schedCheck = document.createElement('input');
+  schedCheck.type = 'checkbox';
+  schedCheck.checked = sched.enabled;
+  schedInline.appendChild(schedCheck);
+  const schedSpan = document.createElement('span');
+  schedSpan.textContent = '每天低峰期自动清理预授权规则';
+  schedInline.appendChild(schedSpan);
+  const schedTime = document.createElement('input');
+  schedTime.type = 'time';
+  schedTime.value = sched.time || '03:00';
+  schedInline.appendChild(schedTime);
+  async function saveSched() {
+    try {
+      await invoke('set_scheduled_clean', { enabled: schedCheck.checked, time: schedTime.value || '03:00' });
+      toast('已保存', schedCheck.checked
+        ? ('每天 ' + (schedTime.value || '03:00') + ' 自动清理预授权规则')
+        : '已关闭定时自动清理', 'ok');
+    } catch (e) {
+      toast('保存失败', e.message, 'error');
+    }
+  }
+  schedCheck.addEventListener('change', saveSched);
+  schedTime.addEventListener('change', saveSched);
+  schedField.appendChild(schedInline);
+  const schedHint = document.createElement('div');
+  schedHint.className = 'hint';
+  schedHint.textContent = '只清理每条规则里配置过「自动清理策略」的目录（未授权的绝不动）。程序需常驻（托盘）才会按时执行。';
+  schedField.appendChild(schedHint);
+  body.appendChild(schedField);
+
   const rootField = document.createElement('div');
   rootField.className = 'field';
   const rootLabel = document.createElement('label');
@@ -2306,6 +2348,7 @@ function createMockBackend() {
   }
 
   let mockCloseToTray = true;
+  let mockSched = { enabled: false, time: '03:00' };
 
   function stats() {
     const s = { total: rules.length, enabled: 0, ok: 0, warn: 0, plain: 0, other: 0, needs_attention: 0 };
@@ -2591,6 +2634,17 @@ function createMockBackend() {
         case 'set_close_to_tray':
           mockCloseToTray = !!args.enabled;
           return Promise.resolve(null);
+        case 'scheduled_clean_settings':
+          return Promise.resolve({ enabled: mockSched.enabled, time: mockSched.time });
+        case 'set_scheduled_clean': {
+          const t = (args.time || '').trim();
+          if (!/^\d{2}:\d{2}$/.test(t)) return Promise.reject(new Error('时刻格式应为 HH:MM（如 03:00）'));
+          mockSched = { enabled: !!args.enabled, time: t };
+          return Promise.resolve(null);
+        }
+        case 'scheduled_clean_poll':
+          // mock 永远"未到点"（避免预览界面真的删东西的错觉）
+          return Promise.resolve({ ran: false, done: 0, failed: 0, skipped: 0, deleted_files: 0, deleted_bytes: 0, deleted_text: '0 B' });
         default: return Promise.reject(new Error('mock 未实现命令：' + name));
       }
     },
@@ -2636,12 +2690,16 @@ function simulateProgress(total) {
 
   // RAM 盘水位巡检（60s）：级别变化才落事件（后端去抖）；
   // 发现 warn/critical 顺带刷新快照，让概览横幅及时出现。
+  // 定时（低峰期）清理与水位同节拍巡检：到点且当天没跑过才执行（后端判定），
+  // 真的删了文件时由 Rust 侧发系统通知，这里只需在执行后刷新快照。
   setInterval(async function () {
     try {
       const levels = await invoke('water_poll', {});
       if (levels.some(function (w) { return w.level === 'warn' || w.level === 'critical'; })) {
         await refresh(true);
       }
+      const sc = await invoke('scheduled_clean_poll', {});
+      if (sc.ran) await refresh(true);
     } catch (e) { /* 巡检失败静默，下轮再试 */ }
   }, 60000);
 })();

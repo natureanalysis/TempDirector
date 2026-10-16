@@ -586,6 +586,86 @@ pub fn set_close_to_tray(state: State<'_, AppState>, enabled: bool) -> R<()> {
 }
 
 // ---------------------------------------------------------------------------
+// 定时（低峰期）自动清理
+// ---------------------------------------------------------------------------
+
+/// 定时清理巡检（前端 60s 定时器与水位巡检同节拍调用）。
+/// 真的执行了才通知：删了文件说"完成"，有失败说"有失败" ——
+/// 破坏性动作不能悄悄发生（与水位自动清理的通知原则一致）。
+#[tauri::command]
+pub fn scheduled_clean_poll(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> R<api::ScheduledCleanView> {
+    let v = {
+        let store = lock_store(&state)?;
+        api::scheduled_clean_poll(&store).map_err(map_err)?
+    };
+    if v.ran && (v.deleted_files > 0 || v.failed > 0) {
+        let (title, msg) = if v.failed > 0 {
+            (
+                "定时自动清理有失败",
+                format!(
+                    "{} 条预授权规则执行失败（详见运维日志），本次共删除 {} 个文件 / {}",
+                    v.failed, v.deleted_files, v.deleted_text
+                ),
+            )
+        } else {
+            (
+                "定时自动清理完成",
+                format!(
+                    "低峰期例行清理 {} 条预授权规则：删除 {} 个文件 / {}",
+                    v.done, v.deleted_files, v.deleted_text
+                ),
+            )
+        };
+        notify::notify(&app, title, &msg);
+    }
+    Ok(v)
+}
+
+/// 定时清理设置（设置弹窗读）。
+#[derive(serde::Serialize)]
+pub struct ScheduledCleanSettings {
+    pub enabled: bool,
+    /// "HH:MM"（缺省 03:00）。
+    pub time: String,
+}
+
+#[tauri::command]
+pub fn scheduled_clean_settings(state: State<'_, AppState>) -> R<ScheduledCleanSettings> {
+    let store = lock_store(&state)?;
+    let enabled = store
+        .get_setting(api::schedule::KEY_ENABLED)
+        .ok()
+        .flatten()
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
+    let time = store
+        .get_setting(api::schedule::KEY_TIME)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| api::schedule::DEFAULT_TIME.to_string());
+    Ok(ScheduledCleanSettings { enabled, time })
+}
+
+#[tauri::command]
+pub fn set_scheduled_clean(state: State<'_, AppState>, enabled: bool, time: String) -> R<()> {
+    let t = time.trim();
+    if api::schedule::parse_hhmm(t).is_none() {
+        return Err(format!("时刻格式应为 HH:MM（如 03:00），收到：{t:?}"));
+    }
+    let store = lock_store(&state)?;
+    store
+        .set_setting(api::schedule::KEY_ENABLED, if enabled { "1" } else { "0" })
+        .map_err(map_err)?;
+    store
+        .set_setting(api::schedule::KEY_TIME, t)
+        .map_err(map_err)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // 开机自启 / 提权（M3）
 // ---------------------------------------------------------------------------
 

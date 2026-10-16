@@ -432,6 +432,16 @@ table.rules tbody tr.picked { background: #eef4ff; box-shadow: inset 3px 0 0 var
 .field-row { display: flex; gap: 10px; align-items: flex-end; }
 .field-row .field { flex: 1; }
 .inline-check { display: flex; align-items: center; gap: 6px; color: var(--ink-2); margin-bottom: 10px; }
+/* 定时清理的时刻输入（跟在开关文案后，紧凑不占整行） */
+.inline-check input[type="time"] {
+  width: 92px;
+  padding: 3px 8px;
+  margin-left: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--card);
+}
 
 /* 运维日志 */
 .log-tabs { display: flex; gap: 6px; margin-bottom: 12px; }

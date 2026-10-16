@@ -770,3 +770,66 @@ fn reorder_rules_rejects_cross_category_duplicate_and_partial() {
     assert_eq!(ids_in_order(&env.store, "dev"), vec![a, b]);
     let _ = fs::remove_dir_all(&env.base);
 }
+// ---------------------------------------------------------------------------
+// 定时清理（schedule.rs）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scheduled_clean_runs_once_per_day_at_configured_time() {
+    let env = setup("sched");
+    // 规则 A（预授权 empty）与规则 B（未授权）用不同源目录 —— 与水位自动清理
+    // 测试同一套装置思路：未授权规则绝不能被动到。
+    let mut fa = form(&env, "预授权A", "dev\\sched-a");
+    fa.auto_clean_policy = "empty".into();
+    let _id_a = add_rule(&env.store, &fa).unwrap();
+    let dir_b = env.base.join("cache-b");
+    fs::create_dir_all(&dir_b).unwrap();
+    fs::write(dir_b.join("b.bin"), b"keep-b").unwrap();
+    let mut fb = form(&env, "普通B", "dev\\sched-b");
+    fb.source_template = dir_b.to_string_lossy().into_owned();
+    let _id_b = add_rule(&env.store, &fb).unwrap();
+
+    let now = |h: i64, m: i64| super::schedule::LocalNow {
+        date: "2026-10-16".into(),
+        secs: h * 3600 + m * 60,
+    };
+
+    // 默认关闭 → 到点也不跑（破坏性操作必须显式 opt-in）
+    let v = super::schedule::scheduled_clean_at(&env.store, &now(3, 0)).unwrap();
+    assert!(!v.ran);
+
+    // 启用但还没到点（02:59 < 03:00）→ 不跑
+    env.store
+        .set_setting(super::schedule::KEY_ENABLED, "1")
+        .unwrap();
+    let v = super::schedule::scheduled_clean_at(&env.store, &now(2, 59)).unwrap();
+    assert!(!v.ran);
+
+    // 到点 → 跑：A 清掉、B 不动，落 last_run
+    let v = super::schedule::scheduled_clean_at(&env.store, &now(3, 0)).unwrap();
+    assert!(v.ran);
+    assert_eq!(v.done, 1);
+    assert_eq!(v.deleted_files, 1);
+    assert!(!env.source.join("a.bin").exists(), "预授权规则的文件应被清掉");
+    assert!(dir_b.join("b.bin").exists(), "未授权规则绝不动");
+    let ev = env.store.recent_events(10).unwrap();
+    assert!(ev.iter().any(|e| e.kind == "scheduled_clean" && e.level == "info"));
+
+    // 时刻改成 05:00，但今天已跑过 → 不重复
+    env.store
+        .set_setting(super::schedule::KEY_TIME, "05:00")
+        .unwrap();
+    let v = super::schedule::scheduled_clean_at(&env.store, &now(12, 0)).unwrap();
+    assert!(!v.ran, "每自然日最多一次");
+
+    // 时刻格式坏 → 跳过并落 warn（手改库才会发生）
+    env.store
+        .set_setting(super::schedule::KEY_TIME, "99:xx")
+        .unwrap();
+    let v = super::schedule::scheduled_clean_at(&env.store, &now(23, 0)).unwrap();
+    assert!(!v.ran);
+    let ev = env.store.recent_events(10).unwrap();
+    assert!(ev.iter().any(|e| e.kind == "scheduled_clean" && e.level == "warn"));
+
+    let _ = fs::remove_dir_all(&env.base);
+}
