@@ -3,6 +3,7 @@
 use crate::boot::acl::export_sddl;
 use crate::engine;
 use crate::error::{TdError, TdResult};
+use crate::i18n::{t, tf};
 use crate::link::LinkType;
 use crate::store::{Store, CATEGORIES};
 
@@ -16,10 +17,10 @@ pub fn add_root(
     wait_timeout_ms: i64,
 ) -> TdResult<i64> {
     if label.trim().is_empty() {
-        return Err(TdError::InvalidPath("名称不能为空".into()));
+        return Err(TdError::InvalidPath(t("form.name_empty").into()));
     }
     if path.trim().is_empty() {
-        return Err(TdError::InvalidPath("路径不能为空，例如 R:".into()));
+        return Err(TdError::InvalidPath(t("form.path_empty").into()));
     }
     store.ensure_root(label, path, is_ramdisk, wait_timeout_ms)
 }
@@ -40,27 +41,22 @@ pub fn update_rule(store: &Store, id: i64, form: &RuleForm) -> TdResult<()> {
 
 pub(crate) fn validate_form(form: &RuleForm) -> TdResult<()> {
     if form.name.trim().is_empty() {
-        return Err(TdError::InvalidPath("规则名称不能为空".into()));
+        return Err(TdError::InvalidPath(t("form.rule_name_empty").into()));
     }
     if form.source_template.trim().is_empty() {
-        return Err(TdError::InvalidPath("源路径不能为空".into()));
+        return Err(TdError::InvalidPath(t("form.source_empty").into()));
     }
     if !CATEGORIES.contains(&form.category.as_str()) {
-        return Err(TdError::InvalidPath(format!(
-            "未知分类 {}，可用：{}",
-            form.category,
-            CATEGORIES.join(" / ")
-        )));
+        return Err(TdError::InvalidPath(tf("form.unknown_category", &[
+            ("cat", &form.category),
+            ("list", &CATEGORIES.join(" / ")),
+        ])));
     }
     if form.target_subpath.trim().is_empty() {
-        return Err(TdError::InvalidPath(
-            "目标子目录不能为空（它是 RAM 盘下的相对路径，例如 browsers\\chrome）".into(),
-        ));
+        return Err(TdError::InvalidPath(t("form.subpath_empty").into()));
     }
     if LinkType::parse(&form.link_type).is_none() {
-        return Err(TdError::InvalidPath(
-            "链接类型只能是 junction 或 symlink_dir".into(),
-        ));
+        return Err(TdError::InvalidPath(t("form.bad_link_type").into()));
     }
     // 排除模式的结构校验（空/超长/超量/..）由 Excludes 统一给出。
     crate::fsops::exclude::Excludes::new(&form.excludes)?;
@@ -98,9 +94,9 @@ pub fn reorder_rules(store: &Store, ordered_ids: &[i64]) -> TdResult<usize> {
     let mut seen = std::collections::HashSet::new();
     for id in ordered_ids {
         if !seen.insert(*id) {
-            return Err(TdError::Other(format!(
-                "顺序列表里 id={id} 出现了不止一次"
-            )));
+            return Err(TdError::Other(tf("form.duplicate_id", &[
+                ("id", &id.to_string()),
+            ])));
         }
     }
     // 先全部取出（不存在的 id 在这一步就报错），同时校验同类。
@@ -110,10 +106,12 @@ pub fn reorder_rules(store: &Store, ordered_ids: &[i64]) -> TdResult<usize> {
     }
     let category = rules[0].category.clone();
     if let Some(r) = rules.iter().find(|r| r.category != category) {
-        return Err(TdError::Other(format!(
-            "只能在同一分类内调整顺序：{}（#{}）属于 {}，其它属于 {}",
-            r.name, r.id, r.category, category
-        )));
+        return Err(TdError::Other(tf("form.cross_category", &[
+            ("name", &r.name),
+            ("id", &r.id.to_string()),
+            ("cat", &r.category),
+            ("other", &category),
+        ])));
     }
     // 完整性：列表查询按 category 分组展示，缺一条就会让被漏掉的规则顺序悬空。
     let total = store
@@ -123,16 +121,21 @@ pub fn reorder_rules(store: &Store, ordered_ids: &[i64]) -> TdResult<usize> {
         .count();
     let given = ordered_ids.len();
     if total != given {
-        return Err(TdError::Other(format!(
-            "顺序列表必须覆盖分类 {category} 的全部规则（{given}/{total}）"
-        )));
+        return Err(TdError::Other(tf("form.incomplete_order", &[
+            ("category", &category),
+            ("given", &given.to_string()),
+            ("total", &total.to_string()),
+        ])));
     }
     let n = store.set_rules_order(ordered_ids)?;
     store.log_event(
         None,
         "info",
         "rules_reordered",
-        &format!("调整了分类 {category} 的 {n} 条规则顺序"),
+        &tf("form.reordered_log", &[
+            ("category", &category),
+            ("n", &n.to_string()),
+        ]),
     )?;
     Ok(n)
 }
@@ -142,10 +145,9 @@ pub fn capture_acl(store: &Store, id: i64) -> TdResult<String> {
     let rule = store.get_rule(id)?;
     let resolved = engine::resolve(store, &rule)?;
     if !resolved.source.is_dir() {
-        return Err(TdError::InvalidPath(format!(
-            "源目录不存在，无法导出权限：{}",
-            resolved.source.display()
-        )));
+        return Err(TdError::InvalidPath(tf("form.acl_no_source", &[
+            ("path", &resolved.source.display().to_string()),
+        ])));
     }
     let sddl = export_sddl(&resolved.source)?;
     store.set_rule_flags(id, rule.rebuild_on_boot, &rule.link_type, Some(&sddl))?;
@@ -153,7 +155,7 @@ pub fn capture_acl(store: &Store, id: i64) -> TdResult<String> {
         Some(id),
         "info",
         "acl_captured",
-        &format!("{}：已保存目录权限模板", rule.name),
+        &tf("form.acl_captured_log", &[("name", &rule.name)]),
     )?;
     Ok(sddl)
 }
