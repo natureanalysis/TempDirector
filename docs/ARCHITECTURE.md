@@ -14,22 +14,35 @@
 | Rust + egui/slint | ~5 MB | ★★★★★ | 中 | UI 表现力弱，表格/多选/中文字体要自己搞 |
 | Electron / PyQt | 100 MB+ | 差 | 一般 | 一个文件系统工具背 100 MB 运行时没道理 |
 
-**一个 exe、多种模式**：`--gui`（M2，已落地）、`--service`（M4）、`elevated <job>`（M3）、
-以及当前的 CLI。理由：
+**多个入口、一份逻辑**：桌面端起界面（M2），并额外承载 `boot-rebuild`（登录任务，M3）
+与 `elevated <job>`（提权 worker，M3）两个无界面子模式；`--service`（M4）与服务形态仍在
+计划中；`td-cli` 提供人用的命令行。理由：
 
 * 提权路径不应该拖上 WebView（攻击面更小、启动更快）；
 * 开机重建要能在没有界面的会话里跑；
 * **链接逻辑只有一份实现**，不会出现"GUI 和 CLI 行为不一致"这类最恶心的问题。
 
-当前分工：
-* `td-cli` → `tempdirector.exe`：人用的 CLI + 未来的提权 worker / 开机重建执行体；
-* `td-gui` → `tempdirector-gui.exe`：桌面界面（Tauri 2）；
-* `td-core`：纯库，无 UI 依赖，上面两个都只调它。
+当前分工（三个二进制，职责与实现一一对应）：
+
+* `td-core`：**纯库，无 UI 依赖**，上面两个前端都只调它。内部按三圈分层：
+  * 领域层：`store` / `engine` / `link` / `fsops` / `safety` / `util` / `paths` / `portable`；
+  * 平台层（Windows 绑定）：`link::create`（Junction）、`boot`（等卷 / 重建 / ACL）；
+  * 编排层（进程与环境副作用）：`worker`（提权 job 协议 + 执行体）、
+    `elevate`（`ShellExecuteExW` 拉起自身）、`autostart`（`schtasks` 登录任务）。
+* `td-cli` → `tempdirector.exe`：**人用的 CLI**（list / add / apply / restore / status /
+  clean / doctor / autostart / export / import），控制台程序，适合手动执行。
+* `td-gui` → `tempdirector-gui.exe`：桌面界面（Tauri 2）。它同时承载两个
+  **无界面子模式**（`gui/src/submode.rs`，在 `tauri::Builder` 之前拦下、不弹窗）：
+  * `boot-rebuild` —— 登录任务执行体（release 为 windowed 子系统，不闪控制台）；
+  * `elevated <job>` —— 提权 worker 入口，转调 `td-core::worker::run_job_to_exit_code`。
+
+  > 这两条路径刻意放在 GUI 而非 CLI：它们都是"静默、无控制台"场景，用 windowed
+  > 的 GUI 二进制能避免控制台窗口一闪而过，UAC 弹窗上显示的也是用户认识的程序名。
 
 ### 界面层（M2）的两个刻意设计
 
 1. **`api.rs` 不依赖任何 Tauri 类型。** 业务函数的签名是 `fn(&Store, …) -> TdResult<serde 结构体>`，
-   `#[tauri::command]` 只是薄转发。好处是这一层能脱离窗口直接跑单元测试（现在有 12 个），
+   `#[tauri::command]` 只是薄转发。好处是这一层能脱离窗口直接跑单元测试（现在有 24 个），
    以后要接服务端或换 UI 也不用改逻辑。
 2. **前端不用 npm / 打包器。** 界面就是 `ui/` 下的三个静态文件，编译时内嵌进 exe。
    这是一个"表格 + 几个弹窗"的界面，引一条前端工具链只会增加维护负担。
@@ -51,14 +64,18 @@ tauri-runtime-wry 2.11.4 / wry 0.55.1`。升级要整套一起动。
 ## 2. 模块与数据流
 
 ```
-         ┌─────────────── td-core（纯库，无 UI 依赖）───────────────┐
-规则库    │  store/  ──→  engine/  ──→  link/    （建链/拆链/识别）  │
-(SQLite)  │   ▲            │  │        fsops/   （搬运/占用/核对） │
-          │   │            │  └────→   boot/    （等卷/重建/ACL）  │
-          │   └── 状态回写 ─┘                                     │
-          └──────────────────────────────────────────────────────┘
-                    ▲                    ▲                ▲
-              td-cli（人用/worker/重建）  GUI（M2）      服务（M4）
+         ┌───────────────── td-core（纯库，无 UI 依赖）──────────────────┐
+        │ 领域层：store/ ──▶ engine/ ──▶ link/(建链/拆链/识别)           │
+        │                          └──▶ fsops/(搬运/占用/核对)          │
+        │         ▲  │                                                  │
+        │         │  └──▶ boot/(等卷/重建/ACL，Windows 绑定)             │
+        │         └─ 状态回写 ─┘                                        │
+        │ 平台层：link::create(Junction) · boot                         │
+        │ 编排层：worker(job 协议+执行体) · elevate(拉起自身) · autostart │
+        └───────────────────────────────────────────────────────────────┘
+                ▲                    ▲                     ▲
+          td-cli(人用 CLI)   td-gui(桌面 UI +        M4 服务(Windows 服务)
+                             boot-rebuild/elevated 子模式)
 ```
 
 数据流（`apply` 一条规则）：
@@ -92,7 +109,8 @@ RAM 盘是本地卷 → 常规场景全部走 Junction → **全程零 UAC**。
 
 ## 4. 状态机
 
-`LinkState` 的九个状态与对应动作（`detect_link` 只读，不改任何东西）：
+`LinkState` 共 **8 个枚举变体**（其中 `LinkOk` 依目标内容再细分，故下表列 9 行），
+与对应动作（`detect_link` 只读，不改任何东西）：
 
 | 状态 | 含义 | `apply` 的动作 |
 |---|---|---|
@@ -113,7 +131,8 @@ RAM 盘是本地卷 → 常规场景全部走 Junction → **全程零 UAC**。
 从"缓存是否还在"看它是异常的。UI 上必须区分，
 否则用户会以为一切正常，却在奇怪"为什么浏览器变慢了"。
 
-`target_mismatch` 是另一条独立信息：链接实际指向与规则登记不符（被手工改过）→ 拒绝操作，要求先恢复。
+`target_mismatch` 是 `LinkOk` 上的一个字段（不是独立状态）：链接实际指向与规则登记
+不符（被手工改过）→ 拒绝操作，要求先恢复。
 
 ---
 
@@ -135,7 +154,18 @@ RAM 盘是本地卷 → 常规场景全部走 Junction → **全程零 UAC**。
 迁移约定：`PRAGMA user_version` 做版本号，`migrate()` 里按 `if current < N` 追加，只加不改。
 
 数据库放在 `%PROGRAMDATA%\TempDirector\`：后台服务以 SYSTEM 身份跑，读不到某个用户的 `%APPDATA%`。
-启用 WAL + `busy_timeout`，且**不持有长事务**（GUI 与服务可能同时打开）。
+
+### 并发模型：进程内串行 + 进程间 WAL
+
+| 层级 | 机制 | 位置 |
+|---|---|---|
+| 进程内 | `Mutex<Store>` 串行所有写命令；托盘后台线程也走同一把锁 | `td-gui/src/commands.rs` |
+| 进程间 | `PRAGMA journal_mode=WAL` + `busy_timeout=5000ms` + `foreign_keys=ON` | `td-core/src/store/mod.rs` |
+| 多实例 | GUI 用 `single_instance` 插件，第二个实例只唤起已有窗口 | `td-gui/src/lib.rs` |
+
+约定：**不持有长事务**（GUI、服务、submode 三者可能同时开库）。跨进程写冲突由
+5 秒 `busy_timeout` 兜底 —— 超时即返回 `SQLITE_BUSY`（界面 / CLI 转中文提示），
+不排队重试。这是 §11.7「单进程串行」的依据。
 
 ---
 
@@ -290,7 +320,7 @@ Windows 服务(SYSTEM) ──WTS_SESSION_LOGON──▶ 取用户令牌 ──�
 
 ## 10. 测试策略
 
-* **单元测试 104 个**：路径归一化 / 黑名单 / 状态机 / 建链与拆链安全 / 搬运与核对 /
+* **单元测试 141 个**：路径归一化 / 黑名单 / 状态机 / 建链与拆链安全 / 搬运与核对 /
   合并策略 / SQLite 迁移与 DAO / 导入导出 / 编排决策树 / 开机重建 / ACL 往返 /
   job 协议与位置信任锚 / 任务 XML 生成与转义 / 命令行参数加引号 /
   界面业务层（快照统计、批量失败隔离、表单校验、ACL 模板、占用检测、导出导入往返）。
@@ -321,8 +351,9 @@ Windows 服务(SYSTEM) ──WTS_SESSION_LOGON──▶ 取用户令牌 ──�
 4. ACL 目前只做"继承 + 可选 SDDL 回灌"，不做完整 ACL 迁移。
 5. 巡检（`ReadDirectoryChangesW` 监听源目录变化）尚未实现，链接被外部破坏只能靠下次
    `status` / 开机重建发现（M4）。
-6. 界面目前关闭窗口即退出（托盘常驻形态在 M4/M5）；状态不是实时刷新的，
-   需要点「刷新」或 Ctrl+R。
+6. 托盘**已实现**（显示主窗口 / 立即执行开机重建 / 退出，见 `td-gui/src/tray.rs`），
+   但**关闭窗口即退出** —— 尚未做「关闭时最小化到托盘」（该形态在 M4/M5）；
+   状态不是实时刷新的，需要点「刷新」或 Ctrl+R。
 7. 单进程串行：同一时刻只有一个数据库写操作在跑（长批量应用期间其它操作会排队）。
    这是刻意的（避免并发写规则库），代价是界面在极端情况下会等一会儿。
 8. **开机自启是"尽早"，不保证绝对早于所有自启软件**。真正的强保证要等 M4 的服务
