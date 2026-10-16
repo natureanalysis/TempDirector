@@ -366,6 +366,14 @@ fn zh(key: &str) -> &'static str {
         "worker.bad_version" => "job 版本 {ver} 高于本程序支持的 {max}",
         "worker.start_log" => "提权 worker 开始：kind={kind} rules={rules} origin_pid={pid}",
         "worker.unknown_kind" => "未知的 job 种类：{kind}（可用：apply / restore / boot_rebuild）",
+        "autostart.schtasks_failed" => "调用 schtasks 失败：{err}",
+        "autostart.need_exe" => "开机自启需要一个可执行文件路径",
+        "autostart.task_desc" => "TempDirector：登录时重建 RAM 盘上的缓存目录，保证软链接始终有效。",
+        "autostart.mkdir_failed" => "创建数据目录失败：{err}",
+        "autostart.write_xml_failed" => "写入任务定义失败：{err}",
+        "autostart.register_failed" => "注册开机任务失败（schtasks 退出码 {code}）：{text}",
+        "autostart.delete_failed" => "删除开机任务失败（schtasks 退出码 {code}）：{text}",
+        "autostart.trigger_failed" => "触发任务失败（schtasks 退出码 {code}）：{text}",
         _ => "",
     }
 }
@@ -647,6 +655,14 @@ fn en(key: &str) -> &'static str {
         "worker.bad_version" => "job version {ver} is higher than supported {max}",
         "worker.start_log" => "Elevated worker started: kind={kind} rules={rules} origin_pid={pid}",
         "worker.unknown_kind" => "Unknown job kind: {kind} (valid: apply / restore / boot_rebuild)",
+        "autostart.schtasks_failed" => "Failed to invoke schtasks: {err}",
+        "autostart.need_exe" => "Autostart requires an executable path",
+        "autostart.task_desc" => "TempDirector: rebuild cache directories on the RAM disk at logon to keep symbolic links valid.",
+        "autostart.mkdir_failed" => "Failed to create data directory: {err}",
+        "autostart.write_xml_failed" => "Failed to write task definition: {err}",
+        "autostart.register_failed" => "Failed to register boot task (schtasks exit code {code}): {text}",
+        "autostart.delete_failed" => "Failed to delete boot task (schtasks exit code {code}): {text}",
+        "autostart.trigger_failed" => "Failed to trigger task (schtasks exit code {code}): {text}",
         _ => "",
     }
 }

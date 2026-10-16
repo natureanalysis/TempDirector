@@ -25,6 +25,7 @@ use std::process::Command;
 use serde::Serialize;
 
 use crate::error::{TdError, TdResult};
+use crate::i18n::{t, tf};
 
 /// 任务名（平铺，不带文件夹 —— 避免 `schtasks` 里 `\` 路径的引号地狱）。
 pub const TASK_NAME: &str = "TempDirector-BootRebuild";
@@ -51,7 +52,7 @@ fn schtasks(args: &[&str]) -> TdResult<(i32, String)> {
     no_window(&mut cmd);
     let out = cmd
         .output()
-        .map_err(|e| TdError::Other(format!("调用 schtasks 失败：{e}")))?;
+        .map_err(|e| TdError::Other(tf("autostart.schtasks_failed", &[("err", &e.to_string())])))?;
     let mut bytes = out.stdout.clone();
     bytes.extend_from_slice(&out.stderr);
     Ok((out.status.code().unwrap_or(-1), decode(&bytes)))
@@ -102,7 +103,7 @@ fn xml_escape(s: &str) -> String {
 fn task_xml(exe: &Path, extra_args: &str) -> TdResult<String> {
     let exe_s = exe.to_string_lossy();
     if exe_s.trim().is_empty() {
-        return Err(TdError::InvalidPath("开机自启需要一个可执行文件路径".into()));
+        return Err(TdError::InvalidPath(t("autostart.need_exe").into()));
     }
     let user = current_user_id();
     let user_el = match &user {
@@ -118,7 +119,7 @@ fn task_xml(exe: &Path, extra_args: &str) -> TdResult<String> {
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>TempDirector：登录时重建 RAM 盘上的缓存目录，保证软链接始终有效。</Description>
+    <Description>{desc}</Description>
     <Author>{author}</Author>
   </RegistrationInfo>
   <Triggers>
@@ -158,6 +159,7 @@ fn task_xml(exe: &Path, extra_args: &str) -> TdResult<String> {
 </Task>
 "#,
         author = xml_escape(&user.clone().unwrap_or_else(|| "-".into())),
+        desc = xml_escape(t("autostart.task_desc")),
         exe = xml_escape(&exe_s),
         args = xml_escape(&args),
     ))
@@ -180,7 +182,7 @@ pub fn status() -> AutostartStatus {
         }
     };
     if code != 0 {
-        st.message = crate::i18n::t("autostart.unregistered").into();
+        st.message = t("autostart.unregistered").into();
         return st;
     }
     st.registered = true;
@@ -192,9 +194,9 @@ pub fn status() -> AutostartStatus {
         st.command = format!("{} {}", cmd, args).trim().to_string();
     }
     st.message = if st.command.is_empty() {
-        crate::i18n::t("autostart.registered").into()
+        t("autostart.registered").into()
     } else {
-        crate::i18n::tf("autostart.registered_cmd", &[("cmd", &st.command)])
+        tf("autostart.registered_cmd", &[("cmd", &st.command)])
     };
     st
 }
@@ -211,21 +213,21 @@ fn extract_tag(xml: &str, tag: &str) -> Option<String> {
 /// 返回注册后的命令行描述。
 pub fn enable(exe: &Path, extra_args: &str) -> TdResult<String> {
     crate::paths::ensure_dirs()
-        .map_err(|e| TdError::Other(format!("创建数据目录失败：{e}")))?;
+        .map_err(|e| TdError::Other(tf("autostart.mkdir_failed", &[("err", &e.to_string())])))?;
     let xml = task_xml(exe, extra_args)?;
     let xml_path = crate::paths::data_dir().join("boot-rebuild.task.xml");
     std::fs::write(&xml_path, encode_utf16le_bom(&xml))
-        .map_err(|e| TdError::Other(format!("写入任务定义失败：{e}")))?;
+        .map_err(|e| TdError::Other(tf("autostart.write_xml_failed", &[("err", &e.to_string())])))?;
 
     let xml_arg = xml_path.to_string_lossy().to_string();
     let (code, text) = schtasks(&["/Create", "/TN", TASK_NAME, "/XML", &xml_arg, "/F"])?;
     let _ = std::fs::remove_file(&xml_path);
 
     if code != 0 {
-        return Err(TdError::Other(format!(
-            "注册开机任务失败（schtasks 退出码 {code}）：{}",
-            text.trim()
-        )));
+        return Err(TdError::Other(tf("autostart.register_failed", &[
+            ("code", &code.to_string()),
+            ("text", text.trim()),
+        ])));
     }
     Ok(if extra_args.trim().is_empty() {
         format!("{} boot-rebuild", exe.display())
@@ -240,26 +242,26 @@ pub fn disable() -> TdResult<String> {
     if code != 0 {
         // 本来就不存在也算成功（幂等）
         if text.contains("cannot find") || text.contains("找不到") {
-            return Ok(crate::i18n::t("autostart.not_registered").into());
+            return Ok(t("autostart.not_registered").into());
         }
-        return Err(TdError::Other(format!(
-            "删除开机任务失败（schtasks 退出码 {code}）：{}",
-            text.trim()
-        )));
+        return Err(TdError::Other(tf("autostart.delete_failed", &[
+            ("code", &code.to_string()),
+            ("text", text.trim()),
+        ])));
     }
-    Ok(crate::i18n::t("autostart.disabled").into())
+    Ok(t("autostart.disabled").into())
 }
 
 /// 立刻手动触发一次（等价于"登录时那次"），用于验证任务是否配好。
 pub fn run_now() -> TdResult<String> {
     let (code, text) = schtasks(&["/Run", "/TN", TASK_NAME])?;
     if code != 0 {
-        return Err(TdError::Other(format!(
-            "触发任务失败（schtasks 退出码 {code}）：{}",
-            text.trim()
-        )));
+        return Err(TdError::Other(tf("autostart.trigger_failed", &[
+            ("code", &code.to_string()),
+            ("text", text.trim()),
+        ])));
     }
-    Ok(crate::i18n::t("autostart.triggered").into())
+    Ok(t("autostart.triggered").into())
 }
 
 /// 挑一个合适的可执行文件去注册：优先同目录下的 GUI（release 下无控制台窗口），
