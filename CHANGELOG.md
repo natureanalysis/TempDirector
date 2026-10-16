@@ -17,12 +17,19 @@
   原先依赖 `%TEMP%` 继承链，回灌不带 protected 标志时父目录可继承 ACE 会并入
   回读结果，在本机环境必然失败。现用 `D:P` 探针（Everyone 完全控制，不依赖
   运行账号 SID）切断继承后验证往返，测试不再受宿主目录影响。
+* **新增文档同步断言**（`crates/td-core/tests/doc_sync.rs`，2 个测试）：
+  lib.rs 顶部分层表必须与 `pub mod` 声明**集合相等**，ARCHITECTURE.md §1
+  三圈分工必须**覆盖**全部 `pub mod`。项目无 CI，断言随 `cargo test` 运行，
+  新增/重命名/删除模块时忘改文档会直接红掉并指出差异。顺带修复了断言
+  发现的既有漂移：lib.rs 分层表补 `error` / `paths` / `portable` 三行，
+  ARCHITECTURE 三圈分工补 `error`。
 
 ### 验证
 
-* `cargo test --workspace --no-fail-fast`：145 通过 / 0 失败（含 engine 11 个
-  状态机/回滚测试逐字随迁）。
-* CLI `version` 冒烟输出不变；编译零警告。
+* `cargo test --workspace --no-fail-fast`：147 通过 / 0 失败（含 engine 11 个
+  状态机/回滚测试逐字随迁、doc_sync 2 个新断言）。
+* CLI `version` 冒烟输出不变；`cargo clippy --workspace --all-targets` 0 告警。
+* doc_sync 断言经反向验证：临时从文档删模块名会红并报出缺失项。
 
 ## 2026-10-16（架构重构）
 

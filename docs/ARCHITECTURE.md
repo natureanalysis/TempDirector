@@ -26,7 +26,8 @@
 
 * `td-core`：**纯库，无 UI 依赖**，上面两个前端都只调它。内部按三圈分层：
   * 用例门面：`usecase`（GUI/CLI/submode 的默认入口，返回前端 JSON 契约结构）；
-  * 领域层：`store` / `engine` / `link` / `fsops` / `safety` / `util` / `paths` / `portable`；
+  * 领域层：`store` / `engine` / `link` / `fsops` / `safety` / `util` / `paths` /
+    `portable`（规则库导入导出）/ `error`（统一错误类型）；
   * 平台层（Windows 绑定）：`link::create`（Junction）、`boot`（等卷 / 重建 / ACL）；
   * 编排层（进程与环境副作用）：`worker`（提权 job 协议 + 执行体）、
     `elevate`（`ShellExecuteExW` 拉起自身）、`autostart`（`schtasks` 登录任务）。
