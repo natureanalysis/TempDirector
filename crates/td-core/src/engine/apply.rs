@@ -8,6 +8,7 @@ use crate::error::{TdError, TdResult};
 use crate::fsops::mover::{self, MoveReport, Progress};
 use crate::fsops::occupancy::{self, LockScanOptions};
 use crate::fsops::verify::{self, TreeStats, VerifyMode};
+use crate::i18n::{t, tf};
 use crate::link::create::{create_dir_link, ensure_dir, remove_dir_link};
 use crate::link::detect::{detect_link, LinkState, TargetState};
 use crate::store::{Rule, Store};
@@ -94,7 +95,7 @@ pub fn apply_rule(
             return Ok(outcome(
                 rule,
                 "already_ok",
-                "链接已就绪且缓存有内容，无需操作".into(),
+                t("apply.already_ok").into(),
                 None,
                 started,
                 false,
@@ -109,7 +110,7 @@ pub fn apply_rule(
             return Ok(outcome(
                 rule,
                 "already_ok",
-                "链接已就绪（目标为空属正常：RAM 盘重启后缓存会自然重建）".into(),
+                t("apply.already_ok_empty").into(),
                 None,
                 started,
                 false,
@@ -120,29 +121,22 @@ pub fn apply_rule(
             target,
             ..
         } => {
-            return Err(TdError::Other(format!(
-                "链接实际指向 {}，与登记的目标 {} 不一致。请先执行「恢复」再重新应用。",
-                target.display(),
-                r.target.display()
-            )));
+            return Err(TdError::Other(tf("apply.mismatch", &[
+                ("actual", &target.display().to_string()),
+                ("target", &r.target.display().to_string()),
+            ])));
         }
         LinkState::ForeignReparse { tag } => {
-            return Err(TdError::SafetyBlocked(format!(
-                "源路径是外来重解析点（tag {tag:#010x}，可能是云盘占位符），本工具不会触碰它：{}",
-                r.source.display()
-            )));
+            return Err(TdError::SafetyBlocked(tf("apply.foreign", &[
+                ("tag", &format!("{tag:#010x}")),
+                ("path", &r.source.display().to_string()),
+            ])));
         }
         LinkState::PlainFile => {
-            return Err(TdError::InvalidPath(format!(
-                "源路径是文件而不是目录，请修正规则：{}",
-                r.source.display()
-            )));
+            return Err(TdError::InvalidPath(tf("apply.is_file", &[("path", &r.source.display().to_string())])));
         }
         LinkState::AccessDenied => {
-            return Err(TdError::ElevationRequired(format!(
-                "读取源目录被拒绝，请以管理员身份重试：{}",
-                r.source.display()
-            )));
+            return Err(TdError::ElevationRequired(tf("apply.access_denied", &[("path", &r.source.display().to_string())])));
         }
         LinkState::IoError { message } => {
             return Err(TdError::Other(message.clone()));
@@ -153,7 +147,7 @@ pub fn apply_rule(
                 return Ok(outcome(
                     rule,
                     "fixed_broken_target",
-                    "将重建丢失的目标目录".into(),
+                    t("apply.dry_rebuild_target").into(),
                     None,
                     started,
                     true,
@@ -165,15 +159,12 @@ pub fn apply_rule(
                 Some(rule.id),
                 "warn",
                 "target_rebuilt",
-                &format!("目标目录 {} 已重建，链接恢复可用", r.target.display()),
+                &tf("apply.target_rebuilt", &[("target", &r.target.display().to_string())]),
             )?;
             return Ok(outcome(
                 rule,
                 "fixed_broken_target",
-                format!(
-                    "已重建目标目录 {}，链接恢复可用（原缓存内容随 RAM 盘重启丢失，属预期）",
-                    r.target.display()
-                ),
+                tf("apply.target_rebuilt_done", &[("target", &r.target.display().to_string())]),
                 None,
                 started,
                 false,
@@ -184,7 +175,7 @@ pub fn apply_rule(
                 return Ok(outcome(
                     rule,
                     "created_and_linked",
-                    "将创建目标目录并直接建立链接".into(),
+                    t("apply.dry_create_link").into(),
                     None,
                     started,
                     true,
@@ -197,18 +188,14 @@ pub fn apply_rule(
                 Some(rule.id),
                 "info",
                 "linked_without_source",
-                &format!(
-                    "源目录原本不存在，已直接建立链接（目标目录{}）",
-                    if created { "已创建" } else { "已存在" }
-                ),
+                &tf("apply.linked_no_source", &[
+                    ("created", if created { t("apply.created") } else { t("apply.exists") }),
+                ]),
             )?;
             return Ok(outcome(
                 rule,
                 "created_and_linked",
-                format!(
-                    "源目录不存在，已直接建立链接；目标目录就绪：{}",
-                    r.target.display()
-                ),
+                tf("apply.linked_no_source_done", &[("target", &r.target.display().to_string())]),
                 None,
                 started,
                 false,
@@ -221,10 +208,7 @@ pub fn apply_rule(
             target_state: TargetState::Missing,
             ..
         } => {
-            return Err(TdError::Other(format!(
-                "链接状态自相矛盾（链接可用但目标状态为缺失）：{}",
-                r.source.display()
-            )));
+            return Err(TdError::Other(tf("apply.contradiction", &[("path", &r.source.display().to_string())])));
         }
         LinkState::PlainDir => { /* 走下面的搬运流程 */ }
     }
@@ -234,10 +218,7 @@ pub fn apply_rule(
     let target_non_empty = dir_has_content(&r.target);
 
     if target_non_empty && !opts.allow_merge {
-        return Err(TdError::SafetyBlocked(format!(
-            "目标目录已有内容：{}。加 --merge 可以把源目录合并进去（同路径文件取修改时间较新者）后建链。",
-            r.target.display()
-        )));
+        return Err(TdError::SafetyBlocked(tf("apply.target_non_empty", &[("path", &r.target.display().to_string())])));
     }
 
     // 占用检测：证明源目录此刻没有被写入，副本才不会撕裂。
@@ -250,10 +231,7 @@ pub fn apply_rule(
                 "blocked",
                 &format!("{}：{}", rule.name, report.summary()),
             )?;
-            return Err(TdError::Busy(format!(
-                "源目录正被占用，已中止（未做任何改动）：{}",
-                report.summary()
-            )));
+            return Err(TdError::Busy(tf("apply.source_busy", &[("summary", &report.summary())])));
         }
     }
 
@@ -264,9 +242,9 @@ pub fn apply_rule(
             "moved_and_linked"
         };
         let what = if target_non_empty {
-            "将合并进已有目标目录后建链"
+            t("apply.dry_merge").to_string()
         } else {
-            "将搬运到目标目录后建链"
+            t("apply.dry_move").to_string()
         };
         return Ok(outcome(rule, action, what.into(), Some(src_stats), started, true));
     }
@@ -288,12 +266,11 @@ pub fn apply_rule(
             store.op_phase(op, "copying", None)?;
             let mr = mover::merge_into(&r.source, &r.target, sink)?;
             action = "merged_and_linked";
-            note = format!(
-                "已合并 {} 个文件进目标目录（覆盖 {} 个较旧文件，跳过 {} 个不较新的）",
-                mr.copied + mr.overwritten,
-                mr.overwritten,
-                mr.skipped
-            );
+            note = tf("apply.merged", &[
+                ("n", &(mr.copied + mr.overwritten).to_string()),
+                ("over", &mr.overwritten.to_string()),
+                ("skip", &mr.skipped.to_string()),
+            ]);
             store.op_phase(op, "copied", None)?;
             store.op_phase(op, "removing", None)?;
             mover::delete_tree(&r.source, sink)?;
@@ -321,14 +298,14 @@ pub fn apply_rule(
                     "rolled_back",
                     None,
                     None,
-                    Some(&format!("{e}；回滚：{rb}")),
+                    Some(&tf("apply.rollback_ok", &[("e", &e.to_string()), ("rb", &rb)])),
                 );
                 let _ = store.set_rule_state(rule.id, "rollback", Some(&e.to_string()));
                 let _ = store.log_event(
                     Some(rule.id),
                     "error",
                     "apply_failed",
-                    &format!("{}：{e}（已回滚：{rb}）", rule.name),
+                    &tf("apply.rollback_log", &[("name", &rule.name), ("e", &e.to_string()), ("rb", &rb)]),
                 );
             }
             Err(rb) => {
@@ -336,18 +313,19 @@ pub fn apply_rule(
                 let _ = store.op_phase(
                     op,
                     "needs_manual",
-                    Some(&format!("{e}；回滚失败：{rb}")),
+                    Some(&tf("apply.rollback_fail", &[("e", &e.to_string()), ("rb", &rb.to_string())])),
                 );
                 let _ = store.log_event(
                     Some(rule.id),
                     "error",
                     "needs_manual",
-                    &format!(
-                        "{}：{e}；且回滚失败：{rb}。请人工检查 {} 与 {}",
-                        rule.name,
-                        r.source.display(),
-                        r.target.display()
-                    ),
+                    &tf("apply.rollback_fail_log", &[
+                        ("name", &rule.name),
+                        ("e", &e.to_string()),
+                        ("rb", &rb.to_string()),
+                        ("src", &r.source.display().to_string()),
+                        ("tgt", &r.target.display().to_string()),
+                    ]),
                 );
             }
         }
@@ -365,17 +343,17 @@ pub fn apply_rule(
         Some(rule.id),
         "info",
         "applied",
-        &format!("{}：{note}", rule.name),
+        &tf("apply.applied_log", &[("name", &rule.name), ("note", &note)]),
     )?;
 
     let mut o = outcome(
         rule,
         action,
-        format!(
-            "{note}；已建链 {} → {}",
-            r.source.display(),
-            r.target.display()
-        ),
+        tf("apply.done_note", &[
+            ("note", &note),
+            ("src", &r.source.display().to_string()),
+            ("tgt", &r.target.display().to_string()),
+        ]),
         stats,
         started,
         false,
@@ -393,20 +371,20 @@ fn rollback_apply(r: &Resolved, merged: bool) -> Result<String, String> {
         // 合并路径：数据都在目标目录里。只需保证源路径存在，缓存可重造。
         if !r.source.exists() {
             ensure_dir(&r.source).map_err(|e| e.to_string())?;
-            return Ok("已把源目录重建为空目录（合并进 RAM 盘的内容保留）".into());
+            return Ok(t("apply.rb_merged").into());
         }
-        return Ok("源目录仍存在，无需处理".into());
+        return Ok(t("apply.rb_source_exists").into());
     }
 
     if !dir_has_content(&r.target) {
-        return Ok("目标目录为空，无需搬回".into());
+        return Ok(t("apply.rb_target_empty").into());
     }
     if r.source.exists() {
-        return Ok("源目录已存在，跳过搬回".into());
+        return Ok(t("apply.rb_source_exists2").into());
     }
 
     let mut noop = |_: Progress| {};
     let mr = mover::move_tree(&r.target, &r.source, VerifyMode::CountAndSize, &mut noop)
         .map_err(|e| e.to_string())?;
-    Ok(format!("已把 {} 搬回源目录", mr.stats.summary()))
+    Ok(tf("apply.rb_moved_back", &[("summary", &mr.stats.summary())]))
 }
