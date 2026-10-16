@@ -87,6 +87,7 @@ pub fn run() {
             commands::clean_preview,
             commands::clean_run,
             commands::disk_usage,
+            commands::water_poll,
             commands::boot_rebuild,
             commands::autostart_status,
             commands::autostart_enable,

@@ -2,6 +2,33 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-10-16（功能：RAM 盘水位监控）
+
+### 功能 —— 目标根水位分级 + 阈值事件 + 全端展示（只告警，不自动删文件）
+
+* **`usecase/water.rs`（新）**：水位 = 目标根所在卷已用百分比，默认阈值
+  85%（warn）/ 95%（critical），settings 键 `water_warn_pct` / `water_critical_pct`
+  可覆盖（0~100 之外的值视为未配置回落默认）。
+  * `water_levels`：**只读**扫描（快照 / doctor 用，零副作用）；
+  * `water_poll`：巡检——与 settings（`water_level_state`）记的上次级别对比，
+    **级别变化才落事件**（升 warn→warn 事件、升 critical→error、降级→info 恢复），
+    首次只建基线、平稳期零写入，不刷事件流水。
+* **snapshot banner**：水位 warn/error 时概览顶部出横幅（写满 = 软件写缓存
+  直接失败，必须顶在最显眼处）；只读，事件只归 `water_poll`。
+* GUI：`water_poll` 命令 + 前端 60s 定时巡检（发现越线顺带刷新快照让横幅及时
+  出现；失败静默下轮再试）；mock 层对齐。
+* CLI：`water [--json]` 巡检命令（与 GUI 定时器同源，级别变化才落事件，
+  适合计划任务低频跑）；`doctor` 加「RAM 盘水位」小节（只读）。
+* **设计边界**：只告警不自动删文件——自动清理涉及破坏性决策，须用户显式触发
+  （清理动作已有 `clean` 两步走，预演 + `--yes`）。
+
+### 验证
+
+* `cargo test --workspace` 全绿（td-core 150：新增 classify 边界单测 +
+  `water_poll` 状态机端到端（settings 阈值覆盖驱动级别变化，不依赖真盘水位）
+  + snapshot 横幅断言）；clippy 0 告警；`node --check` 通过。
+* CLI 冒烟：无根空态、加根后 55.1% ok、连续两次巡检零事件，与去抖设计一致。
+
 ## 2026-10-16（功能：规则级清理排除）
 
 ### 功能 —— 每条规则可配「清理排除」模式，清理时不误删混在缓存里的重要数据

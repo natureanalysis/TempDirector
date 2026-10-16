@@ -312,6 +312,24 @@ pub struct DiskUsageView {
     pub elapsed_ms: u128,
 }
 
+/// 一个目标根（RAM 盘）的水位。
+#[derive(Debug, Clone, Serialize)]
+pub struct WaterLevel {
+    pub root_id: i64,
+    pub label: String,
+    /// 根路径模板原文（如 `R:`）。
+    pub path: String,
+    /// 已用百分比（0～100）。卷不可用时为 0。
+    pub used_pct: f64,
+    /// 剩余字节数。
+    pub free: u64,
+    pub free_text: String,
+    pub total_text: String,
+    /// `ok` / `warn` / `critical` / `unknown`（卷不可用）。
+    pub level: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AutostartView {
     pub registered: bool,

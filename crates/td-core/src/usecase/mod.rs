@@ -15,6 +15,7 @@ pub mod overview;
 pub mod presets;
 pub mod rules;
 pub mod view;
+pub mod water;
 
 pub use apply::{apply_rules, check_locks, relink, restore_rules};
 pub use autostart::{autostart_disable, autostart_enable, autostart_run_now, autostart_status};
@@ -31,6 +32,7 @@ pub use rules::{
     add_root, add_rule, capture_acl, clear_acl, delete_root, delete_rules, set_enabled, update_rule,
 };
 pub use view::*;
+pub use water::{water_levels, water_poll};
 
 #[cfg(test)]
 mod tests;

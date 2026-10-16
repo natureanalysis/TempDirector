@@ -2140,6 +2140,10 @@ function createMockBackend() {
           return Promise.resolve(args.ids.length);
         case 'capture_acl': { const r = find(args.id); if (r) r.has_acl = true; return Promise.resolve('D:(A;;FA;;;SY)'); }
         case 'clear_acl': { const r = find(args.id); if (r) r.has_acl = false; return Promise.resolve(null); }
+        case 'water_poll':
+          return Promise.resolve([
+            { root_id: 1, label: 'RAMDisk 4G', path: 'R:', used_pct: 70.0, free: 1288490188, free_text: '1.2 GB', total_text: '4.0 GB', level: 'ok', message: '已用 70.0%，剩余 1.2 GB' },
+          ]);
         case 'preset_rules':
           return Promise.resolve([
             { name: 'Chrome 网页缓存', category: 'browser', source_template: '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache', target_subpath: 'browsers\\chrome-cache', note: null, source: 'C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache', exists: true },
@@ -2327,4 +2331,15 @@ function simulateProgress(total) {
   if (PARAMS.has('clean')) {
     await openBatchCleanDialog();
   }
+
+  // RAM 盘水位巡检（60s）：级别变化才落事件（后端去抖）；
+  // 发现 warn/critical 顺带刷新快照，让概览横幅及时出现。
+  setInterval(async function () {
+    try {
+      const levels = await invoke('water_poll', {});
+      if (levels.some(function (w) { return w.level === 'warn' || w.level === 'critical'; })) {
+        await refresh(true);
+      }
+    } catch (e) { /* 巡检失败静默，下轮再试 */ }
+  }, 60000);
 })();

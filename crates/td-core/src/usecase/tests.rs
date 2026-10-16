@@ -603,3 +603,59 @@ fn disk_usage_scans_rule_dir_and_volumes() {
     assert!(view.volumes[0].total >= view.volumes[0].free);
     let _ = fs::remove_dir_all(&env.base);
 }
+#[test]
+fn water_poll_records_events_only_on_level_change() {
+    let env = setup("water");
+    // setup 的根指向 temp 下真实目录 → 所在系统盘真实水位，默认阈值下 < 85%。
+    // 用 settings 覆盖阈值来驱动级别变化，不依赖真盘实际占用。
+
+    // 首次巡检：建立基线，ok 不落事件
+    let levels = water_poll(&env.store).unwrap();
+    assert_eq!(levels.len(), 1);
+    assert_eq!(levels[0].level, "ok", "系统盘默认水位应低于 85%");
+    assert!(levels[0].used_pct > 0.0, "水位来自真实卷容量");
+    assert!(env.store.recent_events(10).unwrap().is_empty(), "首次基线 ok 不落事件");
+
+    // 压低告警线 → 级别 ok→warn，落一条 warn 事件
+    env.store.set_setting("water_warn_pct", "0.5").unwrap();
+    let levels = water_poll(&env.store).unwrap();
+    assert_eq!(levels[0].level, "warn");
+    let ev = env.store.recent_events(10).unwrap();
+    assert_eq!(ev.len(), 1);
+    assert_eq!(ev[0].level, "warn");
+    assert_eq!(ev[0].kind, "water");
+    assert!(ev[0].rule_id.is_none(), "水位是根的问题，不挂在规则上");
+
+    // 平稳期：级别不变 → 不刷事件
+    let _ = water_poll(&env.store).unwrap();
+    assert_eq!(env.store.recent_events(10).unwrap().len(), 1, "平稳期不落事件");
+
+    // 抬高告警线 → 降级恢复，落一条 info 事件
+    env.store.set_setting("water_warn_pct", "99.9").unwrap();
+    let levels = water_poll(&env.store).unwrap();
+    assert_eq!(levels[0].level, "ok");
+    let ev = env.store.recent_events(10).unwrap();
+    assert_eq!(ev.len(), 2);
+    assert_eq!(ev[0].level, "info", "降级恢复落 info（recent_events 最新的在前）");
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn snapshot_banners_warn_on_high_water_level() {
+    let env = setup("waterbanner");
+    // 默认水位 ok → 快照无水位横幅
+    let snap = snapshot(&env.store).unwrap();
+    assert!(!snap.banners.iter().any(|b| b.text.contains("RAM 盘水位")));
+
+    // 压低告警线 → 横幅出现（快照只读，不落事件）
+    env.store.set_setting("water_warn_pct", "0.5").unwrap();
+    let snap = snapshot(&env.store).unwrap();
+    let hit: Vec<_> = snap.banners.iter().filter(|b| b.text.contains("水位偏高")).collect();
+    assert_eq!(hit.len(), 1);
+    assert_eq!(hit[0].level, "warn");
+    assert!(
+        env.store.recent_events(10).unwrap().is_empty(),
+        "snapshot 只读，事件只能由 water_poll 落"
+    );
+    let _ = fs::remove_dir_all(&env.base);
+}

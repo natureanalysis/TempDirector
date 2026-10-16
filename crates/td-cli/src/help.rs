@@ -10,7 +10,7 @@ pub(crate) fn print_help() {
   --data-dir <路径>          覆盖数据目录（等效环境变量 TEMPDIRECTOR_DATA_DIR）
 
 === 概览 ===
-  doctor                     环境自检：数据目录、链接能力、目标盘、规则状态、待修复项
+  doctor                     环境自检：数据目录、链接能力、目标盘、水位、规则状态、待修复项
   version                    版本信息
 
 === 目标根（RAM 盘）===
@@ -18,6 +18,9 @@ pub(crate) fn print_help() {
   roots add <名称> <路径> [--timeout 毫秒] [--hdd]
   roots rm <id>
   volume <R: 或 R:\Dir> [--timeout 毫秒]     探测 / 等待卷就绪
+  water [--json]                             RAM 盘水位巡检（级别变化才落事件，
+                                             阈值默认 85%/95%，settings 的
+                                             water_warn_pct / water_critical_pct 可覆盖）
 
 === 规则 ===
   rules list [--enabled] [--category 分类] [--search 关键词] [--json]

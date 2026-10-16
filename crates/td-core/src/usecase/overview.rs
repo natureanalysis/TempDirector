@@ -81,6 +81,27 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
         });
     }
 
+    // RAM 盘水位：写满会导致软件写缓存直接失败，必须顶在概览上（只读，事件归 water_poll）。
+    for w in super::water::water_levels(store)? {
+        match w.level.as_str() {
+            "critical" => banners.push(Banner {
+                level: "error",
+                text: format!(
+                    "RAM 盘即将写满：{}（{}）已用 {:.1}%，仅剩 {} —— 建议清理或缩小规则",
+                    w.label, w.path, w.used_pct, w.free_text
+                ),
+            }),
+            "warn" => banners.push(Banner {
+                level: "warn",
+                text: format!(
+                    "RAM 盘水位偏高：{}（{}）已用 {:.1}%，剩余 {}",
+                    w.label, w.path, w.used_pct, w.free_text
+                ),
+            }),
+            _ => {}
+        }
+    }
+
     Ok(UiSnapshot {
         version: VERSION.to_string(),
         schema_version: store.user_version()?,

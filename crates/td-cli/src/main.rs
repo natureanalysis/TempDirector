@@ -80,6 +80,7 @@ fn run() -> TdResult<()> {
         "relink" => cmds::apply::cmd_relink(&store, &p),
         "boot-rebuild" => cmds::boot::cmd_boot_rebuild(&store, &p),
         "volume" => cmds::status::cmd_volume(&p),
+        "water" => cmds::status::cmd_water(&store, &p),
         "autostart" => cmds::boot::cmd_autostart(&p),
         "export" => cmds::config::cmd_export(&store, &p),
         "import" => cmds::config::cmd_import(&store, &p),

@@ -69,6 +69,25 @@ pub(crate) fn cmd_doctor(store: &Store) -> TdResult<()> {
     }
     println!();
 
+    println!("== RAM 盘水位 ==");
+    let levels = td_core::usecase::water_levels(store)?;
+    if levels.is_empty() {
+        println!("（未配置目标根，无水位可查）");
+    }
+    for w in &levels {
+        let icon = match w.level.as_str() {
+            "ok" => "✅",
+            "warn" => "⚠️",
+            "critical" => "❌",
+            _ => "❓",
+        };
+        println!(
+            "{icon} #{} {}  {}  {}（阈值 85%/95%，settings 可覆盖）",
+            w.root_id, w.label, w.path, w.message
+        );
+    }
+    println!();
+
     println!("== 规则概况 ==");
     let rules = store.list_rules()?;
     println!("共 {} 条", rules.len());
@@ -236,6 +255,30 @@ pub(crate) fn cmd_volume(p: &Parsed) -> TdResult<()> {
         std::time::Duration::from_millis(200),
     )?;
     println!("✅ 就绪，实际等待 {}ms", waited.as_millis());
+    Ok(())
+}
+
+/// `water`：一次水位巡检（与 GUI 定时器同源）。**会落事件**：级别变化才落，
+/// 平稳期重复执行零副作用 —— 适合放计划任务低频跑。
+pub(crate) fn cmd_water(store: &Store, p: &Parsed) -> TdResult<()> {
+    let levels = td_core::usecase::water_poll(store)?;
+    if p.json() {
+        println!("{}", serde_json::to_string_pretty(&levels)?);
+        return Ok(());
+    }
+    if levels.is_empty() {
+        println!("（未配置目标根，无水位可查）");
+        return Ok(());
+    }
+    for w in &levels {
+        let icon = match w.level.as_str() {
+            "ok" => "✅",
+            "warn" => "⚠️",
+            "critical" => "❌",
+            _ => "❓",
+        };
+        println!("{icon} #{} {}  {}  {}", w.root_id, w.label, w.path, w.message);
+    }
     Ok(())
 }
 
