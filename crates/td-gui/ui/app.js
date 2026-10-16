@@ -732,6 +732,61 @@ async function runRestore(ids) {
   }
 }
 
+/** 「恢复全部」panic 按钮：把所有**处于链接状态**的规则一键还原。
+ *  场景：卸载软件 / 卸载 RAM 盘 / 出问题排查 —— 需要快回到"没有重定向"的世界。
+ *  只认 ✅/⚠️（链接确实存在）的规则；plain_dir 本来就是真实目录，没什么可恢复。
+ *  有提权规则时整批走提权进程（panic 场景少一次选择）。 */
+async function restoreAllRules() {
+  const linked = state.snap.rules.filter(function (r) {
+    return r.badge === '✅' || r.badge === '⚠️';
+  });
+  if (!linked.length) {
+    toast('没有可恢复的规则', '当前没有任何规则处于链接状态', 'warn');
+    return;
+  }
+  const needElev = linked.filter(function (r) { return r.needs_elevation; }).length;
+  const ids = linked.map(function (r) { return r.id; });
+
+  const body = document.createElement('div');
+  const p1 = document.createElement('div');
+  p1.className = 'field';
+  p1.textContent = '将把 ' + linked.length + ' 条处于链接状态的规则全部还原：数据从 RAM 盘搬回原目录，并删除目录联接。';
+  body.appendChild(p1);
+  const p2 = document.createElement('div');
+  p2.className = 'field';
+  const h1 = document.createElement('div');
+  h1.className = 'hint warn';
+  h1.textContent = '搬完之后"当前重定向"将归零（缓存重新写回 SSD）。规则配置保留：期望开启的规则下次「应用」会重新重定向；想彻底停用请关闭期望或删除规则。';
+  p2.appendChild(h1);
+  const h2 = document.createElement('div');
+  h2.className = 'hint';
+  h2.textContent = needElev
+    ? '其中 ' + needElev + ' 条位于受保护位置，确认后会弹出一次 UAC 授权，全部规则将在提权进程里一起处理。'
+    : '数据量可能较大，过程中请勿关机。';
+  p2.appendChild(h2);
+  body.appendChild(p2);
+  const list = document.createElement('div');
+  list.className = 'field';
+  list.textContent = '涉及：' + linked.map(function (r) { return r.name; }).join('、');
+  body.appendChild(list);
+
+  openModal({
+    title: '恢复全部规则（一键还原）',
+    body: body,
+    actions: [
+      { label: '取消', onClick: closeModal },
+      {
+        label: '全部恢复', kind: 'danger',
+        onClick: async function () {
+          closeModal();
+          if (needElev) return runElevated('restore', ids);
+          return runRestore(ids);
+        },
+      },
+    ],
+  });
+}
+
 async function doRelink(id) {
   try {
     const o = await invoke('relink_rule', { id: id });
@@ -2158,6 +2213,7 @@ document.addEventListener('click', async function (ev) {
       ],
     });
   } else if (el.id === 'btn-boot') await doBoot();
+  else if (el.id === 'btn-restore-all') await restoreAllRules();
   else if (el.id === 'btn-ops') await openOps();
   else if (el.id === 'btn-settings') await openSettings();
   else if (el.id === 'modal-close') closeModal();

@@ -208,6 +208,9 @@ input, select { font-family: inherit; font-size: 13px; }
   font: inherit;
 }
 .menu-item:hover { background: #f1f5f9; color: var(--ink); }
+/* 破坏性/大动作菜单项（恢复全部）：红色提示这不是常规操作 */
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger:hover { background: var(--danger-bg); color: var(--danger); }
 .menu-sep { height: 1px; background: var(--line); margin: 5px 4px; }
 
 .input, .select {
