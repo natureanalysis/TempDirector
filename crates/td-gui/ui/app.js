@@ -1251,7 +1251,7 @@ async function appendAutostartSection(body, snap) {
   const field = document.createElement('div');
   field.className = 'field';
   const label = document.createElement('label');
-  label.textContent = '开机自启（登录时自动重建目标目录）';
+  label.textContent = t('auto.label');
   field.appendChild(label);
 
   const box = document.createElement('div');
@@ -1260,10 +1260,10 @@ async function appendAutostartSection(body, snap) {
   row.className = 'log-item';
   const kind = document.createElement('div');
   kind.className = 'log-kind';
-  kind.textContent = !auto ? '❔ 未知' : auto.registered ? '✅ 已启用' : '❌ 未启用';
+  kind.textContent = !auto ? t('auto.unknown') : auto.registered ? t('auto.enabled') : t('auto.disabled');
   const msg = document.createElement('div');
   msg.className = 'log-msg';
-  msg.textContent = auto ? auto.message : '读取任务状态失败';
+  msg.textContent = auto ? auto.message : t('auto.read_failed');
   row.appendChild(kind);
   row.appendChild(msg);
   box.appendChild(row);
@@ -1272,37 +1272,37 @@ async function appendAutostartSection(body, snap) {
   const actions = document.createElement('div');
   actions.className = 'detail-actions';
   actions.appendChild(
-    mkSmallBtn('启用', async function () {
+    mkSmallBtn(t('auto.enable'), async function () {
       try {
         const cmd = await invoke('autostart_enable');
-        toast('已启用开机自启', cmd, 'ok');
+        toast(t('auto.enabled_toast'), cmd, 'ok');
         closeModal();
         await openSettings();
       } catch (e) {
-        toast('启用失败', e.message, 'error');
+        toast(t('auto.enable_failed'), e.message, 'error');
       }
     }, 'primary')
   );
   actions.appendChild(
-    mkSmallBtn('停用', async function () {
+    mkSmallBtn(t('auto.disable'), async function () {
       try {
         const msg2 = await invoke('autostart_disable');
-        toast('已停用', msg2, 'ok');
+        toast(t('auto.disabled_toast'), msg2, 'ok');
         closeModal();
         await openSettings();
       } catch (e) {
-        toast('停用失败', e.message, 'error');
+        toast(t('auto.disable_failed'), e.message, 'error');
       }
     })
   );
   actions.appendChild(
-    mkSmallBtn('立即运行一次', async function () {
+    mkSmallBtn(t('auto.run_now'), async function () {
       try {
         const msg2 = await invoke('autostart_run_now');
-        toast('已触发', msg2, 'ok');
+        toast(t('auto.triggered'), msg2, 'ok');
         setTimeout(function () { refresh(true); }, 3000);
       } catch (e) {
-        toast('触发失败', e.message, 'error');
+        toast(t('auto.trigger_failed'), e.message, 'error');
       }
     })
   );
@@ -1312,12 +1312,12 @@ async function appendAutostartSection(body, snap) {
   hint.className = 'hint';
   if (auto) {
     const parts = [
-      '注册的是用户级登录任务（' + auto.task_name + '），不需要管理员权限，只在你登录时运行。',
-      '命令：' + (auto.command || auto.recommended_exe + ' boot-rebuild'),
-      '当前进程身份：' + (auto.elevated ? '管理员' : '普通用户') + '。',
+      tf('auto.p1', { name: auto.task_name }),
+      tf('auto.p2', { cmd: (auto.command || auto.recommended_exe + ' boot-rebuild') }),
+      tf('auto.p3', { id: auto.elevated ? t('auto.admin') : t('auto.normal') }),
     ];
     if (auto.extra_args) {
-      parts.push('已把数据目录写进任务参数（便携模式）：' + auto.extra_args);
+      parts.push(tf('auto.p4', { args: auto.extra_args }));
     }
     hint.textContent = parts.join(' ');
   } else {
@@ -1337,23 +1337,23 @@ function mkPickButton(label, onClick) {
 
 async function doExport() {
   try {
-    const path = await invoke('pick_save_file', { title: '导出规则配置', defaultName: 'tempdirector-config.json' });
+    const path = await invoke('pick_save_file', { title: t('io.export_title'), defaultName: 'tempdirector-config.json' });
     if (!path) return;
     const r = await invoke('export_config', { path: path });
-    toast('已导出', r[0] + ' 个目标根、' + r[1] + ' 条规则 → ' + path, 'ok');
+    toast(t('io.exported'), tf('io.exported_sub', { roots: r[0], rules: r[1], path: path }), 'ok');
   } catch (e) {
-    toast('导出失败', e.message, 'error');
+    toast(t('io.export_failed'), e.message, 'error');
   }
 }
 
 async function doImport() {
   try {
-    const path = await invoke('pick_open_file', { title: '导入规则配置' });
+    const path = await invoke('pick_open_file', { title: t('io.import_title') });
     if (!path) return;
     const rep = await invoke('import_config', { path: path, ramRoot: null, dryRun: false });
-    const msg = '新建目标根 ' + rep.roots_created + '，规则 ' + rep.rules_created +
-      '，跳过 ' + rep.rules_skipped + (rep.errors.length ? '，问题 ' + rep.errors.length + ' 条' : '');
-    toast('导入完成', msg, rep.errors.length ? 'warn' : 'ok');
+    const msg = tf('io.import_msg', { roots: rep.roots_created, rules: rep.rules_created, skipped: rep.rules_skipped }) +
+      (rep.errors.length ? tf('io.import_errors', { n: rep.errors.length }) : '');
+    toast(t('io.imported'), msg, rep.errors.length ? 'warn' : 'ok');
     if (rep.errors.length) {
       const body = document.createElement('div');
       rep.errors.forEach(function (e) {
@@ -1362,11 +1362,11 @@ async function doImport() {
         d.textContent = '⚠ ' + e;
         body.appendChild(d);
       });
-      openModal({ title: '导入时遇到的问题', body: body, actions: [{ label: '知道了', kind: 'primary', onClick: closeModal }] });
+      openModal({ title: t('io.import_problems'), body: body, actions: [{ label: t('act.boot.got_it'), kind: 'primary', onClick: closeModal }] });
     }
     await refresh(true);
   } catch (e) {
-    toast('导入失败', e.message, 'error');
+    toast(t('io.import_failed'), e.message, 'error');
   }
 }
 
@@ -1377,7 +1377,7 @@ async function doImport() {
 async function openRuleForm(id) {
   const snap = state.snap;
   if (!snap.roots.length) {
-    toast('先配置目标根', '还没有目标根，先到「设置」里添加 RAM 盘', 'warn');
+    toast(t('rule.no_root_title'), t('rule.no_root_hint'), 'warn');
     return;
   }
   const rule = id ? snap.rules.find(function (r) { return r.id === id; }) : null;
@@ -1410,7 +1410,7 @@ async function openRuleForm(id) {
       presetSelect.className = 'select';
       const placeholder = document.createElement('option');
       placeholder.value = '';
-      placeholder.textContent = '从常用预设选择（已按本机安装的软件过滤）…';
+      placeholder.textContent = t('rule.preset_ph');
       presetSelect.appendChild(placeholder);
       const groups = {};
       presets.forEach(function (p) {
@@ -1427,8 +1427,7 @@ async function openRuleForm(id) {
         });
         presetSelect.appendChild(og);
       });
-      const presetWrap = mk('常用预设（可选）', presetSelect,
-        '选中后自动填充名称、分类、源路径与目标子目录，可再修改');
+      const presetWrap = mk(t('rule.preset'), presetSelect, t('rule.preset_hint'));
       const presetHint = document.createElement('div');
       presetHint.className = 'hint';
       presetWrap.field.appendChild(presetHint);
@@ -1447,9 +1446,9 @@ async function openRuleForm(id) {
   }
 
   // 名称
-  nameInput = mkInput('例如：Chrome 缓存');
+  nameInput = mkInput(t('rule.name_ph'));
   nameInput.value = rule ? rule.name : '';
-  body.appendChild(mk('规则名称', nameInput).field);
+  body.appendChild(mk(t('rule.name'), nameInput).field);
 
   // 分类
   catSelect = document.createElement('select');
@@ -1461,21 +1460,21 @@ async function openRuleForm(id) {
     catSelect.appendChild(o);
   });
   catSelect.value = rule ? rule.category : 'other';
-  body.appendChild(mk('分类', catSelect).field);
+  body.appendChild(mk(t('rule.category'), catSelect).field);
 
   // 源路径 + 浏览 + 实时校验
   const srcField = document.createElement('div');
   srcField.className = 'field';
   const srcLabel = document.createElement('label');
-  srcLabel.textContent = '源路径（软件原生缓存目录，支持 %VAR% 模板）';
+  srcLabel.textContent = t('rule.source');
   srcField.appendChild(srcLabel);
   const srcRow = document.createElement('div');
   srcRow.className = 'field-row';
   srcInput = mkInput('%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache');
   srcInput.value = rule ? rule.source_template : '';
   srcInput.style.flex = '1';
-  const srcPick = mkPickButton('选择目录…', async function () {
-    const p = await invoke('pick_folder', { title: '选择软件的缓存目录', defaultPath: srcInput.value });
+  const srcPick = mkPickButton(t('rule.pick_dir'), async function () {
+    const p = await invoke('pick_folder', { title: t('rule.pick_dir_title'), defaultPath: srcInput.value });
     if (p) { srcInput.value = p; checkSource(); }
   });
   srcRow.appendChild(srcInput);
@@ -1492,12 +1491,12 @@ async function openRuleForm(id) {
   snap.roots.forEach(function (r) {
     const o = document.createElement('option');
     o.value = String(r.id);
-    o.textContent = '#' + r.id + ' ' + r.label + '（' + r.path + '）' + (r.state === 'ready' ? '' : ' —— 当前不可用');
+    o.textContent = '#' + r.id + ' ' + r.label + '（' + r.path + '）' + (r.state === 'ready' ? '' : t('rule.root_unavailable_tag'));
     rootSelect.appendChild(o);
   });
   rootSelect.value = String(rule ? rule.target_root_id : snap.roots[0].id);
 
-  subInput = mkInput('例如：browsers\\chrome-cache');
+  subInput = mkInput(t('rule.sub_ph'));
   subInput.value = rule ? rule.target_subpath : '';
 
   const targetRow = document.createElement('div');
@@ -1505,13 +1504,13 @@ async function openRuleForm(id) {
   const rootFieldWrap = document.createElement('div');
   rootFieldWrap.className = 'field';
   const rootL = document.createElement('label');
-  rootL.textContent = '目标根（RAM 盘）';
+  rootL.textContent = t('settings.root');
   rootFieldWrap.appendChild(rootL);
   rootFieldWrap.appendChild(rootSelect);
   const subFieldWrap = document.createElement('div');
   subFieldWrap.className = 'field';
   const subL = document.createElement('label');
-  subL.textContent = '目标子目录（RAM 盘下的相对路径）';
+  subL.textContent = t('rule.sub');
   subFieldWrap.appendChild(subL);
   subFieldWrap.appendChild(subInput);
   targetRow.appendChild(rootFieldWrap);
@@ -1524,15 +1523,15 @@ async function openRuleForm(id) {
   // 链接类型
   const linkSelect = document.createElement('select');
   linkSelect.className = 'select';
-  [['junction', '目录联接 Junction（推荐，不需要管理员权限）'],
-   ['symlink_dir', '目录符号链接（需要管理员权限或开发者模式，仅在目标是网络路径时需要）']].forEach(function (p) {
+  [['junction', t('rule.link_junction')],
+   ['symlink_dir', t('rule.link_symlink')]].forEach(function (p) {
     const o = document.createElement('option');
     o.value = p[0];
     o.textContent = p[1];
     linkSelect.appendChild(o);
   });
   linkSelect.value = rule ? rule.link_type : 'junction';
-  body.appendChild(mk('链接类型', linkSelect).field);
+  body.appendChild(mk(t('detail.key.link_type'), linkSelect).field);
 
   // 开关
   const onCheck = document.createElement('input');
@@ -1542,7 +1541,7 @@ async function openRuleForm(id) {
   bootCheck.type = 'checkbox';
   bootCheck.checked = rule ? rule.rebuild_on_boot : true;
   const flags = document.createElement('div');
-  [['期望开启（会参与「应用选中」）', onCheck], ['开机自动重建目标目录', bootCheck]].forEach(function (p) {
+  [[t('rule.want_enabled'), onCheck], [t('rule.rebuild_on_boot'), bootCheck]].forEach(function (p) {
     const l = document.createElement('label');
     l.className = 'inline-check';
     l.appendChild(p[1]);
@@ -1556,35 +1555,35 @@ async function openRuleForm(id) {
   // 备注
   const notes = document.createElement('input');
   notes.className = 'input';
-  notes.placeholder = '备注，例如：应用前请先关闭 Chrome';
+  notes.placeholder = t('rule.notes_ph');
   notes.value = rule && rule.notes ? rule.notes : '';
-  body.appendChild(mk('备注', notes).field);
+  body.appendChild(mk(t('detail.key.notes'), notes).field);
 
   // 清理排除：一行一条，只影响「清理」，不影响应用/恢复的搬运
   const excludes = document.createElement('textarea');
   excludes.className = 'input';
   excludes.rows = 2;
-  excludes.placeholder = '一行一条，可留空。\n例：sessions（任意层级）\n例：logs\\old（从根锚定）\n例：*.log（通配符）';
+  excludes.placeholder = t('rule.excludes_ph');
   excludes.value = rule && rule.excludes ? rule.excludes.join('\n') : '';
-  const exWrap = mk('清理排除（可选）', excludes);
+  const exWrap = mk(t('rule.excludes'), excludes);
   const exHint = document.createElement('div');
   exHint.className = 'hint';
-  exHint.textContent = '清理时跳过匹配的子目录或文件（目录命中则整棵子树保留）；应用/恢复的搬运不受影响。';
+  exHint.textContent = t('rule.excludes_hint');
   exWrap.field.appendChild(exHint);
   body.appendChild(exWrap.field);
 
   // 水位自动清理：RAM 盘到严重线（默认 95%）时的预授权，30 分钟冷却防反复删
   const autoSelect = document.createElement('select');
   autoSelect.className = 'select';
-  [['', '未启用（水位越线只提醒，不自动删）'],
-   ['empty', '清空全部（最激进）'],
-   ['older', '只清早于 N 小时修改的']].forEach(function (p) {
+  [['', t('rule.auto.none')],
+   ['empty', t('rule.auto.empty')],
+   ['older', t('rule.auto.older')]].forEach(function (p) {
     const o = document.createElement('option');
     o.value = p[0];
     o.textContent = p[1];
     autoSelect.appendChild(o);
   });
-  const autoHours = mkInput('小时数，例如 24');
+  const autoHours = mkInput(t('rule.auto.hours_ph'));
   autoHours.type = 'number';
   autoHours.min = '1';
   autoHours.step = '1';
@@ -1593,15 +1592,15 @@ async function openRuleForm(id) {
   const initHours = /older:(\d+)/.exec(initPolicy);
   if (initPolicy === 'empty') autoSelect.value = 'empty';
   else if (initHours) { autoSelect.value = 'older'; autoHours.value = String(Math.max(1, Math.round(Number(initHours[1]) / 3600))); }
-  const autoWrap = mk('水位自动清理（预授权）', autoSelect);
+  const autoWrap = mk(t('rule.auto.label'), autoSelect);
   const autoRow = document.createElement('div');
   autoRow.className = 'field-row';
   autoRow.appendChild(autoWrap.field);
-  const hoursWrap = mk('早于（小时）', autoHours);
+  const hoursWrap = mk(t('rule.auto.before'), autoHours);
   autoRow.appendChild(hoursWrap.field);
   const autoHint = document.createElement('div');
   autoHint.className = 'hint';
-  autoHint.textContent = 'RAM 盘水位到严重线时按此策略自动清理（排除模式照常保护）；30 分钟冷却，不会反复删。';
+  autoHint.textContent = t('rule.auto.hint');
   autoRow.appendChild(autoHint);
   function syncAutoHours() { hoursWrap.field.style.display = autoSelect.value === 'older' ? '' : 'none'; }
   autoSelect.addEventListener('change', syncAutoHours);
@@ -1622,13 +1621,13 @@ async function openRuleForm(id) {
     if (!v) { srcHint.textContent = ''; srcHint.className = 'hint'; return; }
     try {
       const info = await invoke('inspect_source', { template: v });
-      const parts = ['展开后：' + info.expanded + (info.exists ? '（存在）' : '（当前不存在）')];
-      if (info.unknown_vars.length) parts.push('未解析变量：' + info.unknown_vars.join('、'));
-      if (info.requires_elevation) parts.push('该路径在受保护位置，应用时需要管理员权限');
+      const parts = [tf('rule.src.expanded', { path: info.expanded }) + (info.exists ? t('rule.src.exists') : t('rule.src.not_exist'))];
+      if (info.unknown_vars.length) parts.push(tf('rule.src.unknown', { vars: info.unknown_vars.join(t('list.sep')) }));
+      if (info.requires_elevation) parts.push(t('rule.src.elev'));
       srcHint.textContent = parts.join(' · ');
       srcHint.className = info.blocking.length ? 'hint err'
         : (info.requires_elevation || info.unknown_vars.length) ? 'hint warn' : 'hint ok';
-      if (info.blocking.length) srcHint.textContent = '⛔ ' + info.blocking.join('；');
+      if (info.blocking.length) srcHint.textContent = '⛔ ' + info.blocking.join(t('list.sep'));
     } catch (e) {
       srcHint.textContent = e.message;
       srcHint.className = 'hint err';
@@ -1640,9 +1639,9 @@ async function openRuleForm(id) {
     if (!sub) { tgtHint.textContent = ''; tgtHint.className = 'hint'; return; }
     try {
       const info = await invoke('inspect_target', { rootId: Number(rootSelect.value), subpath: sub });
-      let text = '目标：' + info.target;
-      if (!info.root_ready) text += ' · 目标根当前不可用';
-      if (info.occupied) text += ' · 该位置已有内容（应用时需要开启「合并」）';
+      let text = tf('rule.tgt.target', { path: info.target });
+      if (!info.root_ready) text += t('rule.tgt.root_unavailable');
+      if (info.occupied) text += t('rule.tgt.occupied');
       tgtHint.textContent = text;
       tgtHint.className = 'hint ' + (!info.root_ready || info.occupied ? 'warn' : '');
     } catch (e) {
@@ -1657,12 +1656,12 @@ async function openRuleForm(id) {
   if (rule) { checkSource(); checkTarget(); }
 
   openModal({
-    title: rule ? '编辑规则 #' + rule.id : '添加规则',
+    title: rule ? tf('rule.edit_title', { id: rule.id }) : t('rule.add_title'),
     body: body,
     actions: [
-      { label: '取消', onClick: closeModal },
+      { label: t('common.cancel'), onClick: closeModal },
       {
-        label: rule ? '保存' : '添加',
+        label: rule ? t('common.save') : t('common.add'),
         kind: 'primary',
         onClick: async function () {
           // ⚠️ 字段名必须是 snake_case：Tauri 只把「命令参数名」从 camelCase 转
@@ -1687,10 +1686,10 @@ async function openRuleForm(id) {
             if (rule) await invoke('update_rule', { id: rule.id, form: form });
             else await invoke('add_rule', { form: form });
             closeModal();
-            toast(rule ? '已保存' : '已添加规则', form.name, 'ok');
+            toast(rule ? t('common.saved') : t('rule.added'), form.name, 'ok');
             await refresh(rule ? true : false);
           } catch (e) {
-            toast(rule ? '保存失败' : '添加失败', e.message, 'error');
+            toast(rule ? t('common.save_failed') : t('rule.add_failed'), e.message, 'error');
           }
         },
       },
