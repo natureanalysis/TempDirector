@@ -30,11 +30,12 @@
     <button id="btn-add" class="btn primary">＋ 添加规则</button>
     <button id="btn-apply" class="btn">应用选中</button>
     <button id="btn-restore" class="btn">恢复选中</button>
-    <button id="btn-clean" class="btn ghost">清理文件夹</button>
+    <button id="btn-clean" class="btn ghost" title="按统一策略清理全部规则的目标目录">清理…</button>
     <span class="divider"></span>
     <button id="btn-enable" class="btn ghost">开启</button>
     <button id="btn-disable" class="btn ghost">关闭</button>
     <button id="btn-locks" class="btn ghost">检测占用</button>
+    <button id="btn-disk" class="btn ghost">空间统计</button>
     <button id="btn-relink" class="btn ghost">仅重建链接</button>
     <button id="btn-delete" class="btn danger ghost">删除</button>
     <span class="spacer"></span>
@@ -56,7 +57,7 @@
     <table class="rules">
       <thead>
         <tr>
-          <th class="col-check"></th>
+          <th class="col-check"><input type="checkbox" id="sel-all-head" title="全选 / 取消全选当前结果"></th>
           <th class="col-badge">状态</th>
           <th class="col-name">名称</th>
           <th class="col-cat">分类</th>

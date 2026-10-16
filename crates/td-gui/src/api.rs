@@ -4,6 +4,7 @@
 //! 这样这一层可以脱离窗口独立做单元测试（`#[tauri::command]` 只是薄薄一层转发，
 //! 见 `commands.rs`），也便于以后把同一套逻辑接到服务端或别的 UI 上。
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -11,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use td_core::boot::{probe_volume, run_boot_rebuild, BootReport};
 use td_core::engine::{self, ApplyOptions, RuleStatus};
 use td_core::error::{TdError, TdResult};
-use td_core::fsops::mover::Progress;
+use td_core::fsops::mover::{volume_space, Progress};
 use td_core::fsops::occupancy::{self, LockReport, LockScanOptions};
-use td_core::fsops::verify::VerifyMode;
+use td_core::fsops::verify::{measure, TreeStats, VerifyMode};
 use td_core::link::detect::{detect_link, LinkState, TargetState};
 use td_core::paths;
 use td_core::portable::{self, ImportReport};
@@ -898,6 +899,162 @@ pub fn clean_run(
 }
 
 // ---------------------------------------------------------------------------
+// 磁盘空间占用统计
+// ---------------------------------------------------------------------------
+
+/// 单条规则的缓存目录占用（实时扫描所得）。
+#[derive(Debug, Clone, Serialize)]
+pub struct DiskUsageEntry {
+    pub id: i64,
+    pub name: String,
+    pub dir: String,
+    pub files: u64,
+    pub bytes: u64,
+    pub bytes_text: String,
+    /// 目录当前是否存在（不存在时占用为 0）。
+    pub exists: bool,
+}
+
+/// 一个卷的容量占用。
+#[derive(Debug, Clone, Serialize)]
+pub struct VolumeUsage {
+    /// 卷根，如 `C:\` 或 `R:\`。
+    pub path: String,
+    pub total: u64,
+    pub free: u64,
+    pub used: u64,
+    pub total_text: String,
+    pub free_text: String,
+    pub used_text: String,
+    /// 已用百分比（0～100）。
+    pub used_pct: f64,
+    pub is_ramdisk: bool,
+    /// 该卷在本应用里扮演的角色：`RAM 盘` / `目标盘` / `源盘`。
+    pub roles: Vec<String>,
+}
+
+/// 「磁盘空间占用统计」的完整视图。
+#[derive(Debug, Clone, Serialize)]
+pub struct DiskUsageView {
+    pub rules: Vec<DiskUsageEntry>,
+    pub volumes: Vec<VolumeUsage>,
+    pub total_bytes: u64,
+    pub total_bytes_text: String,
+    pub rule_count: usize,
+    pub elapsed_ms: u128,
+}
+
+fn volume_usage_of(root: &str, is_ramdisk: bool, role: &str) -> Option<VolumeUsage> {
+    let (total, free) = volume_space(Path::new(root)).ok()?;
+    let used = total.saturating_sub(free);
+    let used_pct = if total > 0 {
+        (used as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+    Some(VolumeUsage {
+        path: root.to_string(),
+        total,
+        free,
+        used,
+        total_text: util::human_bytes(total),
+        free_text: util::human_bytes(free),
+        used_text: util::human_bytes(used),
+        used_pct,
+        is_ramdisk,
+        roles: vec![role.to_string()],
+    })
+}
+
+fn merge_volume(map: &mut BTreeMap<String, VolumeUsage>, incoming: Option<VolumeUsage>) {
+    let Some(v) = incoming else { return };
+    match map.get_mut(&v.path) {
+        Some(existing) => {
+            existing.is_ramdisk |= v.is_ramdisk;
+            for r in v.roles {
+                if !existing.roles.contains(&r) {
+                    existing.roles.push(r);
+                }
+            }
+        }
+        None => {
+            map.insert(v.path.clone(), v);
+        }
+    }
+}
+
+/// 实时统计每条规则缓存目录的占用，并汇总相关卷的容量。
+///
+/// 为什么实时扫描而不是复用 `last_bytes`：后者只在"应用过"的规则上才有值，
+/// 反映的还是搬运那一刻的大小、早已过时。占用统计的价值恰恰在"现在到底占了多少"。
+/// 代价是慢，所以通过 `on_progress` 回吐进度，UI 侧有反馈。
+pub fn disk_usage(
+    store: &Store,
+    on_progress: &mut dyn FnMut(usize, usize, &str),
+) -> TdResult<DiskUsageView> {
+    let started = std::time::Instant::now();
+    let rules = store.list_rules()?;
+    let total = rules.len();
+    let mut entries: Vec<DiskUsageEntry> = Vec::new();
+    let mut total_bytes: u64 = 0;
+
+    for (i, rule) in rules.iter().enumerate() {
+        on_progress(i, total, &rule.name);
+        // 变量没解析出来等情况下跳过这条，不拖垮整张统计图。
+        let dir = match engine::clean_dir_for_rule(store, rule) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let stats: TreeStats = if dir.is_dir() {
+            measure(&dir).unwrap_or_default()
+        } else {
+            TreeStats::default()
+        };
+        total_bytes += stats.bytes;
+        entries.push(DiskUsageEntry {
+            id: rule.id,
+            name: rule.name.clone(),
+            dir: dir.display().to_string(),
+            files: stats.files,
+            bytes: stats.bytes,
+            bytes_text: util::human_bytes(stats.bytes),
+            exists: dir.is_dir(),
+        });
+    }
+    on_progress(total, total, "");
+    entries.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.name.cmp(&b.name)));
+
+    // 卷：目标根（RAM 盘）+ 各源目录所在盘，按盘符去重、角色合并。
+    let mut vol_map: BTreeMap<String, VolumeUsage> = BTreeMap::new();
+    for r in store.list_roots()? {
+        let (path, _unknown) = r.resolved_path();
+        if let Some(root) = util::volume_root(&path) {
+            let role = if r.is_ramdisk { "RAM 盘" } else { "目标盘" };
+            merge_volume(&mut vol_map, volume_usage_of(&root, r.is_ramdisk, role));
+        }
+    }
+    for rule in &rules {
+        if let Ok(resolved) = engine::resolve(store, rule) {
+            if let Some(root) = util::volume_root(&resolved.source) {
+                merge_volume(&mut vol_map, volume_usage_of(&root, false, "源盘"));
+            }
+        }
+    }
+    let mut volumes: Vec<VolumeUsage> = vol_map.into_values().collect();
+    // RAM 盘在前，其余按盘符排序。
+    volumes.sort_by(|a, b| b.is_ramdisk.cmp(&a.is_ramdisk).then_with(|| a.path.cmp(&b.path)));
+
+    Ok(DiskUsageView {
+        rules: entries,
+        volumes,
+        total_bytes,
+        total_bytes_text: util::human_bytes(total_bytes),
+        rule_count: total,
+        elapsed_ms: started.elapsed().as_millis(),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // 小工具（给 UI 展示用）
 // ---------------------------------------------------------------------------
 
@@ -1634,6 +1791,28 @@ mod tests {
         };
         let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
         assert_eq!(pv.files, 0, "清理一个还没内容的目录是常见的，不该报错");
+        let _ = fs::remove_dir_all(&env.base);
+    }
+
+    #[test]
+    fn disk_usage_scans_rule_dir_and_volumes() {
+        let env = setup("diskusage");
+        add_rule(&env.store, &form(&env, "缓存", "ram\\cache")).unwrap();
+        let mut seen_total = 0usize;
+        let view = disk_usage(&env.store, &mut |_i, total, _name| {
+            seen_total = total;
+        })
+        .unwrap();
+        assert_eq!(view.rule_count, 1);
+        assert_eq!(seen_total, 1, "应按规则条数回吐进度");
+        assert_eq!(view.rules.len(), 1);
+        // setup 里 source/a.bin 是 1024 字节的真实文件，未链接目录直接量源。
+        assert_eq!(view.rules[0].bytes, 1024);
+        assert_eq!(view.rules[0].files, 1);
+        assert!(view.rules[0].exists);
+        assert!(view.total_bytes >= 1024);
+        assert!(!view.volumes.is_empty(), "至少应统计到一个卷的容量");
+        assert!(view.volumes[0].total >= view.volumes[0].free);
         let _ = fs::remove_dir_all(&env.base);
     }
 }

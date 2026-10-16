@@ -225,6 +225,20 @@ function filteredRules() {
   });
 }
 
+/** 让筛选区与表头两处「全选」复选框与当前勾选状态保持一致。 */
+function syncSelectAll(rows) {
+  const total = rows.length;
+  let picked = 0;
+  rows.forEach(function (r) { if (state.picked.has(r.id)) picked++; });
+  const checked = total > 0 && picked === total;
+  const indeterminate = picked > 0 && picked < total;
+  [$('sel-all'), $('sel-all-head')].forEach(function (cb) {
+    if (!cb) return;
+    cb.checked = checked;
+    cb.indeterminate = indeterminate;
+  });
+}
+
 function renderRows() {
   const rows = filteredRules();
   const tbody = $('rows');
@@ -233,6 +247,7 @@ function renderRows() {
   $('filter-summary').textContent =
     '显示 ' + rows.length + ' / ' + (state.snap.rules || []).length + ' 条' +
     (state.picked.size ? ' · 已勾选 ' + state.picked.size + ' 条' : '');
+  syncSelectAll(rows);
 
   const empty = $('empty');
   if (!rows.length) {
@@ -340,6 +355,7 @@ function renderRows() {
       { act: 'apply', label: '应用', primary: true, when: r.badge !== '✅' },
       { act: 'restore', label: '恢复', when: r.badge === '✅' || r.badge === '⚠️' },
       { act: 'relink', label: '重链', when: r.badge === '⚠️' || r.badge === '❌' },
+      { act: 'clean', label: '清理…', when: true },
       { act: 'edit', label: '编辑', when: true },
     ].forEach(function (b) {
       if (!b.when) return;
@@ -1389,10 +1405,14 @@ function toLocalInputValue(d) {
 }
 
 /**
- * 打开清理对话框。target 是 {kind:'rule', id} 或 {kind:'folder', path}。
- * 破坏性操作，走「先预演、看到清单再点确认删除」两步，删除按钮在预演前禁用。
+ * 打开清理对话框。
+ *
+ * `targets` 是清理目标数组：单条规则时 `[{kind:'rule', id}]`；底部「清理…」批量清理时
+ * 把全部规则一次性传入，共用同一套策略。破坏性操作，走「先预演、看到清单再点确认删除」
+ * 两步，删除按钮在预演前禁用。
  */
-async function openCleanDialog(target, headingText) {
+async function openCleanDialog(targets, headingText) {
+  const multi = targets.length > 1;
   const body = document.createElement('div');
 
   const head = document.createElement('div');
@@ -1492,6 +1512,14 @@ async function openCleanDialog(target, headingText) {
   btnRow.appendChild(delBtn);
   body.appendChild(btnRow);
 
+  function ruleName(t) {
+    if (t.kind === 'rule') {
+      const r = state.snap.rules.find(function (x) { return x.id === t.id; });
+      return r ? r.name : ('#' + t.id);
+    }
+    return t.path;
+  }
+
   function renderPreview(pv) {
     previewHost.textContent = '';
     const sum = document.createElement('div');
@@ -1523,21 +1551,95 @@ async function openCleanDialog(target, headingText) {
     delBtn.textContent = pv.files ? ('确认删除 ' + pv.files + ' 个文件') : '确认删除';
   }
 
+  function renderBatchPreview(rows, files, bytes, linksSkipped) {
+    previewHost.textContent = '';
+    const sum = document.createElement('div');
+    sum.className = files ? 'hint' : 'hint ok';
+    sum.textContent = files
+      ? ('共将删除：' + files + ' 个文件 / ' + humanBytes(bytes) + '（' + rows.length + ' 条规则）')
+      : '没有符合条件的文件';
+    previewHost.appendChild(sum);
+    if (linksSkipped) {
+      const lk = document.createElement('div');
+      lk.className = 'hint warn';
+      lk.textContent = '注意：部分目录内有 ' + linksSkipped + ' 个链接，不会被删除或进入。';
+      previewHost.appendChild(lk);
+    }
+    rows.forEach(function (it) {
+      const line = document.createElement('div');
+      line.className = it.error ? 'hint err' : 'hint';
+      line.textContent = it.error
+        ? ('· ' + it.name + '：预演失败 —— ' + it.error)
+        : ('· ' + it.name + '　' + (it.pv.files ? (it.pv.files + ' 个 / ' + it.pv.bytes_text) : '无需清理') + '　' + it.pv.dir);
+      previewHost.appendChild(line);
+    });
+    delBtn.disabled = !files;
+    delBtn.textContent = files ? ('确认删除 ' + files + ' 个文件') : '确认删除';
+  }
+
   previewBtn.addEventListener('click', async function () {
+    const policy = buildPolicy();
+    previewBtn.disabled = true;
     try {
-      const pv = await invoke('clean_preview', { target: target, policy: buildPolicy() });
-      renderPreview(pv);
+      if (!multi) {
+        const pv = await invoke('clean_preview', { target: targets[0], policy: policy });
+        renderPreview(pv);
+      } else {
+        const rows = [];
+        let files = 0, bytes = 0, linksSkipped = 0;
+        for (let i = 0; i < targets.length; i++) {
+          previewHost.textContent = '';
+          const st = document.createElement('div');
+          st.className = 'hint';
+          st.textContent = '预演中 ' + (i + 1) + '/' + targets.length + ' …';
+          previewHost.appendChild(st);
+          const name = ruleName(targets[i]);
+          try {
+            const pv = await invoke('clean_preview', { target: targets[i], policy: policy });
+            rows.push({ name: name, pv: pv });
+            files += pv.files;
+            bytes += pv.bytes;
+            linksSkipped += pv.links_skipped;
+          } catch (e) {
+            rows.push({ name: name, error: e.message });
+          }
+        }
+        renderBatchPreview(rows, files, bytes, linksSkipped);
+      }
     } catch (e) {
       toast('预演失败', e.message, 'error');
+    } finally {
+      previewBtn.disabled = false;
     }
   });
 
   delBtn.addEventListener('click', async function () {
     delBtn.disabled = true;
+    const policy = buildPolicy();
     try {
-      const r = await invoke('clean_run', { target: target, policy: buildPolicy(), dryRun: false });
-      closeModal();
-      toast('清理完成', r.summary, r.skipped ? 'warn' : 'ok');
+      if (!multi) {
+        const r = await invoke('clean_run', { target: targets[0], policy: policy, dryRun: false });
+        closeModal();
+        toast('清理完成', r.summary, r.skipped ? 'warn' : 'ok');
+      } else {
+        let deletedFiles = 0, deletedBytes = 0, skipped = 0, failed = 0;
+        for (let i = 0; i < targets.length; i++) {
+          delBtn.textContent = '清理中 ' + (i + 1) + '/' + targets.length + ' …';
+          try {
+            const r = await invoke('clean_run', { target: targets[i], policy: policy, dryRun: false });
+            deletedFiles += r.deleted_files;
+            deletedBytes += r.deleted_bytes;
+            skipped += r.skipped;
+          } catch (e) {
+            failed++;
+          }
+        }
+        closeModal();
+        toast('批量清理完成',
+          '删除 ' + deletedFiles + ' 个文件 / ' + humanBytes(deletedBytes) +
+          (skipped ? '，跳过 ' + skipped + ' 个' : '') + (failed ? '，失败 ' + failed + ' 条' : ''),
+          failed ? 'warn' : 'ok');
+      }
       await refresh(true);
     } catch (e) {
       toast('清理失败', e.message, 'error');
@@ -1546,24 +1648,173 @@ async function openCleanDialog(target, headingText) {
   });
 
   openModal({
-    title: '清理文件夹',
+    title: multi ? '批量清理（全部规则）' : '清理文件夹',
     body: body,
     wide: true,
     actions: [{ label: '关闭', onClick: closeModal }],
   });
 }
 
-/** 工具栏「清理文件夹」：先选目录，再打开对话框。 */
-async function openCleanFolderDialog() {
-  let path = null;
-  try {
-    path = await invoke('pick_folder', { title: '选择要清理的文件夹', defaultPath: '' });
-  } catch (e) {
-    toast('打开选择框失败', e.message, 'error');
+/** 底部「清理…」：按统一策略清理全部条目的目标目录。 */
+async function openBatchCleanDialog() {
+  const rules = state.snap.rules || [];
+  if (!rules.length) {
+    toast('没有可清理的规则', '先添加规则再清理', 'warn');
     return;
   }
-  if (!path) return;
-  await openCleanDialog({ kind: 'folder', path: path }, '目标文件夹：' + path);
+  const targets = rules.map(function (r) { return { kind: 'rule', id: r.id }; });
+  await openCleanDialog(targets, '全部 ' + rules.length + ' 条规则：统一策略清理各自的目标目录');
+}
+
+// ---------------------------------------------------------------------------
+// 磁盘空间占用统计
+// ---------------------------------------------------------------------------
+
+/** 扫描进度提示节点；扫描中由 td-disk-progress 事件更新。 */
+let scanHint = null;
+
+backend.listen('td-disk-progress', function (ev) {
+  if (!scanHint) return;
+  const p = ev.payload || {};
+  const total = p.total || 0;
+  scanHint.textContent = total
+    ? ('正在扫描 ' + (p.name || '') + '（' + (p.index + 1) + '/' + total + '）…')
+    : '正在汇总卷容量…';
+});
+
+/** 工具栏「空间统计」：实时扫描各规则缓存占用，并汇总相关卷容量。 */
+async function openDiskStats() {
+  const body = document.createElement('div');
+
+  const status = document.createElement('div');
+  status.className = 'hint';
+  status.textContent = '正在扫描各规则缓存目录的占用…';
+  body.appendChild(status);
+
+  const host = document.createElement('div');
+  body.appendChild(host);
+
+  openModal({
+    title: '磁盘空间占用统计',
+    body: body,
+    wide: true,
+    actions: [
+      { label: '重新扫描', onClick: function () { load(); } },
+      { label: '关闭', onClick: closeModal },
+    ],
+  });
+
+  async function load() {
+    host.textContent = '';
+    status.className = 'hint';
+    status.textContent = '正在扫描各规则缓存目录的占用…';
+    scanHint = status;
+    try {
+      const data = await invoke('disk_usage');
+      renderDiskStats(host, status, data);
+    } catch (e) {
+      status.className = 'hint err';
+      status.textContent = '统计失败：' + e.message;
+    } finally {
+      scanHint = null;
+    }
+  }
+  await load();
+}
+
+function renderDiskStats(host, status, data) {
+  host.textContent = '';
+  status.className = 'hint ok';
+  status.textContent = '共 ' + data.rule_count + ' 条规则，缓存目录合计占用 ' +
+    data.total_bytes_text + '（扫描耗时 ' + data.elapsed_ms + ' ms）';
+
+  // ---- 各规则占用排行（横向条形图） ----
+  const barsTitle = document.createElement('div');
+  barsTitle.className = 'chart-title';
+  barsTitle.textContent = '各规则缓存占用排行';
+  host.appendChild(barsTitle);
+
+  const rules = (data.rules || []).filter(function (r) { return r.bytes > 0; });
+  if (!rules.length) {
+    const none = document.createElement('div');
+    none.className = 'hint';
+    none.textContent = '（所有规则目录当前都为空或不存在）';
+    host.appendChild(none);
+  } else {
+    const max = rules.reduce(function (m, r) { return Math.max(m, r.bytes); }, 1);
+    const bars = document.createElement('div');
+    bars.className = 'bars';
+    rules.forEach(function (r) {
+      bars.appendChild(barRow(r.name, (r.bytes / max) * 100, r.bytes_text, r.dir));
+    });
+    host.appendChild(bars);
+  }
+
+  // ---- 磁盘卷容量 ----
+  const volTitle = document.createElement('div');
+  volTitle.className = 'chart-title';
+  volTitle.textContent = '磁盘卷容量';
+  host.appendChild(volTitle);
+
+  const vols = data.volumes || [];
+  if (!vols.length) {
+    const none = document.createElement('div');
+    none.className = 'hint';
+    none.textContent = '（未取到卷容量信息）';
+    host.appendChild(none);
+  } else {
+    const list = document.createElement('div');
+    list.className = 'vol-list';
+    vols.forEach(function (v) { list.appendChild(volumeRow(v)); });
+    host.appendChild(list);
+  }
+}
+
+function barRow(name, pct, val, title) {
+  const row = document.createElement('div');
+  row.className = 'bar-row';
+  const nm = document.createElement('div');
+  nm.className = 'bar-name';
+  nm.textContent = name;
+  nm.title = title || name;
+  const track = document.createElement('div');
+  track.className = 'bar-track';
+  const fill = document.createElement('div');
+  fill.className = 'bar-fill';
+  fill.style.width = Math.max(1, Math.min(100, pct)) + '%';
+  track.appendChild(fill);
+  const va = document.createElement('div');
+  va.className = 'bar-val';
+  va.textContent = val;
+  row.appendChild(nm);
+  row.appendChild(track);
+  row.appendChild(va);
+  return row;
+}
+
+function volumeRow(v) {
+  const row = document.createElement('div');
+  row.className = 'vol-row';
+  const head = document.createElement('div');
+  head.className = 'vol-head';
+  const nm = document.createElement('div');
+  nm.className = 'vol-name';
+  nm.textContent = v.path + (v.roles && v.roles.length ? '（' + v.roles.join(' · ') + '）' : '');
+  const txt = document.createElement('div');
+  txt.className = 'vol-text';
+  txt.textContent = '已用 ' + v.used_text + ' / 共 ' + v.total_text +
+    ' · 可用 ' + v.free_text + '（' + v.used_pct.toFixed(1) + '%）';
+  head.appendChild(nm);
+  head.appendChild(txt);
+  row.appendChild(head);
+  const track = document.createElement('div');
+  track.className = 'vol-track';
+  const fill = document.createElement('div');
+  fill.className = 'vol-fill' + (v.used_pct >= 90 ? ' hot' : v.used_pct >= 75 ? ' warm' : '');
+  fill.style.width = Math.max(0, Math.min(100, v.used_pct)) + '%';
+  track.appendChild(fill);
+  row.appendChild(track);
+  return row;
 }
 
 // ---------------------------------------------------------------------------
@@ -1588,7 +1839,7 @@ document.addEventListener('click', async function (ev) {
     if (act === 'locks') { await doLocks(id); return; }
     if (act === 'clean') {
       const r = state.snap.rules.find(function (x) { return x.id === id; });
-      await openCleanDialog({ kind: 'rule', id: id }, '规则：' + (r ? r.name : ('#' + id)));
+      await openCleanDialog([{ kind: 'rule', id: id }], '规则：' + (r ? r.name : ('#' + id)));
       return;
     }
     if (act === 'edit') { await openRuleForm(id); return; }
@@ -1624,7 +1875,9 @@ document.addEventListener('click', async function (ev) {
     if (!requirePicked('检测')) return;
     await doLocks(pickedIds()[0]);
   } else if (el.id === 'btn-clean') {
-    await openCleanFolderDialog();
+    await openBatchCleanDialog();
+  } else if (el.id === 'btn-disk') {
+    await openDiskStats();
   } else if (el.id === 'btn-relink') {
     if (!requirePicked('重建')) return;
     for (const id of pickedIds()) await doRelink(id);
@@ -1681,7 +1934,7 @@ document.addEventListener('change', function (ev) {
   if (el.id === 'filter-category') { state.filters.category = el.value; renderRows(); }
   else if (el.id === 'only-enabled') { state.filters.onlyEnabled = el.checked; renderRows(); }
   else if (el.id === 'only-attention') { state.filters.onlyAttention = el.checked; renderRows(); }
-  else if (el.id === 'sel-all') {
+  else if (el.id === 'sel-all' || el.id === 'sel-all-head') {
     const rows = filteredRules();
     if (el.checked) rows.forEach(function (r) { state.picked.add(r.id); });
     else rows.forEach(function (r) { state.picked.delete(r.id); });
@@ -1938,6 +2191,26 @@ function createMockBackend() {
             denied_files: [], blockers: [{ app: 'WeChat.exe', pid: 8024, is_service: false }],
             scanned: 1284, truncated: false, elapsed_ms: 63,
           });
+        case 'disk_usage': {
+          const rows = rules.map(function (r) {
+            const bytes = r.last_bytes || 0;
+            return {
+              id: r.id, name: r.name, dir: r.target,
+              files: r.last_files || 0, bytes: bytes, bytes_text: humanBytes(bytes),
+              exists: bytes > 0,
+            };
+          }).sort(function (a, b) { return b.bytes - a.bytes; });
+          const totalBytes = rows.reduce(function (s, r) { return s + r.bytes; }, 0);
+          return Promise.resolve({
+            rules: rows,
+            volumes: [
+              { path: 'R:\\', total: 4294967296, free: 1288490188, used: 3006477108, total_text: '4.0 GB', free_text: '1.2 GB', used_text: '2.8 GB', used_pct: 70.0, is_ramdisk: true, roles: ['RAM 盘'] },
+              { path: 'C:\\', total: 511101108224, free: 128849018880, used: 382252089344, total_text: '476.0 GB', free_text: '120.0 GB', used_text: '356.0 GB', used_pct: 74.8, is_ramdisk: false, roles: ['源盘'] },
+            ],
+            total_bytes: totalBytes, total_bytes_text: humanBytes(totalBytes),
+            rule_count: rules.length, elapsed_ms: 42,
+          });
+        }
         case 'boot_rebuild':
           return Promise.resolve({
             roots: [{ root_id: 1, label: 'RAMDisk 4G', path: 'R:', ready: true, waited_ms: 120, error: null }],
@@ -2012,5 +2285,11 @@ function simulateProgress(total) {
   }
   if (PARAMS.has('ops')) {
     await openOps();
+  }
+  if (PARAMS.has('disk')) {
+    await openDiskStats();
+  }
+  if (PARAMS.has('clean')) {
+    await openBatchCleanDialog();
   }
 })();

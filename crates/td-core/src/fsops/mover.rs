@@ -96,6 +96,32 @@ pub fn free_space(path: &Path) -> TdResult<u64> {
     Ok(free)
 }
 
+/// 查询某个路径所在卷的 `(总容量, 可用空间)`。
+///
+/// 与 [`free_space`] 的区别：这里把 `GetDiskFreeSpaceExW` 的第三个出参（总字节数）
+/// 也取出来 —— 「磁盘占用统计」要画「已用 / 可用」占比，光有可用空间画不出图。
+pub fn volume_space(path: &Path) -> TdResult<(u64, u64)> {
+    let wide = util::to_wide(&util::to_verbatim(path).to_string_lossy());
+    let mut free: u64 = 0;
+    let mut total: u64 = 0;
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut free,
+            &mut total,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return Err(io_ctx(
+            std::io::Error::last_os_error(),
+            path,
+            "查询卷容量",
+        ));
+    }
+    Ok((total, free))
+}
+
 /// 预扫描树内的重解析点。
 ///
 /// 返回 `(可重建的链接数, 不支持的重解析点列表)`。第二项非空时必须**放弃搬运**：

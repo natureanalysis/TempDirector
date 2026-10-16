@@ -38,6 +38,8 @@ impl AppState {
 /// 进度事件名（Tauri 只允许字母数字与 `-/:_`，所以用连字符）。
 pub const EV_PROGRESS: &str = "td-progress";
 pub const EV_DONE: &str = "td-done";
+/// 「磁盘空间占用统计」扫描进度（逐条规则回吐）。
+pub const EV_DISK_PROGRESS: &str = "td-disk-progress";
 
 /// 取状态锁。公开是因为托盘线程也要用同一把锁。
 pub fn lock_store<'a>(
@@ -266,6 +268,24 @@ pub fn clean_run(
         serde_json::json!({ "kind": "clean", "ok": out.deleted_files, "failed": out.skipped }),
     );
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// 磁盘空间占用统计
+// ---------------------------------------------------------------------------
+
+/// 实时扫描各规则缓存目录的占用 + 相关卷容量。会逐条发射扫描进度。
+#[tauri::command]
+pub fn disk_usage(app: AppHandle, state: State<'_, AppState>) -> R<api::DiskUsageView> {
+    let guard = lock_store(&state)?;
+    let app2 = app.clone();
+    api::disk_usage(&guard, &mut move |i, total, name| {
+        let _ = app2.emit(
+            EV_DISK_PROGRESS,
+            serde_json::json!({ "index": i, "total": total, "name": name }),
+        );
+    })
+    .map_err(map_err)
 }
 
 // ---------------------------------------------------------------------------
