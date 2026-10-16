@@ -9,6 +9,7 @@
 //! | 模块 | 职责 | 是否碰数据库 |
 //! |---|---|---|
 //! | [`error`] | 统一错误类型（错误文案本身就是给用户看的提示） | 否 |
+//! | [`i18n`] | 运行时多语言文案（中/英，错误与 CLI/GUI 提示共用） | 否 |
 //! | [`util`] | 路径归一化、`\\?\` 长路径、环境变量展开、卷判定 | 否 |
 //! | [`paths`] | 应用路径解析（数据根定位、环境变量覆盖） | 否 |
 //! | [`safety`] | 规则合法性黑名单（卷根/系统目录/自环） | 否 |
@@ -37,6 +38,7 @@ pub mod elevate;
 pub mod engine;
 pub mod error;
 pub mod fsops;
+pub mod i18n;
 pub mod link;
 pub mod paths;
 pub mod portable;

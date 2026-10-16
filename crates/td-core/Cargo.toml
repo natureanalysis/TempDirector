@@ -15,7 +15,7 @@ walkdir = { workspace = true }
 filetime = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
-thiserror = { workspace = true }
+
 junction = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
