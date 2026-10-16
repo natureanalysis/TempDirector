@@ -1,20 +1,21 @@
 @echo off
 rem ---------------------------------------------------------------------------
 rem TempDirector one-shot rebuild for the whole workspace:
-rem   cargo clean + cargo build --release + refresh the desktop shortcut.
+rem   cargo build --release + refresh the desktop shortcut. Pass "clean" to
+rem   run cargo clean first (full rebuild); the default is incremental.
 rem
 rem Usage:
-rem   rebuild.bat                full rebuild (clean + release, both exes)
-rem   rebuild.bat noclean        skip cargo clean, just build --release
-rem   rebuild.bat --no-clean     same as noclean
+rem   rebuild.bat                incremental rebuild (release only, both exes)
+rem   rebuild.bat clean          full rebuild (clean + release, both exes)
+rem   rebuild.bat --clean        same as clean
 rem
 rem Why a root-level script:
 rem   * "rebuild" is a single one-button operation for the whole workspace,
 rem     so it lives at the root; the dev-facing cargo wrapper stays in
 rem     scripts\cargo.cmd (MSVC + cargo environment setup).
 rem   * After a successful build the desktop shortcut is (re)created so it
-rem     always points at the fresh tempdirector-gui.exe. cargo clean wipes
-rem     target\, so a shortcut created before a rebuild would dangle.
+rem     always points at the fresh tempdirector-gui.exe. A "clean" rebuild
+rem     wipes target\, so a shortcut created before it would dangle.
 rem
 rem NOTE: keep this file ASCII-only. cmd.exe reads .bat/.cmd using the OEM code
 rem page, so non-ASCII comments break parsing.
@@ -25,16 +26,16 @@ setlocal EnableExtensions
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
-set "SKIP_CLEAN=0"
-if /i "%~1"=="noclean"    set "SKIP_CLEAN=1"
-if /i "%~1"=="--no-clean" set "SKIP_CLEAN=1"
+set "DO_CLEAN=0"
+if /i "%~1"=="clean"   set "DO_CLEAN=1"
+if /i "%~1"=="--clean" set "DO_CLEAN=1"
 
 rem --- refuse a full clean while the GUI is running --------------------------
 rem cargo clean cannot remove target\release while tempdirector-gui.exe holds
 rem it (the process image / CWD lock): os error 32 plus a half-cleaned target
 rem tree. Fail fast with an actionable message instead. (No NSIS installer
 rem exists yet, so any running tempdirector-gui.exe is the dev build.)
-if "%SKIP_CLEAN%"=="1" goto :lock_check_done
+if "%DO_CLEAN%"=="0" goto :lock_check_done
 tasklist /fi "imagename eq tempdirector-gui.exe" 2>nul | findstr /i /c:"tempdirector-gui.exe" >nul
 if not errorlevel 1 (
   echo [rebuild] ERROR: tempdirector-gui.exe is running and locks target\release.
@@ -43,12 +44,12 @@ if not errorlevel 1 (
 )
 :lock_check_done
 
-if "%SKIP_CLEAN%"=="1" (
-  echo [rebuild] skipping cargo clean ^(noclean^)
-) else (
+if "%DO_CLEAN%"=="1" (
   echo [rebuild] cargo clean ...
   call "%ROOT%\scripts\cargo.cmd" clean
   if errorlevel 1 goto :failed
+) else (
+  echo [rebuild] skipping cargo clean ^(incremental^)
 )
 
 echo [rebuild] cargo build --release ...
