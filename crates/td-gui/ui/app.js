@@ -337,22 +337,23 @@ function renderRows() {
     tdTgt.appendChild(tgt);
     tr.appendChild(tdTgt);
 
-    // 开启
-    const tdOn = document.createElement('td');
+    // 旗标：期望开启 + 开机重建合并成一列
+    // （两个布尔各占一列太浪费横向空间，完整含义在详情面板 chips 里也有一份）
+    const tdFlags = document.createElement('td');
+    const flags = document.createElement('div');
+    flags.className = 'row-flags';
     const on = document.createElement('span');
     on.className = 'toggle ' + (r.want_enabled ? 'on' : 'off');
     on.textContent = r.want_enabled ? '●' : '○';
-    on.title = r.want_enabled ? '期望开启' : '期望关闭';
-    tdOn.appendChild(on);
-    tr.appendChild(tdOn);
-
-    // 开机重建
-    const tdBoot = document.createElement('td');
+    on.title = r.want_enabled ? '期望开启（参与「应用选中」）' : '期望关闭';
+    flags.appendChild(on);
     const bt = document.createElement('span');
     bt.className = 'toggle ' + (r.rebuild_on_boot ? 'on' : 'off');
-    bt.textContent = r.rebuild_on_boot ? '●' : '○';
-    tdBoot.appendChild(bt);
-    tr.appendChild(tdBoot);
+    bt.textContent = r.rebuild_on_boot ? '⟳' : '·';
+    bt.title = r.rebuild_on_boot ? '开机自动重建目标目录' : '不参与开机重建';
+    flags.appendChild(bt);
+    tdFlags.appendChild(flags);
+    tr.appendChild(tdFlags);
 
     // 行内操作
     const tdAct = document.createElement('td');
@@ -1991,6 +1992,11 @@ document.addEventListener('click', async function (ev) {
   }
 
   const el = ev.target;
+  const closest = el.closest ? el.closest.bind(el) : function () { return null; };
+  // 「更多」菜单：点菜单外任意处收起；点「更多」切换；点菜单项后收起再走下面的分支。
+  if (!closest('.more-wrap')) hideMoreMenu();
+  if (el.id === 'btn-more') { toggleMoreMenu(); return; }
+  if (closest('#more-menu')) hideMoreMenu();
   if (el.id === 'btn-refresh') await refresh(true);
   else if (el.id === 'btn-add') await openRuleForm(null);
   else if (el.id === 'btn-apply') { if (requirePicked('应用')) await runApply(pickedIds(), false); }
@@ -2050,10 +2056,19 @@ document.addEventListener('click', async function (ev) {
   } else if (el.id === 'btn-boot') await doBoot();
   else if (el.id === 'btn-ops') await openOps();
   else if (el.id === 'btn-settings') await openSettings();
-  else if (el.id === 'btn-export') await doExport();
-  else if (el.id === 'btn-import') await doImport();
   else if (el.id === 'modal-close') closeModal();
 });
+
+/** 切换工具栏「更多」下拉（诊断 / 低频操作收纳在这里，主按钮区只留高频动作）。 */
+function toggleMoreMenu() {
+  const m = document.getElementById('more-menu');
+  if (m) m.classList.toggle('hidden');
+}
+
+function hideMoreMenu() {
+  const m = document.getElementById('more-menu');
+  if (m) m.classList.add('hidden');
+}
 
 document.addEventListener('change', function (ev) {
   const el = ev.target;

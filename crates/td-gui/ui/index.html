@@ -19,7 +19,6 @@
     </div>
     <div class="topbar-actions">
       <span class="stat" id="stat-summary"></span>
-      <button id="btn-boot" class="btn">开机重建</button>
       <button id="btn-ops" class="btn ghost">运维日志</button>
       <button id="btn-settings" class="btn ghost">设置</button>
       <button id="btn-refresh" class="btn ghost">刷新</button>
@@ -34,13 +33,19 @@
     <span class="divider"></span>
     <button id="btn-enable" class="btn ghost">开启</button>
     <button id="btn-disable" class="btn ghost">关闭</button>
-    <button id="btn-locks" class="btn ghost">检测占用</button>
-    <button id="btn-disk" class="btn ghost">空间统计</button>
-    <button id="btn-relink" class="btn ghost">仅重建链接</button>
     <button id="btn-delete" class="btn danger ghost">删除</button>
+    <span class="divider"></span>
+    <span class="more-wrap">
+      <button id="btn-more" class="btn ghost" title="诊断与低频操作">更多 ▾</button>
+      <div id="more-menu" class="more-menu hidden">
+        <button id="btn-locks" class="menu-item">检测占用</button>
+        <button id="btn-disk" class="menu-item">空间统计</button>
+        <button id="btn-relink" class="menu-item">仅重建链接</button>
+        <div class="menu-sep"></div>
+        <button id="btn-boot" class="menu-item">执行开机重建</button>
+      </div>
+    </span>
     <span class="spacer"></span>
-    <button id="btn-export" class="btn ghost">导出配置</button>
-    <button id="btn-import" class="btn ghost">导入配置</button>
   </section>
 
   <section class="filters">
@@ -63,8 +68,7 @@
           <th class="col-cat">分类</th>
           <th class="col-source">源路径</th>
           <th class="col-target">目标（RAM 盘）</th>
-          <th class="col-flag">开启</th>
-          <th class="col-flag">开机重建</th>
+          <th class="col-flag" title="左：期望开启（● 开 / ○ 关）；右：开机自动重建（⟳ 参与）">旗标</th>
           <th class="col-actions"></th>
         </tr>
       </thead>
