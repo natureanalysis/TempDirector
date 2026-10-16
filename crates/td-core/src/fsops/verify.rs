@@ -33,10 +33,10 @@ impl VerifyMode {
         }
     }
 
-    pub fn label_zh(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
-            VerifyMode::CountAndSize => "文件数 + 总字节数",
-            VerifyMode::Sha256 => "逐文件 SHA-256",
+            VerifyMode::CountAndSize => crate::i18n::t("verify.mode.count"),
+            VerifyMode::Sha256 => crate::i18n::t("verify.mode.sha256"),
         }
     }
 }

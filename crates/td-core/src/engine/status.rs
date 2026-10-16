@@ -43,7 +43,7 @@ pub fn rule_status(store: &Store, rule: &Rule) -> TdResult<RuleStatus> {
         want_enabled: rule.want_enabled,
         rebuild_on_boot: rule.rebuild_on_boot,
         badge: state.badge(),
-        label: state.label_zh(),
+        label: state.label(),
         needs_attention: state.needs_attention(),
         warnings: r.warnings.clone(),
         unknown_vars: r.unknown_vars.clone(),

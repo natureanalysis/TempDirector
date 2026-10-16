@@ -13,13 +13,14 @@ use super::view::{SourceInspection, TargetInspection};
 
 /// 给 UI 的状态文案（把 LinkState 摊平成一行摘要）。
 pub fn describe_state(state: &LinkState) -> String {
+    use crate::i18n::t;
     match state {
         LinkState::LinkOk {
             target_state: TargetState::Empty,
             ..
-        } => "链接已就绪，目标为空（开机重建后的正常形态）".into(),
-        LinkState::LinkOk { .. } => "链接正常".into(),
-        other => other.label_zh(),
+        } => t("inspect.state.link_ok_empty").into(),
+        LinkState::LinkOk { .. } => t("inspect.state.link_ok").into(),
+        other => other.label(),
     }
 }
 

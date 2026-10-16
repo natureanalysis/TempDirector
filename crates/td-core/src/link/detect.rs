@@ -50,10 +50,10 @@ impl LinkType {
         }
     }
 
-    pub fn label_zh(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
-            LinkType::Junction => "目录联接",
-            LinkType::Symlink => "目录符号链接",
+            LinkType::Junction => crate::i18n::t("link.type.junction"),
+            LinkType::Symlink => crate::i18n::t("link.type.symlink"),
         }
     }
 }
@@ -111,37 +111,42 @@ impl LinkState {
         }
     }
 
-    pub fn label_zh(&self) -> String {
+    pub fn label(&self) -> String {
+        use crate::i18n::{t, tf};
         match self {
-            LinkState::SourceMissing => "源路径不存在".into(),
-            LinkState::PlainDir => "未链接（真实目录）".into(),
-            LinkState::PlainFile => "路径是文件，规则配置有误".into(),
+            LinkState::SourceMissing => t("link.state.source_missing").into(),
+            LinkState::PlainDir => t("link.state.plain_dir").into(),
+            LinkState::PlainFile => t("link.state.plain_file").into(),
             LinkState::LinkOk {
                 target,
                 link_type,
                 target_state,
                 target_mismatch,
             } => {
-                let t = match target_state {
-                    TargetState::Missing => "目标丢失",
-                    TargetState::Empty => "目标为空（RAM 盘刚重启）",
-                    TargetState::HasContent => "正常",
+                let st = match target_state {
+                    TargetState::Missing => t("link.state.target_missing"),
+                    TargetState::Empty => t("link.state.target_empty"),
+                    TargetState::HasContent => t("link.state.target_ok"),
                 };
-                let extra = if *target_mismatch { "，且指向与登记不符" } else { "" };
-                format!(
-                    "{} → {}（{t}{extra}）",
-                    link_type.label_zh(),
-                    target.display()
-                )
+                let extra = if *target_mismatch { t("link.state.mismatch") } else { "" };
+                tf("link.state.link_ok", &[
+                    ("type", link_type.label()),
+                    ("target", &target.display().to_string()),
+                    ("state", st),
+                    ("extra", extra),
+                ])
             }
             LinkState::LinkBroken { target, link_type } => {
-                format!("{} 断裂，目标不可达：{}", link_type.label_zh(), target.display())
+                tf("link.state.link_broken", &[
+                    ("type", link_type.label()),
+                    ("target", &target.display().to_string()),
+                ])
             }
             LinkState::ForeignReparse { tag } => {
-                format!("外来重解析点（tag {tag:#010x}），非本工具管理")
+                tf("link.state.foreign", &[("tag", &format!("{tag:#010x}"))])
             }
-            LinkState::AccessDenied => "访问被拒绝（需要管理员权限）".into(),
-            LinkState::IoError { message } => format!("检测出错：{message}"),
+            LinkState::AccessDenied => t("link.state.access_denied").into(),
+            LinkState::IoError { message } => tf("link.state.io_error", &[("message", message)]),
         }
     }
 

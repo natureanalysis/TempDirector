@@ -141,7 +141,7 @@ fn junction_selftest() -> TdResult<String> {
         let state = td_core::link::detect_link(&link, Some(&target));
         let note = match &state {
             LinkState::LinkOk { .. } => "目录 Junction 建立与识别正常（无需管理员权限）".to_string(),
-            other => format!("Junction 建好了但识别异常：{}", other.label_zh()),
+            other => format!("Junction 建好了但识别异常：{}", other.label()),
         };
         td_core::link::remove_dir_link(&link)?;
         Ok(note)

@@ -238,7 +238,7 @@ fn rebuild_one(store: &Store, rule: &Rule, root: &Root) -> TdResult<(bool, Rebui
             if again.is_managed_link() {
                 Ok((created, RebuildAction::AlreadyPresent))
             } else {
-                Ok((created, RebuildAction::NeedsAttention(again.label_zh())))
+                Ok((created, RebuildAction::NeedsAttention(again.label())))
             }
         }
         LinkState::SourceMissing => {
@@ -269,7 +269,7 @@ fn rebuild_one(store: &Store, rule: &Rule, root: &Root) -> TdResult<(bool, Rebui
             created,
             RebuildAction::NeedsAttention(format!("源路径是外来重解析点（tag {tag:#010x}）")),
         )),
-        other => Ok((created, RebuildAction::NeedsAttention(other.label_zh()))),
+        other => Ok((created, RebuildAction::NeedsAttention(other.label()))),
     }
 }
 
