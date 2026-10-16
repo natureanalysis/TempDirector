@@ -281,6 +281,26 @@ impl Store {
         Ok(())
     }
 
+    /// 按传入顺序重写这些规则的 `sort_order`（1 起）。只动列表里的规则，其余不动。
+    /// 多条 UPDATE 包在一个事务里：要么整批生效，要么整批不变 ——
+    /// 拖拽排序要么成功要么维持原样，不能出现"一半规则换了位置"的中间态。
+    /// id 的合法性 / 同类 / 无重复 / 覆盖完整分类，由 usecase 层（reorder_rules）把关。
+    pub fn set_rules_order(&self, ordered_ids: &[i64]) -> TdResult<usize> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        for (i, id) in ordered_ids.iter().enumerate() {
+            let n = tx.execute(
+                "UPDATE rules SET sort_order=?2 WHERE id=?1",
+                params![id, (i + 1) as i64],
+            )?;
+            if n == 0 {
+                return Err(TdError::NotFound(format!("没有 id={id} 的规则")));
+            }
+        }
+        tx.commit()?;
+        Ok(ordered_ids.len())
+    }
+
     pub fn set_rule_flags(
         &self,
         id: i64,

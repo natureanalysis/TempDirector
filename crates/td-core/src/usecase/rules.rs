@@ -85,6 +85,58 @@ pub fn set_enabled(store: &Store, ids: &[i64], enabled: bool) -> TdResult<usize>
     Ok(ids.len())
 }
 
+/// 同一分类内调整规则顺序（GUI 拖拽排序）。
+///
+/// 约束：`ordered_ids` 必须是**该分类的完整顺序**（即便界面正被筛选/搜索，
+/// 前端也要从全量快照组装）。原因：`set_rules_order` 只重写传入的 id，
+/// 若只传筛选后的子集，子集拿 1..n、隐藏规则保留旧值，新旧交错后顺序不可预期。
+/// 这条约束在这里强制校验（数量必须等于该分类规则总数），不靠调用方自觉。
+pub fn reorder_rules(store: &Store, ordered_ids: &[i64]) -> TdResult<usize> {
+    if ordered_ids.is_empty() {
+        return Ok(0);
+    }
+    let mut seen = std::collections::HashSet::new();
+    for id in ordered_ids {
+        if !seen.insert(*id) {
+            return Err(TdError::Other(format!(
+                "顺序列表里 id={id} 出现了不止一次"
+            )));
+        }
+    }
+    // 先全部取出（不存在的 id 在这一步就报错），同时校验同类。
+    let mut rules = Vec::with_capacity(ordered_ids.len());
+    for id in ordered_ids {
+        rules.push(store.get_rule(*id)?);
+    }
+    let category = rules[0].category.clone();
+    if let Some(r) = rules.iter().find(|r| r.category != category) {
+        return Err(TdError::Other(format!(
+            "只能在同一分类内调整顺序：{}（#{}）属于 {}，其它属于 {}",
+            r.name, r.id, r.category, category
+        )));
+    }
+    // 完整性：列表查询按 category 分组展示，缺一条就会让被漏掉的规则顺序悬空。
+    let total = store
+        .list_rules()?
+        .iter()
+        .filter(|r| r.category == category)
+        .count();
+    let given = ordered_ids.len();
+    if total != given {
+        return Err(TdError::Other(format!(
+            "顺序列表必须覆盖分类 {category} 的全部规则（{given}/{total}）"
+        )));
+    }
+    let n = store.set_rules_order(ordered_ids)?;
+    store.log_event(
+        None,
+        "info",
+        "rules_reordered",
+        &format!("调整了分类 {category} 的 {n} 条规则顺序"),
+    )?;
+    Ok(n)
+}
+
 /// 保存一条目录的 DACL 作为重建模板（用于需要提权的规则）。
 pub fn capture_acl(store: &Store, id: i64) -> TdResult<String> {
     let rule = store.get_rule(id)?;

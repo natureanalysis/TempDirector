@@ -30,7 +30,8 @@ pub use overview::{
 };
 pub use presets::{preset_rules, user_presets_path};
 pub use rules::{
-    add_root, add_rule, capture_acl, clear_acl, delete_root, delete_rules, set_enabled, update_rule,
+    add_root, add_rule, capture_acl, clear_acl, delete_root, delete_rules, reorder_rules,
+    set_enabled, update_rule,
 };
 pub use stats::savings;
 pub use view::*;

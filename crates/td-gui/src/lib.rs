@@ -89,6 +89,7 @@ pub fn run() {
             commands::update_rule,
             commands::delete_rules,
             commands::set_rules_enabled,
+            commands::reorder_rules,
             commands::capture_acl,
             commands::clear_acl,
             commands::inspect_source,

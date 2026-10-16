@@ -189,6 +189,11 @@ pub fn set_rules_enabled(state: State<'_, AppState>, ids: Vec<i64>, enabled: boo
 }
 
 #[tauri::command]
+pub fn reorder_rules(state: State<'_, AppState>, ordered_ids: Vec<i64>) -> R<usize> {
+    api::reorder_rules(&*lock_store(&state)?, &ordered_ids).map_err(map_err)
+}
+
+#[tauri::command]
 pub fn capture_acl(state: State<'_, AppState>, id: i64) -> R<String> {
     api::capture_acl(&*lock_store(&state)?, id).map_err(map_err)
 }

@@ -713,3 +713,60 @@ fn add_rule_rejects_invalid_auto_clean_policy() {
     assert!(add_rule(&env.store, &f2).is_ok(), "空串 = 未启用，应通过");
     let _ = fs::remove_dir_all(&env.base);
 }
+// ---------------------------------------------------------------------------
+// 拖拽排序（reorder_rules）
+// ---------------------------------------------------------------------------
+
+fn ids_in_order(store: &Store, category: &str) -> Vec<i64> {
+    store
+        .list_rules()
+        .unwrap()
+        .iter()
+        .filter(|r| r.category == category)
+        .map(|r| r.id)
+        .collect()
+}
+
+#[test]
+fn reorder_rules_reorders_within_category() {
+    let env = setup("reorder");
+    let src = |d: &str| env.base.join(d).to_string_lossy().into_owned();
+    let a = add_rule(&env.store, &form_at(&env, "A", &src("ca"), "a")).unwrap();
+    let b = add_rule(&env.store, &form_at(&env, "B", &src("cb"), "b")).unwrap();
+    let c = add_rule(&env.store, &form_at(&env, "C", &src("cc"), "c")).unwrap();
+    assert_eq!(ids_in_order(&env.store, "dev"), vec![a, b, c], "初始按插入序");
+
+    let n = reorder_rules(&env.store, &[c, a, b]).unwrap();
+    assert_eq!(n, 3);
+    assert_eq!(ids_in_order(&env.store, "dev"), vec![c, a, b]);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn reorder_rules_rejects_cross_category_duplicate_and_partial() {
+    let env = setup("reorderbad");
+    let src = |d: &str| env.base.join(d).to_string_lossy().into_owned();
+    let a = add_rule(&env.store, &form_at(&env, "A", &src("ca"), "a")).unwrap();
+    let b = add_rule(&env.store, &form_at(&env, "B", &src("cb"), "b")).unwrap();
+    let mut other = form_at(&env, "X", &src("cx"), "x");
+    other.category = "browser".into();
+    let x = add_rule(&env.store, &other).unwrap();
+
+    // 跨分类
+    let err = reorder_rules(&env.store, &[a, x]).unwrap_err();
+    assert!(err.to_string().contains("同一分类"), "{err}");
+    // 重复 id
+    let err = reorder_rules(&env.store, &[a, a, b]).unwrap_err();
+    assert!(err.to_string().contains("不止一次"), "{err}");
+    // 子集（不完整覆盖）—— 筛选视图下前端只发可见子集时要被拦下
+    let err = reorder_rules(&env.store, &[a]).unwrap_err();
+    assert!(err.to_string().contains("全部规则"), "{err}");
+    // 不存在的 id
+    let err = reorder_rules(&env.store, &[a, b, 999]).unwrap_err();
+    assert!(matches!(err, TdError::NotFound(_)), "{err}");
+    // 空列表 = 无操作
+    assert_eq!(reorder_rules(&env.store, &[]).unwrap(), 0);
+    // 以上全部失败后顺序未被破坏
+    assert_eq!(ids_in_order(&env.store, "dev"), vec![a, b]);
+    let _ = fs::remove_dir_all(&env.base);
+}

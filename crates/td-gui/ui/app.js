@@ -54,6 +54,7 @@ const state = {
   focusId: null,
   filters: { q: '', category: '', onlyEnabled: false, onlyAttention: false },
   busy: false,
+  drag: null,
 };
 
 const CATEGORY_LABEL = {
@@ -269,11 +270,17 @@ function renderRows() {
   const frag = document.createDocumentFragment();
   rows.forEach(function (r) {
     const tr = document.createElement('tr');
+    tr.dataset.id = String(r.id);
     if (state.picked.has(r.id)) tr.className += ' picked';
     if (r.id === state.focusId) tr.className += ' selected';
 
-    // 勾选框
+    // 勾选框 + 拖拽把手
     const tdCheck = document.createElement('td');
+    const handle = document.createElement('span');
+    handle.className = 'drag-handle';
+    handle.textContent = '⋮⋮';
+    handle.title = '拖动调整顺序（同一分类内）';
+    tdCheck.appendChild(handle);
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = state.picked.has(r.id);
@@ -2168,6 +2175,86 @@ document.addEventListener('keydown', function (ev) {
   }
 });
 
+// ---------------------------------------------------------------------------
+// 拖拽排序（同一分类内）。列表按 category 分组展示，跨分类拖拽没有意义
+// （后端 ORDER BY category 优先），在 dragover 阶段就拒绝。
+// ---------------------------------------------------------------------------
+
+/** 只有抓着把手才允许拖整行：若行常驻 draggable，文本选择与点击都会被拖拽劫持。 */
+document.addEventListener('mousedown', function (ev) {
+  const h = ev.target.closest('.drag-handle');
+  if (!h) return;
+  const tr = h.closest('tr');
+  if (tr) tr.draggable = true;
+});
+
+document.addEventListener('dragstart', function (ev) {
+  const tr = ev.target.closest && ev.target.closest('tr');
+  if (!tr || !tr.draggable || !tr.dataset.id) return;
+  const r = state.snap.rules.find(function (x) { return x.id === Number(tr.dataset.id); });
+  if (!r) return;
+  state.drag = { id: r.id, category: r.category };
+  ev.dataTransfer.effectAllowed = 'move';
+  ev.dataTransfer.setData('text/plain', String(r.id));
+});
+
+document.addEventListener('dragover', function (ev) {
+  if (!state.drag) return;
+  const tr = ev.target.closest && ev.target.closest('tr');
+  if (!tr || !tr.dataset.id) return;
+  const r = state.snap.rules.find(function (x) { return x.id === Number(tr.dataset.id); });
+  // 跨分类 / 拖到自己：不 preventDefault = 不允许落点
+  if (!r || r.category !== state.drag.category || r.id === state.drag.id) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  tr.classList.add('drag-over');
+});
+
+document.addEventListener('drop', async function (ev) {
+  if (!state.drag) return;
+  const drag = state.drag;
+  state.drag = null;
+  clearDragFeedback();
+  const tr = ev.target.closest && ev.target.closest('tr');
+  if (!tr || !tr.dataset.id) return;
+  ev.preventDefault();
+  const targetId = Number(tr.dataset.id);
+  if (targetId === drag.id) return;
+
+  // 落点在行的上半 → 插到目标之前；下半 → 之后。
+  const rect = tr.getBoundingClientRect();
+  const before = ev.clientY < rect.top + rect.height / 2;
+  const orderedIds = categoryOrderAfterDrop(drag.id, targetId, before);
+  try {
+    await invoke('reorder_rules', { orderedIds: orderedIds });
+    await refresh(true);
+  } catch (e) {
+    toast('调整顺序失败', e.message, 'error');
+  }
+});
+
+document.addEventListener('dragend', function () {
+  state.drag = null;
+  clearDragFeedback();
+});
+
+function clearDragFeedback() {
+  document.querySelectorAll('tr.drag-over').forEach(function (tr) { tr.classList.remove('drag-over'); });
+  document.querySelectorAll('tr[draggable="true"]').forEach(function (tr) { tr.draggable = false; });
+}
+
+/** 组装拖拽后该分类的全量顺序（后端要求完整覆盖该分类 ——
+ *  界面正被筛选/搜索时也要从全量快照取，否则被隐藏的规则顺序会悬空）。 */
+function categoryOrderAfterDrop(dragId, targetId, before) {
+  const all = state.snap.rules;
+  const dragRule = all.find(function (r) { return r.id === dragId; });
+  const group = all.filter(function (r) { return r.category === dragRule.category; });
+  const rest = group.filter(function (r) { return r.id !== dragId; });
+  const idx = rest.findIndex(function (r) { return r.id === targetId; });
+  rest.splice(before ? idx : idx + 1, 0, dragRule);
+  return rest.map(function (r) { return r.id; });
+}
+
 // 后端进度事件
 backend.listen('td-progress', function (ev) {
   const p = ev.payload || {};
@@ -2308,6 +2395,17 @@ function createMockBackend() {
           return Promise.resolve(1);
         case 'delete_root':
           return Promise.resolve(null);
+        case 'reorder_rules': {
+          // 这些 id 原本占据的索引集合不变，按新顺序回填（其它规则不动）。
+          const set = {};
+          args.orderedIds.forEach(function (id) { set[id] = true; });
+          const moved = rules.filter(function (r) { return set[r.id]; });
+          let mi = 0;
+          const next = rules.map(function (r) { return set[r.id] ? moved[mi++] : r; });
+          rules.length = 0;
+          rules.push.apply(rules, next);
+          return Promise.resolve(args.orderedIds.length);
+        }
         case 'add_rule': {
           const f = assertFormShape(args.form);
           const id = Math.max.apply(null, rules.map(function (r) { return r.id; })) + 1;
