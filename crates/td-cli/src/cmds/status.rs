@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use td_core::boot::{probe_volume, wait_for_volume};
 use td_core::engine;
 use td_core::fsops::occupancy::{scan_locks, LockScanOptions};
+use td_core::i18n::{t, tf};
 use td_core::link::detect::LinkState;
 use td_core::paths;
 use td_core::store::Store;
@@ -17,36 +18,37 @@ use crate::timefmt::{local_time_of_day_secs, now_utc_secs};
 
 pub(crate) fn cmd_version() -> TdResult<()> {
     println!("TempDirector {}", env!("CARGO_PKG_VERSION"));
-    println!("数据根可用环境变量 TEMPDIRECTOR_DATA_DIR 覆盖");
+    println!("{}", t("cli.version.data_root_hint"));
     Ok(())
 }
 
 pub(crate) fn cmd_doctor(store: &Store) -> TdResult<()> {
-    println!("== 环境 ==");
-    println!("数据目录        {}", paths::data_dir().display());
-    println!("数据库          {}", paths::db_path().display());
-    println!("schema 版本     v{}", store.user_version()?);
-    println!("平台            {}", std::env::consts::OS);
-    println!(
-        "进程身份        {}",
-        if td_core::elevate::is_elevated() {
-            "管理员"
-        } else {
-            "普通用户"
-        }
-    );
+    println!("{}", t("cli.doctor.env_title"));
+    let data_dir = paths::data_dir().display().to_string();
+    println!("{}", tf("cli.doctor.data_dir", &[("path", data_dir.as_str())]));
+    let db_path = paths::db_path().display().to_string();
+    println!("{}", tf("cli.doctor.db_path", &[("path", db_path.as_str())]));
+    let uv = store.user_version()?.to_string();
+    println!("{}", tf("cli.doctor.schema", &[("v", uv.as_str())]));
+    println!("{}", tf("cli.doctor.platform", &[("os", std::env::consts::OS)]));
+    let who = if td_core::elevate::is_elevated() {
+        t("cli.doctor.admin")
+    } else {
+        t("cli.doctor.normal_user")
+    };
+    println!("{}", tf("cli.doctor.proc_identity", &[("who", who)]));
     println!();
-    println!("== 链接能力自检 ==");
+    println!("{}", t("cli.doctor.link_selftest_title"));
     match junction_selftest() {
         Ok(note) => println!("✅ {note}"),
         Err(e) => println!("❌ {e}"),
     }
     println!();
 
-    println!("== 目标根 ==");
+    println!("{}", t("cli.doctor.roots_title"));
     let roots = store.list_roots()?;
     if roots.is_empty() {
-        println!("（未配置，用 `roots add` 添加）");
+        println!("{}", t("cli.doctor.roots_empty"));
     }
     for r in &roots {
         let (p, unknown) = r.resolved_path();
@@ -56,24 +58,36 @@ pub(crate) fn cmd_doctor(store: &Store) -> TdResult<()> {
             "missing" => "❌",
             _ => "⚠️",
         };
+        let unknown_part = if unknown.is_empty() {
+            String::new()
+        } else {
+            tf(
+                "cli.doctor.unresolved_vars",
+                &[("vars", &unknown.join(t("cli.doctor.var_sep")))],
+            )
+        };
         println!(
-            "{icon} #{} {}  {}  [{state}] {msg}{}",
-            r.id,
-            r.label,
-            r.path,
-            if unknown.is_empty() {
-                String::new()
-            } else {
-                format!("  未解析变量：{}", unknown.join("、"))
-            }
+            "{}",
+            tf(
+                "cli.doctor.root_row",
+                &[
+                    ("icon", icon),
+                    ("id", &r.id.to_string()),
+                    ("label", r.label.as_str()),
+                    ("path", r.path.as_str()),
+                    ("state", state),
+                    ("msg", msg.as_str()),
+                    ("unknown", unknown_part.as_str()),
+                ],
+            ),
         );
     }
     println!();
 
-    println!("== RAM 盘水位 ==");
+    println!("{}", t("cli.doctor.water_title"));
     let levels = td_core::usecase::water_levels(store)?;
     if levels.is_empty() {
-        println!("（未配置目标根，无水位可查）");
+        println!("{}", t("cli.doctor.water_empty"));
     }
     for w in &levels {
         let icon = match w.level.as_str() {
@@ -83,15 +97,27 @@ pub(crate) fn cmd_doctor(store: &Store) -> TdResult<()> {
             _ => "❓",
         };
         println!(
-            "{icon} #{} {}  {}  {}（阈值 85%/95%，settings 可覆盖）",
-            w.root_id, w.label, w.path, w.message
+            "{}",
+            tf(
+                "cli.doctor.water_row",
+                &[
+                    ("icon", icon),
+                    ("id", &w.root_id.to_string()),
+                    ("label", w.label.as_str()),
+                    ("path", w.path.as_str()),
+                    ("msg", w.message.as_str()),
+                ],
+            ),
         );
     }
     println!();
 
-    println!("== 规则概况 ==");
+    println!("{}", t("cli.doctor.rules_title"));
     let rules = store.list_rules()?;
-    println!("共 {} 条", rules.len());
+    println!(
+        "{}",
+        tf("cli.doctor.rules_count", &[("n", &rules.len().to_string())])
+    );
     let mut by_state: HashMap<String, usize> = HashMap::new();
     let mut needs = 0usize;
     for rule in &rules {
@@ -106,22 +132,32 @@ pub(crate) fn cmd_doctor(store: &Store) -> TdResult<()> {
     for (k, v) in by_state.iter() {
         println!("  {:<20} {v}", k);
     }
-    println!("  需要处理：{needs}");
+    println!(
+        "{}",
+        tf("cli.doctor.needs_attention", &[("n", &needs.to_string())])
+    );
     println!();
 
     let open = store.list_open_ops()?;
-    println!("== 待修复（上次中断的操作）==");
+    println!("{}", t("cli.doctor.open_title"));
     if open.is_empty() {
-        println!("无");
+        println!("{}", t("cli.doctor.open_none"));
     } else {
         for op in open {
+            let rule = format!("{:?}", op.rule_id);
+            let err = op.error.unwrap_or_else(|| t("cli.doctor.err_none").to_string());
             println!(
-                "  #{} rule={:?} {} 阶段={} 错误={}",
-                op.id,
-                op.rule_id,
-                op.kind,
-                op.phase,
-                op.error.unwrap_or_else(|| "（无）".into())
+                "{}",
+                tf(
+                    "cli.doctor.open_row",
+                    &[
+                        ("id", &op.id.to_string()),
+                        ("rule", rule.as_str()),
+                        ("kind", op.kind.as_str()),
+                        ("phase", op.phase.as_str()),
+                        ("err", err.as_str()),
+                    ],
+                ),
             );
         }
     }
@@ -140,8 +176,11 @@ fn junction_selftest() -> TdResult<String> {
         td_core::link::create_dir_link(&link, &target, td_core::link::LinkType::Junction)?;
         let state = td_core::link::detect_link(&link, Some(&target));
         let note = match &state {
-            LinkState::LinkOk { .. } => "目录 Junction 建立与识别正常（无需管理员权限）".to_string(),
-            other => format!("Junction 建好了但识别异常：{}", other.label()),
+            LinkState::LinkOk { .. } => t("cli.doctor.junction_ok").to_string(),
+            other => {
+                let label = other.label();
+                tf("cli.doctor.junction_abnormal", &[("label", label.as_str())])
+            }
         };
         td_core::link::remove_dir_link(&link)?;
         Ok(note)
@@ -163,7 +202,7 @@ pub(crate) fn cmd_status(store: &Store, p: &Parsed) -> TdResult<()> {
         return Ok(());
     }
     if list.is_empty() {
-        println!("（无匹配规则）");
+        println!("{}", t("cli.status.no_match"));
         return Ok(());
     }
 
@@ -171,16 +210,22 @@ pub(crate) fn cmd_status(store: &Store, p: &Parsed) -> TdResult<()> {
     for st in &list {
         *counts.entry(st.badge).or_default() += 1;
     }
+    let ok = counts.get("✅").copied().unwrap_or(0);
+    let warn = counts.get("⚠️").copied().unwrap_or(0);
+    let crit = counts.get("❌").copied().unwrap_or(0);
+    let other = list.len() - ok - warn - crit;
     println!(
-        "共 {} 条    ✅ {}   ⚠️ {}   ❌ {}   其他 {}",
-        list.len(),
-        counts.get("✅").copied().unwrap_or(0),
-        counts.get("⚠️").copied().unwrap_or(0),
-        counts.get("❌").copied().unwrap_or(0),
-        list.len()
-            - counts.get("✅").copied().unwrap_or(0)
-            - counts.get("⚠️").copied().unwrap_or(0)
-            - counts.get("❌").copied().unwrap_or(0)
+        "{}",
+        tf(
+            "cli.status.summary",
+            &[
+                ("total", &list.len().to_string()),
+                ("ok", &ok.to_string()),
+                ("warn", &warn.to_string()),
+                ("crit", &crit.to_string()),
+                ("other", &other.to_string()),
+            ],
+        ),
     );
     println!();
     for (i, st) in list.iter().enumerate() {
@@ -205,29 +250,40 @@ pub(crate) fn cmd_locks(store: &Store, p: &Parsed) -> TdResult<()> {
             dir.display()
         )));
     }
-    println!("扫描占用：{}", dir.display());
+    let dir_s = dir.display().to_string();
+    println!("{}", tf("cli.locks.scanning", &[("dir", dir_s.as_str())]));
     let report = scan_locks(&dir, &LockScanOptions::default())?;
     if p.json() {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
-    println!("扫描 {} 个文件，耗时 {}ms", report.scanned, report.elapsed_ms);
+    println!(
+        "{}",
+        tf(
+            "cli.locks.scanned",
+            &[
+                ("n", &report.scanned.to_string()),
+                ("ms", &report.elapsed_ms.to_string()),
+            ],
+        ),
+    );
     if report.is_clear() {
-        println!("✅ 未发现占用，可以安全搬运");
+        println!("{}", t("cli.locks.clear"));
         return Ok(());
     }
     println!("⚠️ {}", report.summary());
     for b in &report.blockers {
-        println!("     占用者：{}", b.describe());
+        let who = b.describe();
+        println!("{}", tf("cli.locks.blocker", &[("who", who.as_str())]));
     }
     if !report.locked_files.is_empty() {
-        println!("     被占用文件（最多显示 5 个）：");
+        println!("{}", t("cli.locks.locked_files"));
         for f in report.locked_files.iter().take(5) {
             println!("       {}", f.display());
         }
     }
     if !report.denied_files.is_empty() {
-        println!("     无权限文件（最多显示 5 个）：");
+        println!("{}", t("cli.locks.denied_files"));
         for f in report.denied_files.iter().take(5) {
             println!("       {}", f.display());
         }
@@ -249,13 +305,20 @@ pub(crate) fn cmd_volume(p: &Parsed) -> TdResult<()> {
         println!("{state}: {msg}");
         return Ok(());
     }
-    println!("等待 {target} 就绪（上限 {timeout}ms）…");
+    println!(
+        "{}",
+        tf(
+            "cli.volume.waiting",
+            &[("target", target.as_str()), ("timeout", &timeout.to_string())],
+        ),
+    );
     let waited = wait_for_volume(
         &path,
         std::time::Duration::from_millis(timeout),
         std::time::Duration::from_millis(200),
     )?;
-    println!("✅ 就绪，实际等待 {}ms", waited.as_millis());
+    let ms = waited.as_millis().to_string();
+    println!("{}", tf("cli.volume.ready", &[("ms", ms.as_str())]));
     Ok(())
 }
 
@@ -273,7 +336,7 @@ pub(crate) fn cmd_water(store: &Store, p: &Parsed) -> TdResult<()> {
         return Ok(());
     }
     if levels.is_empty() {
-        println!("（未配置目标根，无水位可查）");
+        println!("{}", t("cli.water.empty"));
         return Ok(());
     }
     for w in &levels {
@@ -296,7 +359,7 @@ fn water_sweep(store: &Store, p: &Parsed) -> TdResult<()> {
     let policy = crate::cmds::clean::build_clean_policy(p, now_utc, tod)?;
     let rules = store.list_rules()?;
     if rules.is_empty() {
-        println!("（没有规则，无可清理对象）");
+        println!("{}", t("cli.water.sweep_no_rules"));
         return Ok(());
     }
 
@@ -308,22 +371,44 @@ fn water_sweep(store: &Store, p: &Parsed) -> TdResult<()> {
             files += pv.files;
             bytes += pv.bytes;
             if pv.files > 0 {
-                println!("  · {}（#{:<3}）  {}  {}", r.name, r.id, pv.summary, pv.dir);
+                let id_col = format!("{:<3}", r.id);
+                println!(
+                    "{}",
+                    tf(
+                        "cli.water.sweep_row",
+                        &[
+                            ("name", r.name.as_str()),
+                            ("id", id_col.as_str()),
+                            ("summary", pv.summary.as_str()),
+                            ("dir", pv.dir.as_str()),
+                        ],
+                    ),
+                );
             }
         }
         println!();
-        println!("策略：{}", crate::cmds::clean::describe_policy(&policy, now_utc));
+        let policy_desc = crate::cmds::clean::describe_policy(&policy, now_utc);
+        println!(
+            "{}",
+            tf("cli.water.sweep_policy", &[("policy", policy_desc.as_str())])
+        );
         if files == 0 {
-            println!("✅ 没有符合条件的文件，无需清理。");
+            println!("{}", t("cli.clean.no_files"));
         } else {
+            let size = td_core::util::human_bytes(bytes);
             println!(
-                "共将删除：{} 个文件 / {}（{} 条规则）",
-                files,
-                td_core::util::human_bytes(bytes),
-                rules.len()
+                "{}",
+                tf(
+                    "cli.water.sweep_total",
+                    &[
+                        ("files", &files.to_string()),
+                        ("size", size.as_str()),
+                        ("rules", &rules.len().to_string()),
+                    ],
+                ),
             );
             println!();
-            println!("（这是预演，未删除任何文件。确认无误后加 --yes 执行）");
+            println!("{}", t("cli.clean.dry_run_hint"));
         }
         return Ok(());
     }
@@ -335,7 +420,17 @@ fn water_sweep(store: &Store, p: &Parsed) -> TdResult<()> {
     let total = rules.len();
     for (i, r) in rules.iter().enumerate() {
         if !quiet {
-            print!("\r清理中 {}/{}：{}…           ", i + 1, total, r.name);
+            print!(
+                "{}",
+                tf(
+                    "cli.water.sweep_progress",
+                    &[
+                        ("i", &(i + 1).to_string()),
+                        ("total", &total.to_string()),
+                        ("name", r.name.as_str()),
+                    ],
+                ),
+            );
             use std::io::Write;
             let _ = std::io::stdout().flush();
         }
@@ -349,11 +444,22 @@ fn water_sweep(store: &Store, p: &Parsed) -> TdResult<()> {
     }
     if !quiet {
         println!();
+        let size = td_core::util::human_bytes(deleted_bytes);
+        let extra = if failed > 0 {
+            tf("cli.water.sweep_failed_extra", &[("n", &failed.to_string())])
+        } else {
+            String::new()
+        };
         println!(
-            "✅ 一键清理完成：删除 {} 个文件 / {}{}",
-            deleted_files,
-            td_core::util::human_bytes(deleted_bytes),
-            if failed > 0 { format!("，{failed} 条规则失败") } else { String::new() }
+            "{}",
+            tf(
+                "cli.water.sweep_done",
+                &[
+                    ("files", &deleted_files.to_string()),
+                    ("size", size.as_str()),
+                    ("extra", extra.as_str()),
+                ],
+            ),
         );
     }
     Ok(())
@@ -367,18 +473,34 @@ pub(crate) fn cmd_stats(store: &Store, p: &Parsed) -> TdResult<()> {
         println!("{}", serde_json::to_string_pretty(&v)?);
         return Ok(());
     }
-    println!("== 效益统计 ==");
+    println!("{}", t("cli.stats.title"));
     println!(
-        "当前重定向到 RAM 盘   {} 条规则 · {} 个文件 · {}（这些写入不落 SSD）",
-        v.redirected_rules, v.redirected_files, v.redirected_text
+        "{}",
+        tf(
+            "cli.stats.redirect",
+            &[
+                ("rules", &v.redirected_rules.to_string()),
+                ("files", &v.redirected_files.to_string()),
+                ("size", v.redirected_text.as_str()),
+            ],
+        ),
     );
     println!(
-        "累计搬运（SSD → RAM） {} 个文件 · {}",
-        v.moved_files, v.moved_text
+        "{}",
+        tf(
+            "cli.stats.moved",
+            &[("files", &v.moved_files.to_string()), ("size", v.moved_text.as_str())],
+        ),
     );
     println!(
-        "累计清理释放          {} 个文件 · {}",
-        v.cleaned_files, v.cleaned_text
+        "{}",
+        tf(
+            "cli.stats.cleaned",
+            &[
+                ("files", &v.cleaned_files.to_string()),
+                ("size", v.cleaned_text.as_str()),
+            ],
+        ),
     );
     Ok(())
 }
@@ -411,15 +533,28 @@ pub(crate) fn cmd_ops(store: &Store, p: &Parsed) -> TdResult<()> {
         .unwrap_or(20);
     let open = store.list_open_ops()?;
     if !open.is_empty() {
-        println!("⚠️ 有 {} 条待修复的操作流水：", open.len());
+        println!(
+            "{}",
+            tf("cli.ops.open_header", &[("n", &open.len().to_string())])
+        );
         for op in &open {
+            let rule = format!("{:?}", op.rule_id);
+            let err = op
+                .error
+                .clone()
+                .unwrap_or_else(|| t("cli.doctor.err_none").to_string());
             println!(
-                "   #{} rule={:?} kind={} phase={} err={}",
-                op.id,
-                op.rule_id,
-                op.kind,
-                op.phase,
-                op.error.clone().unwrap_or_else(|| "（无）".into())
+                "{}",
+                tf(
+                    "cli.ops.open_row",
+                    &[
+                        ("id", &op.id.to_string()),
+                        ("rule", rule.as_str()),
+                        ("kind", op.kind.as_str()),
+                        ("phase", op.phase.as_str()),
+                        ("err", err.as_str()),
+                    ],
+                ),
             );
         }
         println!();

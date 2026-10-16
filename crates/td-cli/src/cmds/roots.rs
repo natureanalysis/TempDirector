@@ -1,6 +1,7 @@
 //! `roots` 子命令：目标根（RAM 盘）的增删查。
 
 use td_core::boot::probe_volume;
+use td_core::i18n::{t, tf};
 use td_core::store::Store;
 use td_core::{TdError, TdResult};
 
@@ -11,23 +12,36 @@ pub(crate) fn cmd_roots(store: &Store, p: &Parsed) -> TdResult<()> {
         "list" => {
             let roots = store.list_roots()?;
             if roots.is_empty() {
-                println!("（未配置，示例：roots add RAMDisk R: ）");
+                println!("{}", t("cli.roots.list_empty"));
             }
             for r in roots {
                 let (path, unknown) = r.resolved_path();
                 let (state, msg) = probe_volume(&path);
+                let id_col = format!("{:<3}", r.id);
+                let label_col = format!("{:<20}", r.label);
+                let path_col = format!("{:<20}", r.path);
+                let timeout_s = r.wait_timeout_ms.to_string();
+                let disk = if r.is_ramdisk { "RAM" } else { t("cli.roots.disk_normal") };
                 println!(
-                    "#{:<3} {:<20} {:<20} 等待上限 {}ms  盘：{}  {}\n     {}",
-                    r.id,
-                    r.label,
-                    r.path,
-                    r.wait_timeout_ms,
-                    if r.is_ramdisk { "RAM" } else { "普通" },
-                    state,
-                    msg
+                    "{}",
+                    tf(
+                        "cli.roots.list_row",
+                        &[
+                            ("id", id_col.as_str()),
+                            ("label", label_col.as_str()),
+                            ("path", path_col.as_str()),
+                            ("timeout", timeout_s.as_str()),
+                            ("disk", disk),
+                            ("state", state),
+                            ("msg", msg.as_str()),
+                        ],
+                    ),
                 );
                 if !unknown.is_empty() {
-                    println!("     未解析变量：{}", unknown.join("、"));
+                    println!(
+                        "{}",
+                        tf("cli.roots.unresolved_vars", &[("vars", &unknown.join(t("cli.roots.var_sep")))])
+                    );
                 }
             }
             Ok(())
@@ -43,7 +57,10 @@ pub(crate) fn cmd_roots(store: &Store, p: &Parsed) -> TdResult<()> {
                 .map_err(|_| TdError::Other("--timeout 必须是整数毫秒".into()))?
                 .unwrap_or(90000);
             let id = store.insert_root(&label, &path, is_ram, timeout)?;
-            println!("已添加目标根 #{id}: {label} → {path}");
+            println!(
+                "{}",
+                tf("cli.roots.added", &[("id", &id.to_string()), ("label", label.as_str()), ("path", path.as_str())])
+            );
             Ok(())
         }
         "rm" | "remove" | "delete" => {
@@ -51,7 +68,7 @@ pub(crate) fn cmd_roots(store: &Store, p: &Parsed) -> TdResult<()> {
                 TdError::Other("目标根 id 必须是整数".into())
             })?;
             store.delete_root(id)?;
-            println!("已删除目标根 #{id}");
+            println!("{}", tf("cli.roots.deleted", &[("id", &id.to_string())]));
             Ok(())
         }
         other => Err(TdError::Other(format!(

@@ -7,6 +7,7 @@
 
 use td_core::engine::{self, apply_rule, restore_rule, ApplyOptions};
 use td_core::fsops::verify::VerifyMode;
+use td_core::i18n::{t, tf};
 use td_core::store::Store;
 use td_core::{TdError, TdResult};
 
@@ -35,13 +36,19 @@ pub(crate) fn cmd_apply(store: &Store, p: &Parsed) -> TdResult<()> {
         let rule = match store.get_rule(id) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("  [失败] #{id}：{e}");
+                eprintln!(
+                    "{}",
+                    tf("cli.apply.fail_get", &[("id", &id.to_string()), ("e", &e.to_string())])
+                );
                 failed += 1;
                 continue;
             }
         };
         if multiple {
-            println!("── #{id} {} ──", rule.name);
+            println!(
+                "{}",
+                tf("cli.apply.section", &[("id", &id.to_string()), ("name", rule.name.as_str())])
+            );
         }
         match apply_rule(store, &rule, &opts, &mut noop) {
             Ok(o) => {
@@ -49,17 +56,30 @@ pub(crate) fn cmd_apply(store: &Store, p: &Parsed) -> TdResult<()> {
                 ok += 1;
             }
             Err(e) => {
-                println!("  [失败] #{id} {:<20} {e}", rule.name);
+                let name_col = format!("{:<20}", rule.name);
+                println!(
+                    "{}",
+                    tf(
+                        "cli.apply.fail_apply",
+                        &[("id", &id.to_string()), ("name", name_col.as_str()), ("e", &e.to_string())]
+                    )
+                );
                 failed += 1;
             }
         }
     }
     println!();
+    let action = if opts.dry_run {
+        t("cli.apply.action_dry_run")
+    } else {
+        t("cli.apply.action_done")
+    };
     println!(
-        "{}：成功 {} 条，失败 {} 条",
-        if opts.dry_run { "预演结束" } else { "执行结束" },
-        ok,
-        failed
+        "{}",
+        tf(
+            "cli.apply.summary",
+            &[("action", action), ("ok", &ok.to_string()), ("failed", &failed.to_string())]
+        )
     );
     if failed > 0 {
         return Err(TdError::Other(format!("有 {failed} 条未成功")));
@@ -86,7 +106,10 @@ pub(crate) fn cmd_restore(store: &Store, p: &Parsed) -> TdResult<()> {
         let rule = match store.get_rule(id) {
             Ok(r) => r,
             Err(e) => {
-                println!("  [失败] #{id}：{e}");
+                println!(
+                    "{}",
+                    tf("cli.apply.fail_get", &[("id", &id.to_string()), ("e", &e.to_string())])
+                );
                 failed += 1;
                 continue;
             }
@@ -97,17 +120,30 @@ pub(crate) fn cmd_restore(store: &Store, p: &Parsed) -> TdResult<()> {
                 ok += 1;
             }
             Err(e) => {
-                println!("  [失败] #{id} {:<20} {e}", rule.name);
+                let name_col = format!("{:<20}", rule.name);
+                println!(
+                    "{}",
+                    tf(
+                        "cli.apply.fail_apply",
+                        &[("id", &id.to_string()), ("name", name_col.as_str()), ("e", &e.to_string())]
+                    )
+                );
                 failed += 1;
             }
         }
     }
     println!();
+    let action = if opts.dry_run {
+        t("cli.apply.action_dry_run")
+    } else {
+        t("cli.apply.action_done")
+    };
     println!(
-        "{}：成功 {} 条，失败 {} 条",
-        if opts.dry_run { "预演结束" } else { "执行结束" },
-        ok,
-        failed
+        "{}",
+        tf(
+            "cli.apply.summary",
+            &[("action", action), ("ok", &ok.to_string()), ("failed", &failed.to_string())]
+        )
     );
     if failed > 0 {
         return Err(TdError::Other(format!("有 {failed} 条未成功")));
@@ -136,7 +172,7 @@ fn collect_target_ids(store: &Store, p: &Parsed, kind: &str) -> TdResult<Vec<i64
             .map(|r| r.id)
             .collect();
         if ids.is_empty() {
-            println!("没有需要处理的规则");
+            println!("{}", t("cli.apply.no_rules"));
         }
         return Ok(ids);
     }

@@ -2,13 +2,14 @@
 
 use std::path::PathBuf;
 
+use td_core::i18n::{t, tf};
 use td_core::usecase;
 use td_core::{TdError, TdResult};
 
 use crate::parse::Parsed;
 
 pub(crate) fn cmd_boot_rebuild(store: &td_core::store::Store, p: &Parsed) -> TdResult<()> {
-    println!("开始开机重建（模拟）…");
+    println!("{}", t("cli.boot.start"));
     if p.json() {
         let report = usecase::boot_rebuild(store)?;
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -16,21 +17,30 @@ pub(crate) fn cmd_boot_rebuild(store: &td_core::store::Store, p: &Parsed) -> TdR
     }
     let report = usecase::boot_rebuild(store)?;
     for r in &report.roots {
+        let icon = if r.ready { "✅" } else { "❌" };
+        let detail = if r.ready {
+            tf("cli.boot.waited", &[("ms", &r.waited_ms.to_string())])
+        } else {
+            t("cli.boot.not_ready").to_string()
+        };
+        let err = r
+            .error
+            .as_ref()
+            .map(|e| format!("\n      {e}"))
+            .unwrap_or_default();
         println!(
-            "{} 目标根 #{} {}  [{}] {}{}",
-            if r.ready { "✅" } else { "❌" },
-            r.root_id,
-            r.path,
-            r.label,
-            if r.ready {
-                format!("等待 {}ms", r.waited_ms)
-            } else {
-                "未就绪".into()
-            },
-            r.error
-                .as_ref()
-                .map(|e| format!("\n      {e}"))
-                .unwrap_or_default()
+            "{}",
+            tf(
+                "cli.boot.root_row",
+                &[
+                    ("icon", icon),
+                    ("id", &r.root_id.to_string()),
+                    ("path", r.path.as_str()),
+                    ("label", r.label.as_str()),
+                    ("detail", detail.as_str()),
+                    ("err", err.as_str()),
+                ],
+            ),
         );
     }
     println!();
@@ -52,15 +62,19 @@ pub(crate) fn cmd_autostart(p: &Parsed) -> TdResult<()> {
     match p.pos(0).unwrap_or("status") {
         "status" => {
             let st = usecase::autostart_status();
+            let icon = if st.registered {
+                t("cli.boot.autostart_registered")
+            } else {
+                t("cli.boot.autostart_unregistered")
+            };
             println!(
-                "{} 任务名：{}",
-                if st.registered { "✅ 已注册" } else { "❌ 未注册" },
-                st.task_name
+                "{}",
+                tf("cli.boot.autostart_status", &[("icon", icon), ("name", st.task_name.as_str())])
             );
             println!("   {}", st.message);
             if st.registered {
-                println!("   触发：用户登录时（InteractiveToken / 最低权限）");
-                println!("   说明：任务里只跑 `boot-rebuild`，失败结果会落库并在界面顶部提示");
+                println!("{}", t("cli.boot.trigger"));
+                println!("{}", t("cli.boot.note"));
             }
             Ok(())
         }
@@ -72,10 +86,13 @@ pub(crate) fn cmd_autostart(p: &Parsed) -> TdResult<()> {
                 None => autostart::preferred_exe(),
             };
             let cmd = autostart::enable(&exe, &autostart::extra_args_from_env())?;
-            println!("✅ 已注册开机自启");
-            println!("   任务名：{}", autostart::TASK_NAME);
-            println!("   命令：{cmd}");
-            println!("   立即验证一次：tempdirector autostart run");
+            println!("{}", t("cli.boot.enabled"));
+            println!(
+                "{}",
+                tf("cli.boot.task_name", &[("name", autostart::TASK_NAME)])
+            );
+            println!("{}", tf("cli.boot.cmd_line", &[("cmd", cmd.as_str())]));
+            println!("{}", t("cli.boot.verify_hint"));
             Ok(())
         }
         "disable" => {
@@ -84,7 +101,7 @@ pub(crate) fn cmd_autostart(p: &Parsed) -> TdResult<()> {
         }
         "run" => {
             println!("{}", usecase::autostart_run_now()?);
-            println!("（任务在后台跑，几秒后可用 `tempdirector ops` 或界面「运维日志」查看结果）");
+            println!("{}", t("cli.boot.run_hint"));
             Ok(())
         }
         other => Err(TdError::Other(format!(

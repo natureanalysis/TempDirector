@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use td_core::fsops::clean::CleanPolicy;
+use td_core::i18n::{t, tf};
 use td_core::store::Store;
 use td_core::usecase::{clean_preview, clean_run, CleanTarget};
 use td_core::{TdError, TdResult};
@@ -56,15 +57,19 @@ pub(crate) fn build_clean_policy(p: &Parsed, now_utc: i64, tod_secs: i64) -> TdR
 /// 把策略渲染成中文（相对时长口径，供预演展示）。`water sweep` 复用。
 pub(crate) fn describe_policy(policy: &CleanPolicy, now_utc: i64) -> String {
     match policy {
-        CleanPolicy::Empty => "清空全部文件".into(),
+        CleanPolicy::Empty => t("cli.clean.policy_empty").to_string(),
         CleanPolicy::Before { cutoff } => {
-            format!("删除 {} 之前修改的文件", human_duration(now_utc - *cutoff))
+            let dur = human_duration(now_utc - *cutoff);
+            tf("cli.clean.policy_before", &[("dur", dur.as_str())])
         }
-        CleanPolicy::Between { from, to } => format!(
-            "删除 {} ~ {} 之间修改的文件（左闭右开）",
-            ago_text(now_utc - *from),
-            ago_text(now_utc - *to)
-        ),
+        CleanPolicy::Between { from, to } => {
+            let from_s = ago_text(now_utc - *from);
+            let to_s = ago_text(now_utc - *to);
+            tf(
+                "cli.clean.policy_between",
+                &[("from", from_s.as_str()), ("to", to_s.as_str())],
+            )
+        }
     }
 }
 
@@ -96,42 +101,54 @@ pub(crate) fn cmd_clean(store: &Store, p: &Parsed) -> TdResult<()> {
             );
             return Ok(());
         }
-        println!("目标：{}", pv.label);
-        println!("目录：{}", pv.dir);
-        println!("策略：{}", describe_policy(&policy, now_utc));
+        println!("{}", tf("cli.clean.target", &[("label", pv.label.as_str())]));
+        println!("{}", tf("cli.clean.dir", &[("dir", pv.dir.as_str())]));
+        let policy_desc = describe_policy(&policy, now_utc);
+        println!("{}", tf("cli.clean.policy", &[("policy", policy_desc.as_str())]));
         println!();
         if !Path::new(&pv.dir).is_dir() {
-            println!("目录不存在，无需清理。");
+            println!("{}", t("cli.clean.no_dir"));
             return Ok(());
         }
         if pv.files == 0 {
-            println!("✅ 没有符合条件的文件，无需清理。");
+            println!("{}", t("cli.clean.no_files"));
             return Ok(());
         }
-        println!("将删除：{}", pv.summary);
+        println!("{}", tf("cli.clean.will_delete", &[("summary", pv.summary.as_str())]));
         if pv.links_skipped > 0 {
-            println!("（另有 {} 个链接不会被删除或进入）", pv.links_skipped);
+            println!(
+                "{}",
+                tf("cli.clean.links_skipped", &[("n", &pv.links_skipped.to_string())])
+            );
         }
         if pv.excluded_skipped > 0 {
-            println!("（另有 {} 个条目因排除模式被跳过）", pv.excluded_skipped);
+            println!(
+                "{}",
+                tf("cli.clean.excluded_skipped", &[("n", &pv.excluded_skipped.to_string())])
+            );
         }
         for s in &pv.sample {
+            let size = td_core::util::human_bytes(s.bytes);
+            let ago = ago_text(now_utc - s.mtime);
             println!(
-                "  · {}  {}  {}",
-                s.path,
-                td_core::util::human_bytes(s.bytes),
-                ago_text(now_utc - s.mtime)
+                "{}",
+                tf(
+                    "cli.clean.sample_row",
+                    &[("path", s.path.as_str()), ("size", size.as_str()), ("ago", ago.as_str())]
+                )
             );
         }
         if pv.files > pv.sample.len() as u64 {
             println!(
-                "  …（仅列出前 {} 条，共 {} 个）",
-                pv.sample.len(),
-                pv.files
+                "{}",
+                tf(
+                    "cli.clean.sample_more",
+                    &[("shown", &pv.sample.len().to_string()), ("total", &pv.files.to_string())]
+                )
             );
         }
         println!();
-        println!("（这是预演，未删除任何文件。确认无误后加 --yes 执行）");
+        println!("{}", t("cli.clean.dry_run_hint"));
         return Ok(());
     }
 
@@ -141,7 +158,10 @@ pub(crate) fn cmd_clean(store: &Store, p: &Parsed) -> TdResult<()> {
             return;
         }
         if let td_core::fsops::mover::Progress::Deleting { files } = prog {
-            print!("\r  已删除 {files} 个文件…");
+            print!(
+                "{}",
+                tf("cli.clean.deleting_progress", &[("files", &files.to_string())])
+            );
             use std::io::Write;
             let _ = std::io::stdout().flush();
         }

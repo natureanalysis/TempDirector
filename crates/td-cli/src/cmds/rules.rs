@@ -1,5 +1,6 @@
 //! `rules` 子命令：规则的增删查与期望开关。
 
+use td_core::i18n::{t, tf};
 use td_core::store::{NewRule, Store, CATEGORIES};
 use td_core::{TdError, TdResult};
 
@@ -18,13 +19,13 @@ pub(crate) fn cmd_rules(store: &Store, p: &Parsed) -> TdResult<()> {
                 return Ok(());
             }
             if rules.is_empty() {
-                println!("（无匹配规则）");
+                println!("{}", t("cli.rules.list_empty"));
                 return Ok(());
             }
+            let cat = category.unwrap_or_else(|| t("cli.rules.category_all"));
             println!(
-                "共 {} 条（分类：{}）",
-                rules.len(),
-                category.unwrap_or("全部")
+                "{}",
+                tf("cli.rules.list_count", &[("count", &rules.len().to_string()), ("category", cat)])
             );
             println!();
             for (i, r) in rules.iter().enumerate() {
@@ -105,17 +106,17 @@ pub(crate) fn cmd_rules(store: &Store, p: &Parsed) -> TdResult<()> {
             };
             let id = store.insert_rule(&nr)?;
             let rule = store.get_rule(id)?;
-            println!("已添加规则 #{id}");
+            println!("{}", tf("cli.rules.added", &[("id", &id.to_string())]));
             print_rule_row(&rule);
             if rule.needs_elevation {
-                println!("提示：该源路径位于受保护位置，应用时需要管理员权限");
+                println!("{}", t("cli.rules.elev_hint"));
             }
             Ok(())
         }
         "rm" | "remove" | "delete" => {
             for id in p.ids(1)? {
                 store.delete_rule(id)?;
-                println!("已删除规则 #{id}");
+                println!("{}", tf("cli.rules.deleted", &[("id", &id.to_string())]));
             }
             Ok(())
         }
@@ -131,7 +132,10 @@ pub(crate) fn cmd_rules(store: &Store, p: &Parsed) -> TdResult<()> {
             }
             for id in ids {
                 store.set_rule_enabled(id, on)?;
-                println!("规则 #{id} 期望开关 → {}", yn(on));
+                println!(
+                    "{}",
+                    tf("cli.rules.toggle", &[("id", &id.to_string()), ("on", yn(on))])
+                );
             }
             Ok(())
         }
