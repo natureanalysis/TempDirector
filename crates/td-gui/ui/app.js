@@ -1734,15 +1734,15 @@ async function openCleanDialog(targets, headingText) {
 
   const warn = document.createElement('div');
   warn.className = 'hint warn';
-  warn.textContent = '清理会永久删除文件（不进回收站）。占用中的文件会自动跳过，删不掉的会如实汇报。';
+  warn.textContent = t('clean.warn');
   body.appendChild(warn);
 
   // 策略单选
   const modes = [
-    ['empty', '清空全部文件'],
-    ['before_day', '昨天及更早修改的'],
-    ['before_hour', '1 小时前修改的（不含最近 1 小时）'],
-    ['between', '指定时间段内修改的'],
+    ['empty', t('clean.mode.empty')],
+    ['before_day', t('clean.mode.day')],
+    ['before_hour', t('clean.mode.hour')],
+    ['between', t('clean.mode.between')],
   ];
   const radios = [];
   modes.forEach(function (m, i) {
@@ -1777,9 +1777,9 @@ async function openCleanDialog(targets, headingText) {
   fromInput.value = toLocalInputValue(yesterday);
   toInput.value = toLocalInputValue(new Date());
   const fl = document.createElement('label');
-  fl.textContent = '从';
+  fl.textContent = t('clean.from');
   const tl = document.createElement('label');
-  tl.textContent = '到';
+  tl.textContent = t('clean.to');
   row.appendChild(fl); row.appendChild(fromInput);
   row.appendChild(tl); row.appendChild(toInput);
   rangeWrap.appendChild(row);
@@ -1815,10 +1815,10 @@ async function openCleanDialog(targets, headingText) {
   btnRow.className = 'field-row';
   const previewBtn = document.createElement('button');
   previewBtn.className = 'btn';
-  previewBtn.textContent = '预演（看看会删哪些）';
+  previewBtn.textContent = t('clean.preview');
   const delBtn = document.createElement('button');
   delBtn.className = 'btn danger';
-  delBtn.textContent = '确认删除';
+  delBtn.textContent = t('clean.confirm_del');
   delBtn.disabled = true;
   btnRow.appendChild(previewBtn);
   btnRow.appendChild(delBtn);
@@ -1837,19 +1837,19 @@ async function openCleanDialog(targets, headingText) {
     const sum = document.createElement('div');
     sum.className = pv.files ? 'hint' : 'hint ok';
     sum.textContent = pv.files
-      ? ('将删除：' + pv.summary + '（目录：' + pv.dir + '）')
-      : ('没有符合条件的文件（目录：' + pv.dir + '）');
+      ? tf('clean.will_delete', { summary: pv.summary, dir: pv.dir })
+      : tf('clean.none_match', { dir: pv.dir });
     previewHost.appendChild(sum);
     if (pv.links_skipped) {
       const lk = document.createElement('div');
       lk.className = 'hint warn';
-      lk.textContent = '注意：目录内有 ' + pv.links_skipped + ' 个链接，不会被删除或进入。';
+      lk.textContent = tf('clean.links_skipped', { n: pv.links_skipped });
       previewHost.appendChild(lk);
     }
     if (pv.excluded_skipped) {
       const ex = document.createElement('div');
       ex.className = 'hint warn';
-      ex.textContent = '已有 ' + pv.excluded_skipped + ' 个条目因规则的清理排除被跳过（不受影响）。';
+      ex.textContent = tf('clean.excluded', { n: pv.excluded_skipped });
       previewHost.appendChild(ex);
     }
     (pv.sample || []).forEach(function (s) {
@@ -1862,11 +1862,11 @@ async function openCleanDialog(targets, headingText) {
     if (pv.files > 20) {
       const more = document.createElement('div');
       more.className = 'hint';
-      more.textContent = '…（仅列出前 20 条，共 ' + pv.files + ' 个）';
+      more.textContent = tf('clean.more', { n: pv.files });
       previewHost.appendChild(more);
     }
     delBtn.disabled = !pv.files;
-    delBtn.textContent = pv.files ? ('确认删除 ' + pv.files + ' 个文件') : '确认删除';
+    delBtn.textContent = pv.files ? tf('clean.confirm_del_n', { n: pv.files }) : t('clean.confirm_del');
   }
 
   function renderBatchPreview(rows, files, bytes, linksSkipped, excludedSkipped) {
@@ -1874,31 +1874,31 @@ async function openCleanDialog(targets, headingText) {
     const sum = document.createElement('div');
     sum.className = files ? 'hint' : 'hint ok';
     sum.textContent = files
-      ? ('共将删除：' + files + ' 个文件 / ' + humanBytes(bytes) + '（' + rows.length + ' 条规则）')
-      : '没有符合条件的文件';
+      ? tf('clean.batch_will_delete', { files: files, size: humanBytes(bytes), rules: rows.length })
+      : t('clean.batch_none');
     previewHost.appendChild(sum);
     if (linksSkipped) {
       const lk = document.createElement('div');
       lk.className = 'hint warn';
-      lk.textContent = '注意：部分目录内有 ' + linksSkipped + ' 个链接，不会被删除或进入。';
+      lk.textContent = tf('clean.batch_links', { n: linksSkipped });
       previewHost.appendChild(lk);
     }
     if (excludedSkipped) {
       const ex = document.createElement('div');
       ex.className = 'hint warn';
-      ex.textContent = '已有 ' + excludedSkipped + ' 个条目因规则的清理排除被跳过（不受影响）。';
+      ex.textContent = tf('clean.excluded', { n: excludedSkipped });
       previewHost.appendChild(ex);
     }
     rows.forEach(function (it) {
       const line = document.createElement('div');
       line.className = it.error ? 'hint err' : 'hint';
       line.textContent = it.error
-        ? ('· ' + it.name + '：预演失败 —— ' + it.error)
-        : ('· ' + it.name + '　' + (it.pv.files ? (it.pv.files + ' 个 / ' + it.pv.bytes_text) : '无需清理') + '　' + it.pv.dir);
+        ? tf('clean.item_error', { name: it.name, err: it.error })
+        : ('· ' + it.name + '　' + (it.pv.files ? tf('clean.item_count', { files: it.pv.files, size: it.pv.bytes_text }) : t('clean.item_none')) + '　' + it.pv.dir);
       previewHost.appendChild(line);
     });
     delBtn.disabled = !files;
-    delBtn.textContent = files ? ('确认删除 ' + files + ' 个文件') : '确认删除';
+    delBtn.textContent = files ? tf('clean.confirm_del_n', { n: files }) : t('clean.confirm_del');
   }
 
   previewBtn.addEventListener('click', async function () {
@@ -1915,7 +1915,7 @@ async function openCleanDialog(targets, headingText) {
           previewHost.textContent = '';
           const st = document.createElement('div');
           st.className = 'hint';
-          st.textContent = '预演中 ' + (i + 1) + '/' + targets.length + ' …';
+          st.textContent = tf('clean.preview_progress', { i: i + 1, n: targets.length });
           previewHost.appendChild(st);
           const name = ruleName(targets[i]);
           try {
@@ -1932,7 +1932,7 @@ async function openCleanDialog(targets, headingText) {
         renderBatchPreview(rows, files, bytes, linksSkipped, excludedSkipped);
       }
     } catch (e) {
-      toast('预演失败', e.message, 'error');
+      toast(t('clean.preview_failed'), e.message, 'error');
     } finally {
       previewBtn.disabled = false;
     }
@@ -1945,11 +1945,11 @@ async function openCleanDialog(targets, headingText) {
       if (!multi) {
         const r = await invoke('clean_run', { target: targets[0], policy: policy, dryRun: false });
         closeModal();
-        toast('清理完成', r.summary, r.skipped ? 'warn' : 'ok');
+        toast(t('clean.done'), r.summary, r.skipped ? 'warn' : 'ok');
       } else {
         let deletedFiles = 0, deletedBytes = 0, skipped = 0, failed = 0;
         for (let i = 0; i < targets.length; i++) {
-          delBtn.textContent = '清理中 ' + (i + 1) + '/' + targets.length + ' …';
+          delBtn.textContent = tf('clean.cleaning_progress', { i: i + 1, n: targets.length });
           try {
             const r = await invoke('clean_run', { target: targets[i], policy: policy, dryRun: false });
             deletedFiles += r.deleted_files;
@@ -1960,23 +1960,23 @@ async function openCleanDialog(targets, headingText) {
           }
         }
         closeModal();
-        toast('批量清理完成',
-          '删除 ' + deletedFiles + ' 个文件 / ' + humanBytes(deletedBytes) +
-          (skipped ? '，跳过 ' + skipped + ' 个' : '') + (failed ? '，失败 ' + failed + ' 条' : ''),
+        toast(t('clean.batch_done'),
+          tf('clean.batch_done_sub', { files: deletedFiles, size: humanBytes(deletedBytes) }) +
+          (skipped ? tf('clean.batch_skipped', { n: skipped }) : '') + (failed ? tf('clean.batch_failed', { n: failed }) : ''),
           failed ? 'warn' : 'ok');
       }
       await refresh(true);
     } catch (e) {
-      toast('清理失败', e.message, 'error');
+      toast(t('clean.failed'), e.message, 'error');
       delBtn.disabled = false;
     }
   });
 
   openModal({
-    title: multi ? '批量清理（全部规则）' : '清理文件夹',
+    title: multi ? t('clean.batch_title') : t('clean.title'),
     body: body,
     wide: true,
-    actions: [{ label: '关闭', onClick: closeModal }],
+    actions: [{ label: t('common.close'), onClick: closeModal }],
   });
 }
 
@@ -1984,11 +1984,11 @@ async function openCleanDialog(targets, headingText) {
 async function openBatchCleanDialog() {
   const rules = state.snap.rules || [];
   if (!rules.length) {
-    toast('没有可清理的规则', '先添加规则再清理', 'warn');
+    toast(t('clean.nothing'), t('clean.nothing_hint'), 'warn');
     return;
   }
   const targets = rules.map(function (r) { return { kind: 'rule', id: r.id }; });
-  await openCleanDialog(targets, '全部 ' + rules.length + ' 条规则：统一策略清理各自的目标目录');
+  await openCleanDialog(targets, tf('clean.batch_heading', { n: rules.length }));
 }
 
 // ---------------------------------------------------------------------------
