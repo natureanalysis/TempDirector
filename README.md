@@ -29,7 +29,14 @@ M3 把"登录时自动重建"接上，并让受保护路径的操作能按需提
 
 ## 桌面界面
 
+界面语言支持 **中文 / English**：右上角下拉切换，首次启动跟随系统语言（非中文系统默认英文），
+选择会记住。以下每张界面都给出中英两个版本。
+
+**主界面**（中文 / English）：
+
 ![主界面](docs/screenshots/main-window.png)
+
+![Main window](docs/screenshots/main-window-en.png)
 
 * **列表**：状态徽标（✅ 正常 / ⚠️ 断链或目标空 / ❌ 未链接 / 🚫 外来重解析点）、
   需要处理的原因直接标在名称下方、源路径与目标路径并排、期望开关与开机重建两列指示灯。
@@ -43,7 +50,23 @@ M3 把"登录时自动重建"接上，并让受保护路径的操作能按需提
 * **运维日志**：事件时间线 + 操作流水两个标签页，含失败原因。
 * **托盘**：显示主窗口 / 立即执行开机重建 / 退出（关闭窗口即退出，常驻形态在 M3）。
 
+**添加规则**（中文 / English）：
+
 ![添加规则](docs/screenshots/add-rule.png)
+
+![Add rule](docs/screenshots/add-rule-en.png)
+
+**设置**（开机自启 / 定时清理 / 目标根管理；中文 / English）：
+
+![设置](docs/screenshots/settings.png)
+
+![Settings](docs/screenshots/settings-en.png)
+
+**批量应用进度浮层**（中文 / English）：
+
+![批量应用进度](docs/screenshots/progress.png)
+
+![Applying rules](docs/screenshots/progress-en.png)
 
 ### 构建与运行
 
@@ -272,9 +295,10 @@ crates/
     ui/                    index.html / style.css / app.js（静态文件，编译时内嵌）
     presets.json           内置预设清单（常用软件缓存目录，编译时内嵌）
 docs/ARCHITECTURE.md       架构与边界条件
-docs/screenshots/          界面截图
+docs/screenshots/          界面截图（中英各一套：main-window / add-rule / settings / progress）
 scripts/cargo.cmd          开发构建包装（自动补 MSVC + Rust 环境）
 scripts/make_icon.py       应用图标生成（纯 PIL 绘制，可重跑）
+scripts/take-screens.cjs   界面截图生成（mock 数据 + 无头浏览器，中英各一套，可重跑）
 rebuild.bat                一键全量重建（clean + release）并刷新桌面快捷方式
 ```
 
@@ -334,6 +358,15 @@ scripts\cargo.cmd build --release            # 两个 exe 一起出
 python scripts\make_icon.py                  # 需要改图标时重跑
 rebuild.bat                                  # 全量重建：clean + release + 刷新桌面快捷方式
 rebuild.bat noclean                          # 跳过 clean，只做增量 release 构建
+```
+
+重拍 README 用的界面截图（不启动 Tauri，mock 数据 + 无头浏览器，中英各一套）：
+
+```powershell
+# 依赖 playwright（npm i playwright），浏览器用系统已安装的 Edge / Chrome
+node scripts\take-screens.cjs --lang en     # 英文四张：main-window / add-rule / settings / progress
+node scripts\take-screens.cjs --lang zh     # 中文四张（覆盖既有截图）
+node scripts\take-screens.cjs --lang en --check   # 只扫漏翻（汉字 / 裸键名），不截图
 ```
 
 `rebuild.bat` 做的事：`cargo clean` → `cargo build --release` → 在校验产物存在后
