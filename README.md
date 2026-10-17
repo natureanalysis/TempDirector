@@ -2,159 +2,78 @@
 
 # TempDirector
 
-Redirect the cache / temp directories of hundreds of applications to a RAM disk with
-**directory junctions**, and let a boot-time guardian rebuild that directory tree on the
-RAM disk after every logon — cutting SSD writes while keeping hot cache I/O in memory.
-
-**Core trait: zero UAC prompts in the normal case** (directory junctions don't need
-`SeCreateSymbolicLinkPrivilege`); elevation only kicks in on demand when a source path
-lives under `Program Files` / `ProgramData` or another protected location.
-
----
-
-## Status
-
-| Milestone | Scope | Status |
-|---|---|---|
-| **M1** | Link engine core + safe moving + rule store + boot rebuild + CLI | ✅ Done, verified end-to-end on real hardware |
-| **M2** | Tauri 2 desktop UI (list / search / filter / multi-select / dialogs / detail panel / tray / progress / system notifications) | ✅ Done, verified with a real launch |
-| **M3** | Autostart at logon (scheduled task) + on-demand elevation worker + persisted result notices | ✅ Done and verified on real hardware (the task really runs) |
-| **M3.5** | Ops hardening: RAM-disk water-level monitoring + per-rule pre-authorized auto-clean + scheduled off-peak cleaning + savings stats + drag-and-drop rule ordering + exclusion patterns + one-click restore | ✅ Done |
-| M4 | Windows service (logon events + user token + patrol self-healing) + named-pipe IPC | Planned |
-| M5 | Built-in preset rule library (templates for ~100 apps) + NSIS installer | Planned |
-
-M1 produced `td-core` (the engine library) and `tempdirector` (the CLI);
-M2 produced `td-gui` (`tempdirector-gui.exe`, the UI);
-M3 wired up "rebuild at logon" and made protected-path operations elevate on demand.
-All three binaries share the same `td-core`; the UI layer contains no link logic.
+**A Windows symbolic-link manager.** TempDirector redirects the cache and temp directories
+of desktop applications to a RAM disk with directory junctions, then rebuilds that
+directory tree on the RAM disk at every logon — cutting SSD writes while hot cache I/O
+stays in memory. Junctions don't need `SeCreateSymbolicLinkPrivilege`, so the normal case
+runs with zero UAC prompts; elevation happens on demand only when a source path sits under
+`Program Files` / `ProgramData` or another protected location.
 
 ---
 
 ## Desktop UI
 
-The UI speaks **both Chinese and English**: switch with the dropdown at the top right.
-The first launch follows your system language (English by default on non-Chinese systems),
-and the choice is remembered.
+The UI speaks **中文 / English** — switch from the dropdown at the top right (follows the
+system language on first launch; the choice is remembered).
 
 **Main window**:
 
 ![Main window](docs/screenshots/main-window-en.png)
 
-* **List**: status badges (✅ OK / ⚠️ broken link or empty target / ❌ not linked / 🚫 foreign reparse point),
-  the reason needing attention right under the name, source and target paths side by side,
-  plus indicator columns for "wanted enabled" and "rebuild on boot".
-* **Search**: search box (name / source path / target subpath), category filter,
-  "enabled only", "needs attention only", "select all current results".
-* **Batch**: after checking boxes, one click each for Apply / Restore / Enable / Disable /
-  Check locks / Relink only / Delete.
-* **Detail panel**: select a row to expand full info (source template and expanded path,
-  link type, warnings, last applied time and size), with per-rule action buttons.
-* **Add / edit rule**: live validation (path expansion result, missing environment variables,
-  protected location, whether the target already has content), and the source directory
-  can be picked with the system folder dialog.
-* **Progress overlay**: a batch apply shows per-rule progress (from the backend
-  `td-progress` event), so you never get "I clicked and nothing happened".
-* **Activity log**: event timeline + operation history tabs, including failure reasons.
-* **Tray**: show main window / run boot rebuild now / quit (closing the window quits for
-  now; a resident form is M3).
-
-**Add rule**:
+* **Rule list**: status badges (✅ OK / ⚠️ broken link or empty target / ❌ not linked /
+  🚫 foreign reparse point), source → target paths side by side, wanted/boot-rebuild flags;
+  search, category filter and "needs attention only" narrow the list; checked rows drive
+  batch actions (apply / restore / enable / disable / relink / delete).
+* **Detail panel**: full info per rule (source template and expanded path, link type,
+  warnings, last applied time and size) plus single-rule actions.
+* **Add / edit rule**: live validation (path expansion, protected location, target state),
+  system folder picker for the source, and a presets dropdown with cache-dir templates for
+  common apps.
+* **Also**: batch progress overlay, activity log, settings (autostart / scheduled cleaning /
+  target roots), and a tray menu.
 
 ![Add rule](docs/screenshots/add-rule-en.png)
 
-**Settings** (autostart / scheduled cleaning / target roots):
-
 ![Settings](docs/screenshots/settings-en.png)
-
-**Batch apply progress overlay**:
 
 ![Applying rules](docs/screenshots/progress-en.png)
 
 ### Build and run
 
 ```powershell
-scripts\cargo.cmd build -p td-gui            # debug build (with console, handy for logs)
-scripts\cargo.cmd build -p td-gui --release  # release build (no console window)
-# output: target\release\tempdirector-gui.exe
+scripts\cargo.cmd build -p td-gui --release   # output: target\release\tempdirector-gui.exe
 ```
 
-The interface is **static files** (`crates/td-gui/ui/`, embedded into the exe at compile
-time) — **no npm, no bundler**. To look at the UI alone (without starting Tauri), open
-`crates/td-gui/ui/index.html?mock=1` in a browser; it mounts an in-memory fake dataset.
-Add `&progress=1` for the progress overlay, `&modal=1` / `&settings=1` / `&ops=1` for the
-various dialogs.
+The interface is static files embedded into the exe — no npm, no bundler. To preview it
+without Tauri, open `crates/td-gui/ui/index.html?mock=1` in a browser (add `&progress=1` /
+`&modal=1` / `&settings=1` / `&ops=1` for the overlays and dialogs).
 
 ---
 
 ## Autostart and elevation
 
-### Rebuild automatically at logon
+Register a per-user logon task (no admin rights needed) to rebuild the RAM-disk tree
+automatically at every logon:
 
 ```powershell
-tempdirector autostart status     # check whether the task is registered
-tempdirector autostart enable     # register (per-user task, no admin rights needed)
-tempdirector autostart run        # trigger one run right now, to verify the setup
-tempdirector autostart disable
+tempdirector autostart enable     # afterwards every logon rebuilds automatically
+tempdirector autostart status     # inspect: registered? running what?
+tempdirector autostart run        # trigger one run now, to verify
+tempdirector autostart disable    # remove
 ```
 
-The same switches live in the in-app "Settings".
-
-* What gets registered is a **per-user logon task** (`InteractiveToken` + `LeastPrivilege`
-  + `Priority 4`); registering, querying and deleting need no elevation (verified).
-* The task action is `<GUI path> boot-rebuild`, and the GUI is
-  `windows_subsystem = "windows"` in release builds, so **no console window flashes at
-  logon**.
-* In portable mode (data dir pointed to by `TEMPDIRECTOR_DATA_DIR`), registration also
-  writes `--data-dir "<dir>"` into the task — scheduled tasks don't inherit your shell's
-  environment variables; without it you'd get "registered with database A, runs database B
-  at logon".
-* **Failures are never silent**: the rebuild report is stored (`settings.last_boot_report`)
-  and written to `logs/boot-rebuild.log`; the UI shows a banner at the top next time it opens.
-
-### When administrator rights are needed
+The task action is `<GUI path> boot-rebuild`; portable setups also get `--data-dir` baked
+into the task, because scheduled tasks don't inherit your shell's environment variables.
+Failures are never silent: the report is stored in the database and written to
+`logs/boot-rebuild.log`, and the UI shows a banner on next open.
 
 Directory junctions themselves need no privileges, but writing caches under
-`C:\Program Files` / `C:\ProgramData` / `C:\Windows` needs admin rights. Such rules carry a
-"needs admin" mark in the UI, and a batch apply asks whether you want to elevate.
-
-Elevation goes through a **one-shot worker**: write a job file containing only rule ids →
-`ShellExecuteExW(runas)` to relaunch itself → the worker re-runs every safety check →
-writes back the result file → the source process reads it. Three constraints:
-
-1. **The job contains no paths, only rule ids** — even a forged job can only trigger
-   actions that are already legal in the rule store.
-2. **The job must live inside `<data dir>\jobs\`**, otherwise it's rejected outright
-   (verified: placed anywhere else → exit code 1).
-3. The worker re-runs the exact same validation path as the GUI/CLI (blacklist,
-   self-loop, occupancy detection), with no exemptions.
-
-The CLI can also drive it directly:
-
-```powershell
-tempdirector elevated <job.json>     # normally not needed manually; the GUI launches it itself
-```
-
----
-
-## Behaviors verified on real hardware
-
-Everything below was run against a real filesystem on this machine (not unit-test mocks):
-
-| Scenario | Result |
-|---|---|
-| Same-volume redirect | goes through `rename`: 3 files / 2 MB, 71ms, all metadata preserved |
-| Cross-volume redirect | copy → verify → delete source: 2 files / 1 MB, 25ms |
-| Independent link verification | `cmd dir /AL` shows `<JUNCTION>`; `fsutil reparsepoint query` shows tag `0xa0000003` (Mount Point) |
-| Read/write through the link | reading `a.txt` / a 2 MB binary / files in subdirectories all work; writes land on the RAM disk side |
-| **Simulated RAM-disk reboot** | links show `⚠️ broken`; `boot-rebuild` recreates the directories; links become usable again (empty target, as expected); writes succeed again |
-| Restore (RAM disk has content) | remove link → content moved back to the source directory → target directory gone |
-| Restore (RAM disk empty) | remove link → recreate the empty original directory; `fsutil` confirms it's no longer a reparse point |
-| Rule store export / import | JSON round-trips correctly, Chinese rule names and paths lossless |
-| Audit trail | `ops` has the full operation history, `events` has the event timeline |
-| **GUI real launch** | window opens normally, embedded frontend loads, styles apply (CSP doesn't block), IPC works (shows real ✅/⚠️/❌ states from the real database), tray in place |
-| **Logon task really runs** | after `autostart enable`, `schtasks /Query /XML` independently verifies the command and arguments; `autostart run` triggers a run that **really creates the target directories**, leaves no GUI window behind, and writes the log |
-| **Elevation worker (positive)** | a hand-written job with only rule ids → exit code 0, result file written, source directory becomes a junction (`fsutil` verifies `0xa0000003`), readable through the link |
-| **Elevation worker (negative)** | placing the job outside `jobs\` → exit code 1, result file states the refusal reason, disk untouched |
+`C:\Program Files` / `C:\ProgramData` / `C:\Windows` needs admin rights. Such rules are
+marked in the UI, and a batch apply offers to elevate through a **one-shot worker**: a job
+file containing **rule ids only — no paths**, required to live inside `<data dir>\jobs\`,
+relaunching itself via `ShellExecuteExW(runas)` and re-running the exact same safety checks
+as the GUI/CLI (blacklist, self-loop, occupancy detection). A job placed anywhere else is
+rejected with exit code 1.
 
 ---
 
@@ -181,16 +100,15 @@ tempdirector apply --all --dry-run
 # 5) Run for real (checks occupancy first; aborts without touching anything when occupied)
 tempdirector apply --all
 
-# 6) Boot rebuild (for the production wiring, see "Wiring up the boot guardian")
+# 6) Boot rebuild
 tempdirector boot-rebuild
 
 # 7) Undo by restoring
 tempdirector restore --all
 ```
 
-> The data directory defaults to `%PROGRAMDATA%\TempDirector` (shared by the service and the GUI).
-> Override it with the `TEMPDIRECTOR_DATA_DIR` environment variable or the `--data-dir`
-> argument (handy for portable / test setups).
+> The data directory defaults to `%PROGRAMDATA%\TempDirector`. Override it with the
+> `TEMPDIRECTOR_DATA_DIR` environment variable or the `--data-dir` argument.
 
 ---
 
@@ -226,7 +144,7 @@ boot rebuild
   autostart status                           whether the "rebuild at logon" task is registered
   autostart enable [--exe <path>]            register (per-user, no admin rights needed)
   autostart disable
-  autostart run                              trigger one run manually, to verify the setup
+  autostart run                              trigger one run manually, to verify
 
 elevation worker (normally not needed manually)
   elevated <job.json>                        run a job as administrator (rule ids only, no paths)
@@ -244,45 +162,17 @@ Category values: `browser` / `design` / `dev` / `system` / `media` / `office` / 
 
 ---
 
-## Three safety rules that never bend
+## Safety rules
 
-1. **Never delete source-directory content before the data check passes.**
-   The cross-volume order is fixed: enumerate → compute space → copy → verify
-   (file count + total bytes, optional SHA-256) → only then delete the source.
+1. **Never delete source content before the data check passes.** Cross-volume moves always
+   go enumerate → copy → verify (file count + bytes, optional SHA-256) → delete source.
+2. **Deleting a link removes only the link** — never recurse into a reparse point; doing so
+   would wipe the real data on the RAM disk.
+3. **Never touch what you don't understand.** Foreign reparse points (OneDrive placeholders,
+   `AppExecLink`, mount points) are reported, not processed; when a software update replaces
+   a link with a real directory, the boot guardian only warns and leaves it to a human.
 
-2. **Deleting a link may only remove the link entry itself; never recurse into a reparse point.**
-   There is no code path that calls `remove_dir_all` on a user path;
-   `delete_tree` judges each entry's type and, on a reparse point, deletes only the link.
-   Breaking this rule would delete real data on the RAM disk.
-
-3. **Anything you don't understand, don't touch.**
-   Foreign reparse points (OneDrive placeholders, `AppExecLink`, volume mount points) are
-   reported, never processed; after a software update overwrites a link with a real
-   directory, the boot guardian **won't** move anything on its own — it only raises a
-   warning for a human.
-
-Details (including 20+ edge cases) are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (Chinese).
-
----
-
-## Wiring up the boot guardian
-
-After M3, the recommended setup is one line:
-
-```powershell
-tempdirector autostart enable     # register the per-user logon task; every logon rebuilds automatically
-```
-
-Task details, portable-mode handling, and why failures are never silent: see
-"Autostart and elevation" above. If you later need it earlier and more controllable
-(truly "before all other startup software"), that's the M4 service + logon events +
-user token approach.
-
-When troubleshooting:
-
-* `tempdirector autostart status` — is the task there, and what command does it run
-* `%PROGRAMDATA%\TempDirector\logs\boot-rebuild.log` — the execution trail of the silent task
-* the banner at the top of the UI — whether the last rebuild has anything to watch
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (Chinese) for 20+ edge cases.
 
 ---
 
@@ -300,7 +190,7 @@ crates/
     src/boot/              waiting for volume readiness, batch rebuild at boot, DACL re-apply
     src/autostart.rs       logon task register / query / remove (schtasks + task XML)
     src/elevate.rs         elevation state detection, launching a process as admin and waiting
-    src/worker.rs          the elevation worker's job protocol and executor (the trust anchor lives here)
+    src/worker.rs          the elevation worker's job protocol and executor (the trust anchor)
     src/portable.rs        config import / export
   td-cli/                  tempdirector.exe (management / elevation worker / boot rebuild)
   td-gui/                  tempdirector-gui.exe (Tauri 2 UI)
@@ -319,17 +209,17 @@ scripts/take-screens.cjs   UI screenshot generation (mock data + headless browse
 rebuild.bat                one-click full rebuild (clean + release) and desktop shortcut refresh
 ```
 
-## Preset rules (built-in + user extensions)
+---
 
-The **Presets** dropdown at the top of the "Add rule" dialog merges two layers:
+## Preset rules
 
-1. **Built-in**: `crates/td-gui/presets.json`, embedded into the binary at compile time.
-   Inclusion criteria: pure cache/temp data (safe to discard; the app rebuilds it),
-   paths stable across machines, existence and size verified on real hardware. Editing
-   this file requires a rebuild.
-2. **User-external**: `%PROGRAMDATA%\TempDirector\presets.json` (the data directory; in
-   portable mode, the directory `TEMPDIRECTOR_DATA_DIR` points to). Format is identical to
-   the built-in file, **no rebuild needed**:
+The "Add rule" dialog offers a **preset dropdown** with cache-directory templates for
+common apps, merged from two layers:
+
+1. **Built-in** — `crates/td-gui/presets.json`, embedded at compile time (editing it
+   requires a rebuild).
+2. **User-external** — `presets.json` in the data directory (`%PROGRAMDATA%\TempDirector`,
+   or the `TEMPDIRECTOR_DATA_DIR` directory in portable mode). Same format, no rebuild:
 
 ```json
 [
@@ -338,44 +228,15 @@ The **Presets** dropdown at the top of the "Add rule" dialog merges two layers:
     "category": "dev",
     "source_template": "%LOCALAPPDATA%\\MyApp\\Cache",
     "target_subpath": "dev\\myapp-cache",
-    "note": "optional: a hint shown to the user"
+    "note": "optional hint"
   }
 ]
 ```
 
-Merge rules: a user entry whose `source_template` matches (case-insensitive) an built-in
-entry **overrides** it (that's how you change a preset's default subpath); everything else
-is **appended**. The category must be one of
-`browser / design / dev / system / media / office / game / other`. File missing = built-in
-presets only; a syntax error or an invalid entry skips just that entry, leaving the rest intact.
-
-Both layers only show entries whose source directory **actually exists on this machine** —
-software you haven't installed won't appear in the dropdown.
-
-### Overriding a built-in preset (example)
-
-To change the built-in "User TEMP" preset's default target subpath, put an entry with a
-**byte-for-byte identical** `source_template` in the external file — it replaces the
-built-in entry instead of adding a new one:
-
-```json
-[
-  {
-    "name": "User TEMP",
-    "category": "system",
-    "source_template": "%LOCALAPPDATA%\\Temp",
-    "target_subpath": "system\\temp-on-ram",
-    "note": "my own target subpath"
-  }
-]
-```
-
-Where to put it: save the above as `%PROGRAMDATA%\TempDirector\presets.json` (or
-`presets.json` in the directory `TEMPDIRECTOR_DATA_DIR` points to, in portable mode) and
-reopen the UI — the preset dropdown now shows the new subpath. This chain is verified for
-real by the integration test `crates/td-gui/tests/preset_override.rs`
-(write external file → point at the data directory → assert the built-in entry was
-overridden and there's exactly one entry for that source).
+A user entry whose `source_template` matches a built-in one (case-insensitive)
+**overrides** it; the rest are appended. Only entries whose source directory actually
+exists on this machine are shown. The chain is covered by the integration test
+`crates/td-gui/tests/preset_override.rs`.
 
 ---
 
@@ -385,45 +246,30 @@ overridden and there's exactly one entry for that source).
 scripts\cargo.cmd check --workspace --all-targets
 scripts\cargo.cmd test  --workspace          # 104 unit tests (td-core 88 + td-gui 16)
 scripts\cargo.cmd build --release            # both exes at once
-python scripts\make_icon.py                  # re-run when the icon needs changing
 rebuild.bat                                  # full rebuild: clean + release + refresh the desktop shortcut
-rebuild.bat noclean                          # skip clean, incremental release build only
+python scripts\make_icon.py                  # regenerate the app icon
 ```
 
-Retaking the UI screenshots for this README (no Tauri startup; mock data + headless
-browser; one Chinese set and one English set):
+`scripts/cargo.cmd` wraps cargo to fill in the MSVC + Rust toolchain environment
+(`vcvars64.bat`, `PATH`, `RUSTUP_HOME` / `CARGO_HOME`); keep it pure ASCII — `cmd.exe`
+reads batch files with an OEM code page. `rebuild.bat` also refreshes the desktop shortcut
+after a clean rebuild, since `cargo clean` wipes `target\` and any earlier .lnk would
+dangle.
+
+Retaking the UI screenshots for this README (mock data + headless browser, no Tauri):
 
 ```powershell
 # requires playwright (npm i playwright); uses the Edge / Chrome already installed
-node scripts\take-screens.cjs --lang en     # English four: main-window / add-rule / settings / progress
-node scripts\take-screens.cjs --lang zh     # Chinese four (overwrites the existing ones)
-node scripts\take-screens.cjs --lang en --check   # only scan for missing translations (Han characters / bare keys), no screenshots
+node scripts\take-screens.cjs --lang en     # English set
+node scripts\take-screens.cjs --lang zh     # Chinese set
+node scripts\take-screens.cjs --lang en --check   # scan for missing translations only
 ```
 
-What `rebuild.bat` does: `cargo clean` → `cargo build --release` → after verifying the
-artifacts exist, (re)create the desktop shortcut `%USERPROFILE%\Desktop\TempDirector.lnk`
-pointing at the freshly built `target\release\tempdirector-gui.exe` (with the app icon).
-The shortcut is refreshed on every rebuild because `cargo clean` wipes `target\` too, and
-a .lnk created before the rebuild would dangle. When double-clicked, the window pauses for
-a keypress (run it from an existing console and it just exits), so you can read the build
-result.
+### About the tauri version
 
-Why `scripts/cargo.cmd` exists: the MSVC toolchain needs `vcvars64.bat` first, and in a
-restricted shell `PATH` may be empty while `RUSTUP_HOME` / `CARGO_HOME` may not point where
-they should. The script fills the environment in, then forwards to cargo.
-
-(This file must stay pure ASCII — `cmd.exe` reads batch files with an OEM code page, and
-Chinese comments make it fail to parse.)
-
-### About the tauri version: the whole family must be locked to one generation
-
-Writing just `tauri = "2.11.5"` is not enough. `tauri-codegen` / `tauri-macros` /
-`tauri-utils` / `tauri-runtime` are all **range dependencies** that resolve to newer
-versions independently; the result is generated retry code in `tauri-macros` referencing
-error variants that don't exist in `tauri` itself, and the build blows up with 27 errors
-like `no variant named UnexpectedMenuKind`. The fix is `cargo update -p <crate>
---precise <ver>` to align the lockfile with one verified combination
-(`tauri 2.11.5 / tauri-build 2.6.3 / tauri-codegen 2.6.3 / tauri-macros 2.6.3 /
-tauri-plugin 2.6.3 / tauri-utils 2.9.3 / tauri-runtime 2.11.3 / tauri-runtime-wry 2.11.4 /
-wry 0.55.1`). **When upgrading tauri, move the whole set together — don't touch only the
-one version number in the main crate.**
+Pin the whole family together — `tauri 2.11.5 / tauri-build 2.6.3 / tauri-codegen 2.6.3 /
+tauri-macros 2.6.3 / tauri-plugin 2.6.3 / tauri-utils 2.9.3 / tauri-runtime 2.11.3 /
+tauri-runtime-wry 2.11.4 / wry 0.55.1`. The transitive crates are range dependencies, so
+bumping only the main crate breaks the build with errors like
+`no variant named UnexpectedMenuKind`; move the whole set with `cargo update -p <crate>
+--precise <ver>`.
