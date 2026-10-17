@@ -17,8 +17,8 @@ runs with zero UAC prompts; elevation happens on demand only when a source path 
 
 ## Desktop UI
 
-The UI speaks **中文 / English** — switch from the dropdown at the top right (follows the
-system language on first launch; the choice is remembered).
+The UI speaks **中文 / English** — the segmented switch sits at the top right. First
+launch defaults to English, and the choice is remembered.
 
 **Main window**:
 

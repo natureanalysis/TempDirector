@@ -5,7 +5,8 @@
  *
  * 原理：界面是纯静态文件（crates/td-gui/ui/，编译时内嵌进 exe），
  * 用 ?mock=1 挂一套内存假数据即可在普通浏览器里完整渲染；
- * 浏览器 locale 设为 en-US 时界面按系统语言逻辑直启英文（i18n.js detectLang），
+ * 界面语言默认英文、选择记 localStorage（tempdirector.locale），
+ * 所以拍中文要用 addInitScript 预设这个键（默认英文后不能只靠浏览器 locale）。
  * 不需要启动 Tauri，也不需要 npm / 打包器。
  *
  * 依赖：playwright（npm i playwright，或设 NODE_PATH 指向已安装的位置）。
@@ -83,6 +84,11 @@ async function scanCJK(page) {
     viewport: VIEWPORT,
     deviceScaleFactor: 1,
   });
+  // 界面语言由 localStorage(tempdirector.locale) 决定（无记录默认英文），
+  // 中文截图必须预设；英文是默认值，预设一遍也无害，且让两种语言走同一条路径。
+  await context.addInitScript((lang) => {
+    try { localStorage.setItem('tempdirector.locale', lang); } catch (e) {}
+  }, LANG);
   const page = await context.newPage();
   const suffix = LANG === 'zh' ? '' : '-' + LANG;
 

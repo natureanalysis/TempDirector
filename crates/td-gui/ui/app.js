@@ -2794,18 +2794,36 @@ function simulateProgress(total) {
 // 语言切换
 // ---------------------------------------------------------------------------
 
-// 下拉框初值取自 i18n（localStorage / 系统语言）；切换时通知后端并整体重渲染。
+// 语言切换分段按钮（中文 | EN）：初值取自 i18n（localStorage，无记录默认英文）；
+// 切换时通知后端并整体刷新。
+//
+// 为什么要整体 refresh 而不是只 render()：规则状态标签 / 横幅 / 水位消息这些文案是
+// 后端按当前语言生成后随快照下发的，只重渲染 DOM 会用旧语言的缓存数据 ——
+// 必须重新拉一次快照，切换后的列表才整片换语言（mock 后端在 set_locale 里原地重算，
+// 走的是同一条契约）。
 (function initLang() {
-  const sel = $('lang-switch');
-  if (sel) {
-    sel.value = getLang();
-    sel.addEventListener('change', function () { setLang(sel.value); });
+  const wrap = $('lang-switch');
+  if (wrap) {
+    const paint = function () {
+      wrap.querySelectorAll('.lang-seg').forEach(function (b) {
+        const on = b.dataset.lang === getLang();
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    };
+    wrap.querySelectorAll('.lang-seg').forEach(function (b) {
+      b.addEventListener('click', function () { setLang(b.dataset.lang); });
+    });
+    paint();
+    window.addEventListener('td-lang-change', function (ev) {
+      const lang = ev.detail.lang;
+      invoke('set_locale', { locale: lang })
+        .catch(function () { /* mock 或旧后端可忽略 */ })
+        .then(function () { return refresh(true); })
+        .catch(function () { if (state.snap) render(); });
+      paint();
+    });
   }
-  window.addEventListener('td-lang-change', function (ev) {
-    const lang = ev.detail.lang;
-    invoke('set_locale', { locale: lang }).catch(function () { /* mock 或旧后端可忽略 */ });
-    if (state.snap) render();
-  });
 })();
 
 // ---------------------------------------------------------------------------
@@ -2813,6 +2831,9 @@ function simulateProgress(total) {
 // ---------------------------------------------------------------------------
 
 (async function boot() {
+  // 启动即把界面语言同步给后端：状态标签 / 横幅 / 水位消息等文案由后端按当前语言
+  // 生成，不推送的话后端停留在自己的默认语言（中文），界面是英文、数据是中文。
+  try { await invoke('set_locale', { locale: getLang() }); } catch (e) { /* mock 或旧后端 */ }
   await refresh(false);
   if (PARAMS.has('progress')) {
     showProgress(t('mock.progress_title'));

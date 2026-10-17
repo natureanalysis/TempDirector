@@ -3,7 +3,7 @@
  * 设计约束：
  *  - 不引 npm：词典就是下面两棵平铺的「键 → 文案」对象，键用点分命名空间
  *    （toolbar.add、table.status、err.io…），与后端 td-core::i18n 的键风格一致。
- *  - 首次启动跟随系统语言（navigator.language），用户手动切换后写入 localStorage。
+ *  - 首次启动默认英文（公开发布以英文为默认界面），用户手动切换后写入 localStorage。
  *  - 切换语言：更新 localStorage → 重跑 applyStatic() → 派发 `td-lang-change` 事件，
  *    由 app.js 负责通知后端并整体重渲染（后端错误文案也随之换语言）。
  *  - 静态 HTML 用 data-i18n（文本）/ data-i18n-title（title）/ data-i18n-placeholder
@@ -866,19 +866,13 @@ const DICT = {
   },
 };
 
-let currentLang = 'zh';
+let currentLang = 'en';
 
-/** 系统语言 → 支持的语言；非中文一律回退英文。 */
-function detectLang() {
-  const nav = (navigator.language || navigator.userLanguage || '').toLowerCase();
-  return nav.indexOf('zh') === 0 ? 'zh' : 'en';
-}
-
-/** 载入语言：localStorage 优先，其次系统语言。 */
+/** 载入语言：localStorage 优先；无记录默认英文。 */
 function loadLang() {
   let saved = null;
   try { saved = localStorage.getItem(LOCALE_KEY); } catch (e) { saved = null; }
-  currentLang = (saved === 'zh' || saved === 'en') ? saved : detectLang();
+  currentLang = (saved === 'zh' || saved === 'en') ? saved : 'en';
 }
 
 function getLang() { return currentLang; }

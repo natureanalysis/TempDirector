@@ -121,8 +121,32 @@ input, select { font-family: inherit; font-size: 13px; }
   white-space: nowrap;
 }
 
-/* 语言切换下拉：与顶栏其他控件同高、不抢眼 */
-.lang-switch { font-size: 12px; padding: 4px 6px; border-radius: 8px; }
+/* 语言切换分段按钮（中文 | EN）：半透明描边融入深蓝顶栏，当前语言白底蓝字 */
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .25);
+  background: rgba(255, 255, 255, .12);
+}
+.lang-seg {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, .85);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s, color .12s;
+}
+.lang-seg:hover { color: #fff; background: rgba(255, 255, 255, .14); }
+.lang-seg.active { background: #fff; color: var(--brand); font-weight: 600; }
+.lang-seg:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
 
 /* ---------------- 按钮 ---------------- */
 
