@@ -8,6 +8,9 @@ edition = "2021"
 rust-version = "1.80"
 license = "MIT"
 authors = ["natureanalysis"]
+description = "Redirect software cache directories to a RAM disk with directory junctions, rebuilt at every logon"
+repository = "https://github.com/natureanalysis/TempDirector"
+homepage = "https://github.com/natureanalysis/TempDirector"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

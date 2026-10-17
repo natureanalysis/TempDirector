@@ -2,6 +2,10 @@
 
 # TempDirector
 
+[![CI](https://github.com/natureanalysis/TempDirector/actions/workflows/ci.yml/badge.svg)](https://github.com/natureanalysis/TempDirector/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/natureanalysis/TempDirector)](https://github.com/natureanalysis/TempDirector/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **一款 Windows 软链接管理软件。** TempDirector 用目录 Junction 把上百款桌面软件的
 缓存 / 临时目录重定向到 RAM 盘，并在每次登录后把 RAM 盘上的目录树重建出来 —— 既减少
 SSD 写入，又让高频缓存读写发生在内存里。Junction 不需要 `SeCreateSymbolicLinkPrivilege`，
@@ -33,6 +37,9 @@ SSD 写入，又让高频缓存读写发生在内存里。Junction 不需要 `Se
 ![批量应用进度](docs/screenshots/progress.png)
 
 ### 构建与运行
+
+不想编译？[Releases](https://github.com/natureanalysis/TempDirector/releases) 页面直接下载
+NSIS 安装包或便携 ZIP。
 
 ```powershell
 scripts\cargo.cmd build -p td-gui --release   # 产物：target\release\tempdirector-gui.exe
@@ -182,6 +189,7 @@ crates/
     src/elevate.rs         提权状态判定、以管理员身份拉起进程并等待
     src/worker.rs          提权 worker 的 job 协议与执行体（信任锚在这里）
     src/portable.rs        配置导入导出
+    presets.json           内置预设清单（常用软件缓存目录，编译时内嵌）
   td-cli/                  tempdirector.exe（管理 / 提权 worker / 开机重建）
   td-gui/                  tempdirector-gui.exe（Tauri 2 界面）
     src/api.rs             业务层：只吃 &Store、吐 serde 结构体（可脱离窗口单测）
@@ -190,7 +198,6 @@ crates/
     src/lib.rs             入口：子模式 → 降级内存库 → mark_stale_ops → 注册命令
     src/tray.rs            托盘菜单（显示窗口 / 立即重建 / 退出）
     ui/                    index.html / style.css / app.js（静态文件，编译时内嵌）
-    presets.json           内置预设清单（常用软件缓存目录，编译时内嵌）
 docs/ARCHITECTURE.md       架构与边界条件
 docs/screenshots/          界面截图（中英各一套：main-window / add-rule / settings / progress）
 scripts/cargo.cmd          开发构建包装（自动补 MSVC + Rust 环境）
@@ -205,7 +212,7 @@ rebuild.bat                一键全量重建（clean + release）并刷新桌�
 
 「添加规则」弹窗顶部的**常用预设**下拉合并两层：
 
-1. **内置**：`crates/td-gui/presets.json`，编译期内嵌（改它需要重新编译）。
+1. **内置**：`crates/td-core/presets.json`，编译期内嵌（改它需要重新编译）。
 2. **用户外置**：数据目录下的 `presets.json`（默认 `%PROGRAMDATA%\TempDirector`，便携模式
    用 `TEMPDIRECTOR_DATA_DIR` 指向的目录）。格式与内置完全一致，无需重新编译：
 

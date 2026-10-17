@@ -2,6 +2,10 @@
 
 # TempDirector
 
+[![CI](https://github.com/natureanalysis/TempDirector/actions/workflows/ci.yml/badge.svg)](https://github.com/natureanalysis/TempDirector/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/natureanalysis/TempDirector)](https://github.com/natureanalysis/TempDirector/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **A Windows symbolic-link manager.** TempDirector redirects the cache and temp directories
 of desktop applications to a RAM disk with directory junctions, then rebuilds that
 directory tree on the RAM disk at every logon — cutting SSD writes while hot cache I/O
@@ -39,6 +43,9 @@ system language on first launch; the choice is remembered).
 ![Applying rules](docs/screenshots/progress-en.png)
 
 ### Build and run
+
+Prebuilt binaries (NSIS installer + portable zip) are on the
+[Releases](https://github.com/natureanalysis/TempDirector/releases) page.
 
 ```powershell
 scripts\cargo.cmd build -p td-gui --release   # output: target\release\tempdirector-gui.exe
@@ -192,6 +199,7 @@ crates/
     src/elevate.rs         elevation state detection, launching a process as admin and waiting
     src/worker.rs          the elevation worker's job protocol and executor (the trust anchor)
     src/portable.rs        config import / export
+    presets.json           built-in preset list (cache dirs of common apps, embedded at compile time)
   td-cli/                  tempdirector.exe (management / elevation worker / boot rebuild)
   td-gui/                  tempdirector-gui.exe (Tauri 2 UI)
     src/api.rs             business layer: takes &Store, emits serde structs (unit-testable without a window)
@@ -200,7 +208,6 @@ crates/
     src/lib.rs             entry: submodes → in-memory store fallback → mark_stale_ops → register commands
     src/tray.rs            tray menu (show window / rebuild now / quit)
     ui/                    index.html / style.css / app.js (static files, embedded at compile time)
-    presets.json           built-in preset list (cache dirs of common apps, embedded at compile time)
 docs/ARCHITECTURE.md       architecture and edge cases (Chinese)
 docs/screenshots/          UI screenshots (one Chinese set + one English set: main-window / add-rule / settings / progress)
 scripts/cargo.cmd          dev build wrapper (fills in MSVC + Rust environment)
@@ -216,7 +223,7 @@ rebuild.bat                one-click full rebuild (clean + release) and desktop 
 The "Add rule" dialog offers a **preset dropdown** with cache-directory templates for
 common apps, merged from two layers:
 
-1. **Built-in** — `crates/td-gui/presets.json`, embedded at compile time (editing it
+1. **Built-in** — `crates/td-core/presets.json`, embedded at compile time (editing it
    requires a rebuild).
 2. **User-external** — `presets.json` in the data directory (`%PROGRAMDATA%\TempDirector`,
    or the `TEMPDIRECTOR_DATA_DIR` directory in portable mode). Same format, no rebuild:

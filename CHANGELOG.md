@@ -2,6 +2,51 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-10-17（i18n：后端 / CLI / 界面全量中英双语 + 英文截图 + README 双语）
+
+### 后端 —— i18n 基础设施与全量接入
+
+* **`td-core/src/i18n.rs`**：新增 `Locale` + `t()` / `tf()`（`{name}` 插值）与中英双字典，
+  覆盖规则、引擎、搬运、占用、开机重建、提权、预设、水位、错误等全链路文案。
+* **后端各模块接入**：`engine` / `fsops` / `link` / `boot` / `usecase` / `store` /
+  `elevate` / `worker` / `portable` / `water` / `schedule` / `clean` 等（阶段 2 系列提交）。
+* **CLI 双语**：全局 `--lang zh|en`（可放任意位置）与环境变量 `TEMPDIRECTOR_LANG`
+  （优先级低于 `--lang`）；`help.rs` 双语帮助，`output.rs` 格式化器与 `timefmt.rs`
+  时间单位全部键化（阶段 3 系列提交）。
+
+### 界面 —— 语言切换、开机刷新与 mock 双语
+
+* **`ui/i18n.js`**：语言字典与 `data-i18n` 批量替换；首次启动跟随系统语言
+  （`navigator.language`，非中文一律回退英文），手动切换写入 localStorage；
+  右上角新增「中文 / English」下拉。
+* **修 bug**：`applyStatic()` 原先只在 `setLang()` 里调用，`loadLang()` 后不调用 ——
+  非中文系统首次启动时静态 HTML 停留在中文默认值，要手动切一次语言才刷新。已在
+  `loadLang()` 后补启动调用。
+* **mock 假数据接入 i18n**（`?mock=1` 预览 / 无头截图路径）：规则名、状态标签、
+  横幅、水位、autostart 消息、进度明细改走 i18n 键；中文取值与此前硬编码逐字一致，
+  英文与 `td-core/src/i18n.rs` 措辞对齐；`set_locale` 时按新语言重算状态文案
+  （名称是"用户数据"不重算，与真机一致）。新增 `rule.root_fmt` 键替换根下拉硬编码
+  全角括号。
+* **已知保留项**：预设名（`presets.json` 数据直出）与 ops/事件流水 mock 样本在英文
+  模式仍是中文 —— 与真实后端行为一致，未本地化。
+
+### 文档与工具
+
+* **`docs/screenshots/`**：新增英文四张（main-window / add-rule / settings / progress），
+  中文四张同源重刷，中英成套。
+* **`scripts/take-screens.cjs`**：Playwright 无头截图工具（mock 数据 + `locale: en-US`
+  直启英文），`--check` 模式全树扫漏翻（汉字 / 裸键名）。
+* **README 中英双语**：`README.md`（英文为主）+ `README_ZH.md`（中文），顶部互挂切换
+  链接，各自单语呈现。顺带修了两处 presets.json 路径（实际在 `crates/td-core/`，
+  早前文档误写为 `td-gui`）。
+
+### 验证
+
+* `node --check` 通过（`app.js` / `i18n.js`）。
+* 无头浏览器两种语言 × 7 个 mock 视图（主窗口 / 弹窗 / 设置 / 日志 / 进度 / 空间 /
+  清理）扫描：零裸键名泄漏；英文模式除语言自称「中文」与预设数据外无汉字残留。
+* 界面为静态文件 + mock 数据链路，未触碰 Rust 逻辑，无新增编译产物。
+
 ## 2026-10-16（界面：详情面板回底部 + 表头点击排序）
 
 ### 界面 —— 撤回右侧 drawer，补表头排序
