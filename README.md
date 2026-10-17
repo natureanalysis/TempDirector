@@ -1,393 +1,429 @@
+[中文](README_ZH.md) | **English**
+
 # TempDirector
 
-把上百款软件的缓存 / 临时目录，用 **目录 Junction** 统一重定向到 RAM 盘，
-并在每次开机后用守护逻辑把 RAM 盘上的目录结构自动重建出来 —— 从而在减少 SSD 写入的同时，
-让高频读写的缓存落到内存盘上。
+Redirect the cache / temp directories of hundreds of applications to a RAM disk with
+**directory junctions**, and let a boot-time guardian rebuild that directory tree on the
+RAM disk after every logon — cutting SSD writes while keeping hot cache I/O in memory.
 
-**核心特点：常规场景全程零 UAC 弹窗**（目录 Junction 不需要 `SeCreateSymbolicLinkPrivilege`），
-只有在源路径位于 `Program Files` / `ProgramData` 等受保护位置时才按需提权。
+**Core trait: zero UAC prompts in the normal case** (directory junctions don't need
+`SeCreateSymbolicLinkPrivilege`); elevation only kicks in on demand when a source path
+lives under `Program Files` / `ProgramData` or another protected location.
 
 ---
 
-## 当前状态
+## Status
 
-| 里程碑 | 内容 | 状态 |
+| Milestone | Scope | Status |
 |---|---|---|
-| **M1** | 链接引擎内核 + 安全搬运 + 规则库 + 开机重建 + CLI | ✅ 已完成并通过真机端到端验证 |
-| **M2** | Tauri 2 桌面界面（列表 / 搜索 / 筛选 / 多选 / 弹窗 / 详情面板 / 托盘 / 进度 / 系统通知） | ✅ 已完成并真机启动验证 |
-| **M3** | 开机自启（登录任务）+ 按需提权 worker + 结果持久化提示 | ✅ 已完成并真机验证（任务真的跑起来了） |
-| **M3.5** | 运维增强：RAM 盘水位监控 + 规则级预授权自动清理 + 定时低峰清理 + 效益统计 + 规则拖拽排序 + 排除模式 + 一键恢复 | ✅ 已完成 |
-| M4 | Windows 服务（登录事件 + 用户令牌 + 巡检自愈）+ 命名管道 IPC | 待做 |
-| M5 | 内置预设规则库（百款软件模板）+ NSIS 安装包 | 待做 |
+| **M1** | Link engine core + safe moving + rule store + boot rebuild + CLI | ✅ Done, verified end-to-end on real hardware |
+| **M2** | Tauri 2 desktop UI (list / search / filter / multi-select / dialogs / detail panel / tray / progress / system notifications) | ✅ Done, verified with a real launch |
+| **M3** | Autostart at logon (scheduled task) + on-demand elevation worker + persisted result notices | ✅ Done and verified on real hardware (the task really runs) |
+| **M3.5** | Ops hardening: RAM-disk water-level monitoring + per-rule pre-authorized auto-clean + scheduled off-peak cleaning + savings stats + drag-and-drop rule ordering + exclusion patterns + one-click restore | ✅ Done |
+| M4 | Windows service (logon events + user token + patrol self-healing) + named-pipe IPC | Planned |
+| M5 | Built-in preset rule library (templates for ~100 apps) + NSIS installer | Planned |
 
-M1 的产出是 `td-core`（内核库）与 `tempdirector`（CLI）；
-M2 的产出是 `td-gui`（`tempdirector-gui.exe`，界面）；
-M3 把"登录时自动重建"接上，并让受保护路径的操作能按需提权。
-三个二进制共用同一份 `td-core`，界面层不含任何链接逻辑。
+M1 produced `td-core` (the engine library) and `tempdirector` (the CLI);
+M2 produced `td-gui` (`tempdirector-gui.exe`, the UI);
+M3 wired up "rebuild at logon" and made protected-path operations elevate on demand.
+All three binaries share the same `td-core`; the UI layer contains no link logic.
 
 ---
 
-## 桌面界面
+## Desktop UI
 
-界面语言支持 **中文 / English**：右上角下拉切换，首次启动跟随系统语言（非中文系统默认英文），
-选择会记住。以下每张界面都给出中英两个版本。
+The UI speaks **both Chinese and English**: switch with the dropdown at the top right.
+The first launch follows your system language (English by default on non-Chinese systems),
+and the choice is remembered.
 
-**主界面**（中文 / English）：
-
-![主界面](docs/screenshots/main-window.png)
+**Main window**:
 
 ![Main window](docs/screenshots/main-window-en.png)
 
-* **列表**：状态徽标（✅ 正常 / ⚠️ 断链或目标空 / ❌ 未链接 / 🚫 外来重解析点）、
-  需要处理的原因直接标在名称下方、源路径与目标路径并排、期望开关与开机重建两列指示灯。
-* **检索**：搜索框（名称 / 源路径 / 目标子目录）、分类筛选、只看已开启、只看需处理、全选当前结果。
-* **批量**：勾选后一键「应用 / 恢复 / 开启 / 关闭 / 检测占用 / 仅重建链接 / 删除」。
-* **详情面板**：选中一行展开完整信息（源模板与展开后路径、链接类型、警告、上次应用时间与规模），
-  并给出该条目的单条操作按钮。
-* **添加 / 编辑规则**：实时校验（路径展开结果、是否缺环境变量、是否受保护位置、目标位置是否已有内容），
-  源目录可直接用系统目录选择框挑。
-* **进度浮层**：批量应用时按条显示进度（来自后端 `td-progress` 事件），不会出现"点了没反应"。
-* **运维日志**：事件时间线 + 操作流水两个标签页，含失败原因。
-* **托盘**：显示主窗口 / 立即执行开机重建 / 退出（关闭窗口即退出，常驻形态在 M3）。
+* **List**: status badges (✅ OK / ⚠️ broken link or empty target / ❌ not linked / 🚫 foreign reparse point),
+  the reason needing attention right under the name, source and target paths side by side,
+  plus indicator columns for "wanted enabled" and "rebuild on boot".
+* **Search**: search box (name / source path / target subpath), category filter,
+  "enabled only", "needs attention only", "select all current results".
+* **Batch**: after checking boxes, one click each for Apply / Restore / Enable / Disable /
+  Check locks / Relink only / Delete.
+* **Detail panel**: select a row to expand full info (source template and expanded path,
+  link type, warnings, last applied time and size), with per-rule action buttons.
+* **Add / edit rule**: live validation (path expansion result, missing environment variables,
+  protected location, whether the target already has content), and the source directory
+  can be picked with the system folder dialog.
+* **Progress overlay**: a batch apply shows per-rule progress (from the backend
+  `td-progress` event), so you never get "I clicked and nothing happened".
+* **Activity log**: event timeline + operation history tabs, including failure reasons.
+* **Tray**: show main window / run boot rebuild now / quit (closing the window quits for
+  now; a resident form is M3).
 
-**添加规则**（中文 / English）：
-
-![添加规则](docs/screenshots/add-rule.png)
+**Add rule**:
 
 ![Add rule](docs/screenshots/add-rule-en.png)
 
-**设置**（开机自启 / 定时清理 / 目标根管理；中文 / English）：
-
-![设置](docs/screenshots/settings.png)
+**Settings** (autostart / scheduled cleaning / target roots):
 
 ![Settings](docs/screenshots/settings-en.png)
 
-**批量应用进度浮层**（中文 / English）：
-
-![批量应用进度](docs/screenshots/progress.png)
+**Batch apply progress overlay**:
 
 ![Applying rules](docs/screenshots/progress-en.png)
 
-### 构建与运行
+### Build and run
 
 ```powershell
-scripts\cargo.cmd build -p td-gui            # 调试版（带控制台，方便看日志）
-scripts\cargo.cmd build -p td-gui --release  # 发行版（无控制台窗口）
-# 产物：target\release\tempdirector-gui.exe
+scripts\cargo.cmd build -p td-gui            # debug build (with console, handy for logs)
+scripts\cargo.cmd build -p td-gui --release  # release build (no console window)
+# output: target\release\tempdirector-gui.exe
 ```
 
-界面是**静态文件**（`crates/td-gui/ui/`，编译时内嵌进 exe），**不需要 npm / 不需要打包器**。
-想单独看界面（不启动 Tauri）可以直接在浏览器里打开 `crates/td-gui/ui/index.html?mock=1`，
-会挂上一套内存假数据；加 `&progress=1` 看进度浮层，`&modal=1` / `&settings=1` / `&ops=1` 看各个弹窗。
+The interface is **static files** (`crates/td-gui/ui/`, embedded into the exe at compile
+time) — **no npm, no bundler**. To look at the UI alone (without starting Tauri), open
+`crates/td-gui/ui/index.html?mock=1` in a browser; it mounts an in-memory fake dataset.
+Add `&progress=1` for the progress overlay, `&modal=1` / `&settings=1` / `&ops=1` for the
+various dialogs.
 
 ---
 
-## 开机自启与提权
+## Autostart and elevation
 
-### 登录时自动重建
+### Rebuild automatically at logon
 
 ```powershell
-tempdirector autostart status     # 看是否已注册
-tempdirector autostart enable     # 注册（用户级任务，不需要管理员权限）
-tempdirector autostart run        # 立刻触发一次，验证配置
+tempdirector autostart status     # check whether the task is registered
+tempdirector autostart enable     # register (per-user task, no admin rights needed)
+tempdirector autostart run        # trigger one run right now, to verify the setup
 tempdirector autostart disable
 ```
 
-界面「设置」里也有同样的开关。
+The same switches live in the in-app "Settings".
 
-* 注册的是**当前用户的登录任务**（`InteractiveToken` + `LeastPrivilege` + `Priority 4`），
-  注册/查询/删除都不需要提权（已实测）。
-* 任务动作是 `<GUI 路径> boot-rebuild`，而 GUI 在 release 下是
-  `windows_subsystem = "windows"`，所以**登录时不会闪控制台窗口**。
-* 便携模式（数据目录由 `TEMPDIRECTOR_DATA_DIR` 指定）下，注册时会把
-  `--data-dir "<目录>"` 一并写进任务 —— 任务计划不会继承你 shell 里的环境变量，
-  不带上就会变成"注册时用 A 库、登录时跑 B 库"。
-* **失败不会静默**：重建报告会落库（`settings.last_boot_report`）+ 写
-  `logs/boot-rebuild.log`，界面下次打开时在顶部横幅提示。
+* What gets registered is a **per-user logon task** (`InteractiveToken` + `LeastPrivilege`
+  + `Priority 4`); registering, querying and deleting need no elevation (verified).
+* The task action is `<GUI path> boot-rebuild`, and the GUI is
+  `windows_subsystem = "windows"` in release builds, so **no console window flashes at
+  logon**.
+* In portable mode (data dir pointed to by `TEMPDIRECTOR_DATA_DIR`), registration also
+  writes `--data-dir "<dir>"` into the task — scheduled tasks don't inherit your shell's
+  environment variables; without it you'd get "registered with database A, runs database B
+  at logon".
+* **Failures are never silent**: the rebuild report is stored (`settings.last_boot_report`)
+  and written to `logs/boot-rebuild.log`; the UI shows a banner at the top next time it opens.
 
-### 需要管理员权限时
+### When administrator rights are needed
 
-目录 Junction 本身免特权，但写 `C:\Program Files` / `C:\ProgramData` / `C:\Windows`
-下的缓存需要管理员权限。这类规则在界面上会带「需要管理员权限」标记，批量应用时会问你要不要提权。
+Directory junctions themselves need no privileges, but writing caches under
+`C:\Program Files` / `C:\ProgramData` / `C:\Windows` needs admin rights. Such rules carry a
+"needs admin" mark in the UI, and a batch apply asks whether you want to elevate.
 
-提权走**一次性 worker**：写一份只含 `rule id` 的 job 文件 → `ShellExecuteExW(runas)` 拉起自己 →
-worker 重跑全部安全校验 → 写回结果文件 → 源进程读结果。三条约束：
+Elevation goes through a **one-shot worker**: write a job file containing only rule ids →
+`ShellExecuteExW(runas)` to relaunch itself → the worker re-runs every safety check →
+writes back the result file → the source process reads it. Three constraints:
 
-1. **job 里没有路径，只有规则 id** —— 即使有人伪造一份 job，也只能触发规则库里本来就合法的动作。
-2. **job 必须位于 `<数据目录>\jobs\` 之内**，否则直接拒绝（已实测：放到别处会以退出码 1 被拒）。
-3. worker 里重跑与 GUI/CLI 完全相同的校验路径（黑名单、自环、占用检测），不做任何豁免。
+1. **The job contains no paths, only rule ids** — even a forged job can only trigger
+   actions that are already legal in the rule store.
+2. **The job must live inside `<data dir>\jobs\`**, otherwise it's rejected outright
+   (verified: placed anywhere else → exit code 1).
+3. The worker re-runs the exact same validation path as the GUI/CLI (blacklist,
+   self-loop, occupancy detection), with no exemptions.
 
-命令行也能直接用：
+The CLI can also drive it directly:
 
 ```powershell
-tempdirector elevated <job.json>     # 一般不需要手动调，GUI 会自己拉起
+tempdirector elevated <job.json>     # normally not needed manually; the GUI launches it itself
 ```
 
 ---
 
-## 已实测验证的行为
+## Behaviors verified on real hardware
 
-以下都在本机用真实文件系统跑过（不是单元测试的 mock）：
+Everything below was run against a real filesystem on this machine (not unit-test mocks):
 
-| 场景 | 结果 |
+| Scenario | Result |
 |---|---|
-| 同卷重定向 | 走 `rename`：3 文件 / 2 MB，71ms，保留全部元数据 |
-| 跨卷重定向 | 走复制 → 校验 → 删源：2 文件 / 1 MB，25ms |
-| 建链结果独立核验 | `cmd dir /AL` 显示 `<JUNCTION>`；`fsutil reparsepoint query` 显示 Tag `0xa0000003`（Mount Point） |
-| 通过链接读写 | 读 `a.txt` / 2 MB 二进制 / 子目录文件均正常；写入落在 RAM 盘侧 |
-| **模拟 RAM 盘重启** | 链接变 `⚠️ 断裂`；`boot-rebuild` 重建目录；链接恢复为可用（目标为空，属预期）；再次写入成功 |
-| 恢复（RAM 盘有内容） | 拆链接 → 内容搬回源目录 → 目标目录消失 |
-| 恢复（RAM 盘已空） | 拆链接 → 重建空的原目录；`fsutil` 确认已不是重解析点 |
-| 规则库导出 / 导入 | JSON 往返正确，中文规则名与路径无损 |
-| 审计 | `ops` 有完整操作流水，`events` 有事件时间线 |
-| **GUI 真机启动** | 窗口正常打开，内嵌前端加载、样式生效（CSP 未拦截）、IPC 通（显示真实库的 ✅/⚠️/❌ 三种状态）、托盘就位 |
-| **登录任务真跑** | `autostart enable` 后 `schtasks /Query /XML` 独立核验命令与参数；`autostart run` 触发后**目标目录被真实创建**、无 GUI 窗口残留、日志落盘 |
-| **提权 worker（正例）** | 手写只含 rule id 的 job → 退出码 0、结果文件写出、源目录变联接（`fsutil` 核验 `0xa0000003`）、通过链接可读 |
-| **提权 worker（反例）** | 把 job 放到 `jobs\` 之外 → 退出码 1、结果文件写明拒绝原因、磁盘未被改动 |
+| Same-volume redirect | goes through `rename`: 3 files / 2 MB, 71ms, all metadata preserved |
+| Cross-volume redirect | copy → verify → delete source: 2 files / 1 MB, 25ms |
+| Independent link verification | `cmd dir /AL` shows `<JUNCTION>`; `fsutil reparsepoint query` shows tag `0xa0000003` (Mount Point) |
+| Read/write through the link | reading `a.txt` / a 2 MB binary / files in subdirectories all work; writes land on the RAM disk side |
+| **Simulated RAM-disk reboot** | links show `⚠️ broken`; `boot-rebuild` recreates the directories; links become usable again (empty target, as expected); writes succeed again |
+| Restore (RAM disk has content) | remove link → content moved back to the source directory → target directory gone |
+| Restore (RAM disk empty) | remove link → recreate the empty original directory; `fsutil` confirms it's no longer a reparse point |
+| Rule store export / import | JSON round-trips correctly, Chinese rule names and paths lossless |
+| Audit trail | `ops` has the full operation history, `events` has the event timeline |
+| **GUI real launch** | window opens normally, embedded frontend loads, styles apply (CSP doesn't block), IPC works (shows real ✅/⚠️/❌ states from the real database), tray in place |
+| **Logon task really runs** | after `autostart enable`, `schtasks /Query /XML` independently verifies the command and arguments; `autostart run` triggers a run that **really creates the target directories**, leaves no GUI window behind, and writes the log |
+| **Elevation worker (positive)** | a hand-written job with only rule ids → exit code 0, result file written, source directory becomes a junction (`fsutil` verifies `0xa0000003`), readable through the link |
+| **Elevation worker (negative)** | placing the job outside `jobs\` → exit code 1, result file states the refusal reason, disk untouched |
 
 ---
 
-## 快速开始
+## Quick start
 
 ```powershell
-# 1) 编译（脚本会自己补齐 MSVC + Rust 工具链环境）
+# 1) Build (the script fills in the MSVC + Rust toolchain environment itself)
 scripts\cargo.cmd build --release
-# 产物：target\release\tempdirector.exe
+# output: target\release\tempdirector.exe
 
-# 2) 注册 RAM 盘作为目标根
+# 2) Register the RAM disk as a target root
 tempdirector roots add RAMDisk "R:"
 
-# 3) 加一条规则（源路径支持 %VAR% 模板，导入库时按当前用户展开）
-tempdirector rules add "Chrome 缓存" `
+# 3) Add a rule (source paths support %VAR% templates, expanded per user on import)
+tempdirector rules add "Chrome cache" `
   "%LOCALAPPDATA%\Google\Chrome\User Data\Default\Cache" `
   "browsers\chrome-cache" --category browser --enable
 
-# 4) 先看体检结果 + 占用情况 + 预演
+# 4) Inspect first: health check + occupancy + dry run
 tempdirector status --all
-tempdirector locks "Chrome 缓存对应的规则 id"
+tempdirector locks "<rule id of the Chrome cache rule>"
 tempdirector apply --all --dry-run
 
-# 5) 真正执行（会先检测占用，被占用就中止且不做任何改动）
+# 5) Run for real (checks occupancy first; aborts without touching anything when occupied)
 tempdirector apply --all
 
-# 6) 开机重建（正式接法见「开机守护」）
+# 6) Boot rebuild (for the production wiring, see "Wiring up the boot guardian")
 tempdirector boot-rebuild
 
-# 7) 想撤销就恢复
+# 7) Undo by restoring
 tempdirector restore --all
 ```
 
-> 数据目录默认是 `%PROGRAMDATA%\TempDirector`（服务与 GUI 共用）。
-> 可用环境变量 `TEMPDIRECTOR_DATA_DIR` 或参数 `--data-dir` 覆盖（便携 / 测试时有用）。
+> The data directory defaults to `%PROGRAMDATA%\TempDirector` (shared by the service and the GUI).
+> Override it with the `TEMPDIRECTOR_DATA_DIR` environment variable or the `--data-dir`
+> argument (handy for portable / test setups).
 
 ---
 
-## 命令一览
+## Command reference
 
 ```
-概览
-  doctor                     环境自检：数据目录、链接能力、目标盘、规则状态、待修复项
+overview
+  doctor                     environment self-check: data dir, link capability, target volumes, rule states, pending fixes
   version
 
-目标根（RAM 盘）
+target roots (RAM disk)
   roots list
-  roots add <名称> <路径> [--timeout 毫秒] [--hdd]
+  roots add <name> <path> [--timeout ms] [--hdd]
   roots rm <id>
-  volume <R: 或 R:\Dir> [--timeout 毫秒]        探测 / 等待卷就绪
+  volume <R: or R:\Dir> [--timeout ms]        probe / wait for the volume to be ready
 
-规则
-  rules list [--enabled] [--category 分类] [--search 关键词] [--json]
-  rules add <名称> <源路径模板> <目标子目录> [--root id] [--category 分类]
-            [--link-type junction|symlink_dir] [--enable] [--no-boot] [--notes 备注]
+rules
+  rules list [--enabled] [--category cat] [--search term] [--json]
+  rules add <name> <source template> <target subpath> [--root id] [--category cat]
+            [--link-type junction|symlink_dir] [--enable] [--no-boot] [--notes note]
   rules rm <id...>
   rules enable|disable <id...|--all>
 
-体检与操作
-  status [--enabled|--all] [--category 分类] [--search 关键词] [--no-persist] [--json]
-  locks <规则id|目录路径> [--json]              检测占用并指出是哪个进程占着
+inspection and operations
+  status [--enabled|--all] [--category cat] [--search term] [--no-persist] [--json]
+  locks <rule id|directory path> [--json]     check occupancy and name the process holding it
   apply <id...|--all> [--dry-run] [--merge] [--sha256] [--skip-lock-check]
   restore <id...|--all> [--dry-run] [--sha256]
-  relink <id>                                  只重建链接（不动数据）
+  relink <id>                                 rebuild the link only (data untouched)
 
-开机重建
+boot rebuild
   boot-rebuild [--json]
-  autostart status                           查看"登录时自动重建"任务是否已注册
-  autostart enable [--exe <路径>]            注册（用户级，不需要管理员权限）
+  autostart status                           whether the "rebuild at logon" task is registered
+  autostart enable [--exe <path>]            register (per-user, no admin rights needed)
   autostart disable
-  autostart run                              立刻手动触发一次，验证配置
+  autostart run                              trigger one run manually, to verify the setup
 
-提权 worker（一般不需要手动调）
-  elevated <job.json>                        以管理员身份执行一份 job（只认规则 id，不认路径）
+elevation worker (normally not needed manually)
+  elevated <job.json>                        run a job as administrator (rule ids only, no paths)
 
-配置迁移
-  export <文件.json>
-  import <文件.json> [--dry-run] [--ram-root R:]
+config migration
+  export <file.json>
+  import <file.json> [--dry-run] [--ram-root R:]
 
-审计
+audit
   events [--limit N]
-  ops [--limit N]                              操作流水（含待修复项）
+  ops [--limit N]                            operation history (including pending fixes)
 ```
 
-分类取值：`browser` / `design` / `dev` / `system` / `media` / `office` / `game` / `other`
+Category values: `browser` / `design` / `dev` / `system` / `media` / `office` / `game` / `other`
 
 ---
 
-## 三条不可动摇的安全铁律
+## Three safety rules that never bend
 
-1. **数据核对通过之前，绝不删除源目录内容。**
-   跨卷搬运的顺序固定是：枚举 → 算空间 → 复制 → 核对（文件数 + 总字节，可选 SHA-256）→ 才删源。
+1. **Never delete source-directory content before the data check passes.**
+   The cross-volume order is fixed: enumerate → compute space → copy → verify
+   (file count + total bytes, optional SHA-256) → only then delete the source.
 
-2. **删除链接只允许删链接条目本身，任何情况下不得对重解析点递归删除。**
-   代码里不存在对用户路径调用 `remove_dir_all` 的路径；
-   `delete_tree` 会逐条判断类型，遇到重解析点只删链接。
-   违反这条会直接删掉 RAM 盘里的真实数据。
+2. **Deleting a link may only remove the link entry itself; never recurse into a reparse point.**
+   There is no code path that calls `remove_dir_all` on a user path;
+   `delete_tree` judges each entry's type and, on a reparse point, deletes only the link.
+   Breaking this rule would delete real data on the RAM disk.
 
-3. **看不懂的东西一律不动。**
-   外来重解析点（OneDrive 占位符、`AppExecLink`、卷挂载点）只报告、不处理；
-   软件更新把链接覆盖成真实目录后，开机守护**不会**自作主张去搬运，只报警告交给人处理。
+3. **Anything you don't understand, don't touch.**
+   Foreign reparse points (OneDrive placeholders, `AppExecLink`, volume mount points) are
+   reported, never processed; after a software update overwrites a link with a real
+   directory, the boot guardian **won't** move anything on its own — it only raises a
+   warning for a human.
 
-细节（含 20+ 条边界条件）见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+Details (including 20+ edge cases) are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (Chinese).
 
 ---
 
-## 开机守护怎么接
+## Wiring up the boot guardian
 
-M3 之后，推荐做法就是一句话：
+After M3, the recommended setup is one line:
 
 ```powershell
-tempdirector autostart enable     # 注册用户级登录任务，之后每次登录自动重建
+tempdirector autostart enable     # register the per-user logon task; every logon rebuilds automatically
 ```
 
-任务细节、便携模式的处理、失败如何不静默，见上面「开机自启与提权」。
-如果以后要更早、更可控（真正的"早于所有自启软件"），就是 M4 的服务 + 登录事件 + 用户令牌那套。
+Task details, portable-mode handling, and why failures are never silent: see
+"Autostart and elevation" above. If you later need it earlier and more controllable
+(truly "before all other startup software"), that's the M4 service + logon events +
+user token approach.
 
-排查的时候：
+When troubleshooting:
 
-* `tempdirector autostart status` —— 任务在不在、跑的是什么命令
-* `%PROGRAMDATA%\TempDirector\logs\boot-rebuild.log` —— 静默任务的执行流水
-* 界面顶部横幅 —— 上次重建有没有需要留意的地方
+* `tempdirector autostart status` — is the task there, and what command does it run
+* `%PROGRAMDATA%\TempDirector\logs\boot-rebuild.log` — the execution trail of the silent task
+* the banner at the top of the UI — whether the last rebuild has anything to watch
 
 ---
 
-## 目录结构
+## Repository layout
 
 ```
 crates/
-  td-core/                 内核库（无 GUI 依赖）
-    src/util.rs            路径归一化、\\?\ 长路径、环境变量展开、卷判定
-    src/safety.rs          规则黑名单（卷根 / 系统目录 / 自环）
-    src/link/              重解析点识别、Junction 建/拆
-    src/fsops/             占用检测(+Restart Manager)、安全搬运、合并、核对
-    src/engine.rs          编排：决策树 → 搬运 → 建链 → 回滚 → 落库
-    src/store/             SQLite schema / 迁移 / DAO / 操作流水
-    src/boot/              等待卷就绪、开机批量重建、DACL 回灌
-    src/autostart.rs       登录任务的注册 / 查询 / 取消（schtasks + 任务 XML）
-    src/elevate.rs         提权状态判定、以管理员身份拉起进程并等待
-    src/worker.rs          提权 worker 的 job 协议与执行体（信任锚在这里）
-    src/portable.rs        配置导入导出
-  td-cli/                  tempdirector.exe（管理 / 提权 worker / 开机重建）
-  td-gui/                  tempdirector-gui.exe（Tauri 2 界面）
-    src/api.rs             业务层：只吃 &Store、吐 serde 结构体（可脱离窗口单测）
-    src/commands.rs        #[tauri::command] 薄转发 + 进度事件 + 目录选择框
-    src/submode.rs         无界面子模式：boot-rebuild / elevated（在 Tauri 之前拦下）
-    src/lib.rs             入口：子模式 → 降级内存库 → mark_stale_ops → 注册命令
-    src/tray.rs            托盘菜单（显示窗口 / 立即重建 / 退出）
-    ui/                    index.html / style.css / app.js（静态文件，编译时内嵌）
-    presets.json           内置预设清单（常用软件缓存目录，编译时内嵌）
-docs/ARCHITECTURE.md       架构与边界条件
-docs/screenshots/          界面截图（中英各一套：main-window / add-rule / settings / progress）
-scripts/cargo.cmd          开发构建包装（自动补 MSVC + Rust 环境）
-scripts/make_icon.py       应用图标生成（纯 PIL 绘制，可重跑）
-scripts/take-screens.cjs   界面截图生成（mock 数据 + 无头浏览器，中英各一套，可重跑）
-rebuild.bat                一键全量重建（clean + release）并刷新桌面快捷方式
+  td-core/                 engine library (no GUI dependencies)
+    src/util.rs            path normalization, \\?\ long paths, env var expansion, volume detection
+    src/safety.rs          rule blacklist (volume roots / system dirs / self-loops)
+    src/link/              reparse point identification, Junction create/remove
+    src/fsops/             occupancy detection (+Restart Manager), safe moving, merging, verification
+    src/engine.rs          orchestration: decision tree → move → link → rollback → persist
+    src/store/             SQLite schema / migrations / DAO / operation history
+    src/boot/              waiting for volume readiness, batch rebuild at boot, DACL re-apply
+    src/autostart.rs       logon task register / query / remove (schtasks + task XML)
+    src/elevate.rs         elevation state detection, launching a process as admin and waiting
+    src/worker.rs          the elevation worker's job protocol and executor (the trust anchor lives here)
+    src/portable.rs        config import / export
+  td-cli/                  tempdirector.exe (management / elevation worker / boot rebuild)
+  td-gui/                  tempdirector-gui.exe (Tauri 2 UI)
+    src/api.rs             business layer: takes &Store, emits serde structs (unit-testable without a window)
+    src/commands.rs        thin #[tauri::command] forwarding + progress events + folder dialog
+    src/submode.rs         headless submodes: boot-rebuild / elevated (intercepted before Tauri)
+    src/lib.rs             entry: submodes → in-memory store fallback → mark_stale_ops → register commands
+    src/tray.rs            tray menu (show window / rebuild now / quit)
+    ui/                    index.html / style.css / app.js (static files, embedded at compile time)
+    presets.json           built-in preset list (cache dirs of common apps, embedded at compile time)
+docs/ARCHITECTURE.md       architecture and edge cases (Chinese)
+docs/screenshots/          UI screenshots (one Chinese set + one English set: main-window / add-rule / settings / progress)
+scripts/cargo.cmd          dev build wrapper (fills in MSVC + Rust environment)
+scripts/make_icon.py       app icon generation (pure PIL, re-runnable)
+scripts/take-screens.cjs   UI screenshot generation (mock data + headless browser, Chinese and English sets, re-runnable)
+rebuild.bat                one-click full rebuild (clean + release) and desktop shortcut refresh
 ```
 
-## 预设规则（内置 + 自定义扩展）
+## Preset rules (built-in + user extensions)
 
-「添加规则」弹窗顶部的**常用预设**下拉来自两层合并：
+The **Presets** dropdown at the top of the "Add rule" dialog merges two layers:
 
-1. **内置**：`crates/td-gui/presets.json`，随二进制编译内嵌。收录标准：纯缓存/临时数据（丢弃后软件自行重建）、路径跨机器稳定、真机实测过存在性与体积。改这个文件需要重新编译。
-2. **用户外置**：`%PROGRAMDATA%\TempDirector\presets.json`（即数据目录，便携模式用 `TEMPDIRECTOR_DATA_DIR` 指向的目录）。格式与内置文件完全一致，**无需重新编译**：
+1. **Built-in**: `crates/td-gui/presets.json`, embedded into the binary at compile time.
+   Inclusion criteria: pure cache/temp data (safe to discard; the app rebuilds it),
+   paths stable across machines, existence and size verified on real hardware. Editing
+   this file requires a rebuild.
+2. **User-external**: `%PROGRAMDATA%\TempDirector\presets.json` (the data directory; in
+   portable mode, the directory `TEMPDIRECTOR_DATA_DIR` points to). Format is identical to
+   the built-in file, **no rebuild needed**:
 
 ```json
 [
   {
-    "name": "我的软件缓存",
+    "name": "My app cache",
     "category": "dev",
     "source_template": "%LOCALAPPDATA%\\MyApp\\Cache",
     "target_subpath": "dev\\myapp-cache",
-    "note": "可选：给用户看的提示"
+    "note": "optional: a hint shown to the user"
   }
 ]
 ```
 
-合并规则：`source_template` 相同（忽略大小写）的用户条目**覆盖**内置条目（想改某条预设的默认子路径就这么干），其余**追加**。分类必须取 `browser / design / dev / system / media / office / game / other`。文件不存在 = 只有内置预设；语法错误或个别条目非法 = 只跳过坏条目，不影响其余预设。
+Merge rules: a user entry whose `source_template` matches (case-insensitive) an built-in
+entry **overrides** it (that's how you change a preset's default subpath); everything else
+is **appended**. The category must be one of
+`browser / design / dev / system / media / office / game / other`. File missing = built-in
+presets only; a syntax error or an invalid entry skips just that entry, leaving the rest intact.
 
-两层都只展示**本机实际存在源目录**的条目——没装的软件不会出现在下拉里。
+Both layers only show entries whose source directory **actually exists on this machine** —
+software you haven't installed won't appear in the dropdown.
 
-### 覆盖一条内置预设（示例）
+### Overriding a built-in preset (example)
 
-想改掉内置「用户 TEMP」的默认目标子路径，就在外置文件里写一条 `source_template`
-**逐字相同**的条目——它会替换内置那条，而不是多出一条：
+To change the built-in "User TEMP" preset's default target subpath, put an entry with a
+**byte-for-byte identical** `source_template` in the external file — it replaces the
+built-in entry instead of adding a new one:
 
 ```json
 [
   {
-    "name": "用户 TEMP",
+    "name": "User TEMP",
     "category": "system",
     "source_template": "%LOCALAPPDATA%\\Temp",
     "target_subpath": "system\\temp-on-ram",
-    "note": "我自己改的目标子路径"
+    "note": "my own target subpath"
   }
 ]
 ```
 
-落地位置：把上面的内容存成 `%PROGRAMDATA%\TempDirector\presets.json`（便携模式则是
-`TEMPDIRECTOR_DATA_DIR` 指向目录下的 `presets.json`），重开界面即可在「常用预设」下拉看到
-它已换成新的目标子路径。这条链路有集成测试 `crates/td-gui/tests/preset_override.rs`
-真实验证（写外置文件 → 指向数据目录 → 断言内置被覆盖、且该源只此一条）。
+Where to put it: save the above as `%PROGRAMDATA%\TempDirector\presets.json` (or
+`presets.json` in the directory `TEMPDIRECTOR_DATA_DIR` points to, in portable mode) and
+reopen the UI — the preset dropdown now shows the new subpath. This chain is verified for
+real by the integration test `crates/td-gui/tests/preset_override.rs`
+(write external file → point at the data directory → assert the built-in entry was
+overridden and there's exactly one entry for that source).
 
 ---
 
-## 开发
+## Development
 
 ```powershell
 scripts\cargo.cmd check --workspace --all-targets
-scripts\cargo.cmd test  --workspace          # 104 个单元测试（td-core 88 + td-gui 16）
-scripts\cargo.cmd build --release            # 两个 exe 一起出
-python scripts\make_icon.py                  # 需要改图标时重跑
-rebuild.bat                                  # 全量重建：clean + release + 刷新桌面快捷方式
-rebuild.bat noclean                          # 跳过 clean，只做增量 release 构建
+scripts\cargo.cmd test  --workspace          # 104 unit tests (td-core 88 + td-gui 16)
+scripts\cargo.cmd build --release            # both exes at once
+python scripts\make_icon.py                  # re-run when the icon needs changing
+rebuild.bat                                  # full rebuild: clean + release + refresh the desktop shortcut
+rebuild.bat noclean                          # skip clean, incremental release build only
 ```
 
-重拍 README 用的界面截图（不启动 Tauri，mock 数据 + 无头浏览器，中英各一套）：
+Retaking the UI screenshots for this README (no Tauri startup; mock data + headless
+browser; one Chinese set and one English set):
 
 ```powershell
-# 依赖 playwright（npm i playwright），浏览器用系统已安装的 Edge / Chrome
-node scripts\take-screens.cjs --lang en     # 英文四张：main-window / add-rule / settings / progress
-node scripts\take-screens.cjs --lang zh     # 中文四张（覆盖既有截图）
-node scripts\take-screens.cjs --lang en --check   # 只扫漏翻（汉字 / 裸键名），不截图
+# requires playwright (npm i playwright); uses the Edge / Chrome already installed
+node scripts\take-screens.cjs --lang en     # English four: main-window / add-rule / settings / progress
+node scripts\take-screens.cjs --lang zh     # Chinese four (overwrites the existing ones)
+node scripts\take-screens.cjs --lang en --check   # only scan for missing translations (Han characters / bare keys), no screenshots
 ```
 
-`rebuild.bat` 做的事：`cargo clean` → `cargo build --release` → 在校验产物存在后
-（重）建桌面快捷方式 `%USERPROFILE%\Desktop\TempDirector.lnk`，指向刚出炉的
-`target\release\tempdirector-gui.exe`（带应用图标）。之所以每次重建都刷新快捷方式：
-`cargo clean` 会连 `target\` 一起清掉，重建前建的 .lnk 会悬空。
-双击运行时窗口会停住等按键（从已有控制台调用则直接退出），方便看构建结果。
+What `rebuild.bat` does: `cargo clean` → `cargo build --release` → after verifying the
+artifacts exist, (re)create the desktop shortcut `%USERPROFILE%\Desktop\TempDirector.lnk`
+pointing at the freshly built `target\release\tempdirector-gui.exe` (with the app icon).
+The shortcut is refreshed on every rebuild because `cargo clean` wipes `target\` too, and
+a .lnk created before the rebuild would dangle. When double-clicked, the window pauses for
+a keypress (run it from an existing console and it just exits), so you can read the build
+result.
 
-`scripts/cargo.cmd` 存在的理由：MSVC 工具链需要先跑 `vcvars64.bat`，
-而受限 shell 里 `PATH` 可能是空的、`RUSTUP_HOME` / `CARGO_HOME` 也可能没指对。
-脚本会把环境补齐后再转发给 cargo。
+Why `scripts/cargo.cmd` exists: the MSVC toolchain needs `vcvars64.bat` first, and in a
+restricted shell `PATH` may be empty while `RUSTUP_HOME` / `CARGO_HOME` may not point where
+they should. The script fills the environment in, then forwards to cargo.
 
-（该文件必须保持纯 ASCII —— `cmd.exe` 用 OEM 码页读批处理，中文注释会让它解析崩溃。）
+(This file must stay pure ASCII — `cmd.exe` reads batch files with an OEM code page, and
+Chinese comments make it fail to parse.)
 
-### 关于 tauri 版本：整个家族必须锁在同一代
+### About the tauri version: the whole family must be locked to one generation
 
-只写 `tauri = "2.11.5"` 是不够的。`tauri-codegen` / `tauri-macros` / `tauri-utils` /
-`tauri-runtime` 都是**范围依赖**，会各自解析到更新的版本，结果是
-`tauri-macros` 生成的重试码引用了 `tauri` 本体里不存在的错误变体，
-编译直接爆出 27 个 `no variant named UnexpectedMenuKind` 之类的错。
-解法是用 `cargo update -p <crate> --precise <ver>` 把锁文件对齐到一套已验证组合
-（`tauri 2.11.5 / tauri-build 2.6.3 / tauri-codegen 2.6.3 / tauri-macros 2.6.3 /
-tauri-plugin 2.6.3 / tauri-utils 2.9.3 / tauri-runtime 2.11.3 / tauri-runtime-wry 2.11.4 / wry 0.55.1`）。
-**升级 tauri 时要整套一起动，不要只改本体那一个版本号。**
+Writing just `tauri = "2.11.5"` is not enough. `tauri-codegen` / `tauri-macros` /
+`tauri-utils` / `tauri-runtime` are all **range dependencies** that resolve to newer
+versions independently; the result is generated retry code in `tauri-macros` referencing
+error variants that don't exist in `tauri` itself, and the build blows up with 27 errors
+like `no variant named UnexpectedMenuKind`. The fix is `cargo update -p <crate>
+--precise <ver>` to align the lockfile with one verified combination
+(`tauri 2.11.5 / tauri-build 2.6.3 / tauri-codegen 2.6.3 / tauri-macros 2.6.3 /
+tauri-plugin 2.6.3 / tauri-utils 2.9.3 / tauri-runtime 2.11.3 / tauri-runtime-wry 2.11.4 /
+wry 0.55.1`). **When upgrading tauri, move the whole set together — don't touch only the
+one version number in the main crate.**
