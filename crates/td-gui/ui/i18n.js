@@ -158,6 +158,29 @@ const DICT = {
     'detail.auto.hours': '水位到严重线时清空早于 {n} 小时修改的',
     'detail.auto.secs': '水位到严重线时清空早于 {n} 秒修改的',
     'mock.progress_title': '正在处理 3 条规则…',
+    'mock.progress_detail': '#2/3 Edge 缓存 · 已复制 12800 个文件 / 512.4 MB',
+    // mock 假数据（?mock=1 本地预览 / 无头截图核验用）。
+    // 中文取值与此前的硬编码字符串逐字一致（中文预览行为不变）；
+    // 英文取值与 td-core/src/i18n.rs 的后端措辞对齐，让 mock 预览和真机同语言表现一致。
+    'mock.rule.chrome': 'Chrome 缓存',
+    'mock.rule.edge': 'Edge 缓存',
+    'mock.rule.firefox': 'Firefox 缓存',
+    'mock.rule.photoshop': 'Photoshop 暂存盘',
+    'mock.rule.vscode': 'VS Code 缓存',
+    'mock.rule.wechat': '微信文件缓存',
+    'mock.rule.npm': 'npm 缓存',
+    'mock.rule.premiere': 'Premiere 媒体缓存',
+    'mock.state.link_ok': '链接正常',
+    'mock.state.link_ok_empty': '目录联接 → {target}（目标为空（RAM 盘刚重启））',
+    'mock.state.link_broken': '目录联接 断裂，目标不可达：{target}',
+    'mock.state.plain_dir': '未链接（真实目录）',
+    'mock.water_msg': '已用 {pct}%，剩余 {free}',
+    'mock.root_ready': '就绪，可用空间 {free}',
+    'mock.banner.attention': '有 {n} 条规则需要处理（断链 / 真实目录 / 外来重解析点）',
+    'mock.banner.disk_critical': 'RAM 盘即将写满：{label}（{path}）已用 {pct}%，仅剩 {free} —— 建议清理或缩小规则',
+    'mock.autostart_registered': '已注册：{cmd}',
+    'mock.simulate_running': '正在处理 {n} 条规则…',
+    'mock.simulate_detail': '#{i}/{n} 示例规则 · 已复制 {files} 个文件 / {mb} MB',
 
     // 操作
     'act.elev_request': '正在请求管理员权限…请在 UAC 弹窗上点「是」',
@@ -313,6 +336,7 @@ const DICT = {
     'rule.source': '源路径（软件原生缓存目录，支持 %VAR% 模板）',
     'rule.pick_dir': '选择目录…',
     'rule.pick_dir_title': '选择软件的缓存目录',
+    'rule.root_fmt': '#{id} {label}（{path}）',
     'rule.root_unavailable_tag': ' —— 当前不可用',
     'rule.sub': '目标子目录（RAM 盘下的相对路径）',
     'rule.sub_ph': '例如：browsers\\chrome-cache',
@@ -560,6 +584,28 @@ const DICT = {
     'detail.auto.hours': 'Clear entries older than {n} hours at critical water level',
     'detail.auto.secs': 'Clear entries older than {n} seconds at critical water level',
     'mock.progress_title': 'Processing 3 rules…',
+    'mock.progress_detail': '#2/3 Edge cache · copied 12800 files / 512.4 MB',
+    // mock fixture strings (for the ?mock=1 local preview / headless screenshot checks).
+    // English wording mirrors td-core/src/i18n.rs so the preview matches the real app.
+    'mock.rule.chrome': 'Chrome cache',
+    'mock.rule.edge': 'Edge cache',
+    'mock.rule.firefox': 'Firefox cache',
+    'mock.rule.photoshop': 'Photoshop scratch disk',
+    'mock.rule.vscode': 'VS Code cache',
+    'mock.rule.wechat': 'WeChat file cache',
+    'mock.rule.npm': 'npm cache',
+    'mock.rule.premiere': 'Premiere media cache',
+    'mock.state.link_ok': 'Link OK',
+    'mock.state.link_ok_empty': 'Junction → {target} (target empty — RAM disk just rebooted)',
+    'mock.state.link_broken': 'Junction broken, target unreachable: {target}',
+    'mock.state.plain_dir': 'Not linked (real directory)',
+    'mock.water_msg': '{pct}% used, {free} free',
+    'mock.root_ready': 'Ready, free space {free}',
+    'mock.banner.attention': '{n} rules need attention (broken links / real directories / foreign reparse points)',
+    'mock.banner.disk_critical': 'RAM disk nearly full: {label} ({path}) {pct}% used, only {free} free — clean up or shrink rules',
+    'mock.autostart_registered': 'Registered: {cmd}',
+    'mock.simulate_running': 'Processing {n} rules…',
+    'mock.simulate_detail': '#{i}/{n} sample rule · copied {files} files / {mb} MB',
 
     // actions
     'act.elev_request': 'Requesting administrator privileges… click “Yes” on the UAC prompt',
@@ -715,6 +761,7 @@ const DICT = {
     'rule.source': 'Source path (the app’s native cache dir, %VAR% templates supported)',
     'rule.pick_dir': 'Pick folder…',
     'rule.pick_dir_title': 'Pick the app’s cache directory',
+    'rule.root_fmt': '#{id} {label} ({path})',
     'rule.root_unavailable_tag': ' — currently unavailable',
     'rule.sub': 'Target subpath (relative to the RAM disk)',
     'rule.sub_ph': 'e.g. browsers\\chrome-cache',
@@ -879,3 +926,7 @@ function setLang(lang) {
 }
 
 loadLang();
+// 开机即按当前语言刷新静态文案：index.html 里的中文只是 data-i18n 的兜底默认值，
+// 非中文系统首次启动（localStorage 无记录、跟随 navigator.language）也必须走这一遍，
+// 否则静态 HTML 会停留在中文，直到用户手动切一次语言。
+applyStatic();

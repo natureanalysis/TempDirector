@@ -1491,7 +1491,7 @@ async function openRuleForm(id) {
   snap.roots.forEach(function (r) {
     const o = document.createElement('option');
     o.value = String(r.id);
-    o.textContent = '#' + r.id + ' ' + r.label + '（' + r.path + '）' + (r.state === 'ready' ? '' : t('rule.root_unavailable_tag'));
+    o.textContent = tf('rule.root_fmt', { id: r.id, label: r.label, path: r.path }) + (r.state === 'ready' ? '' : t('rule.root_unavailable_tag'));
     rootSelect.appendChild(o);
   });
   rootSelect.value = String(rule ? rule.target_root_id : snap.roots[0].id);
@@ -2418,19 +2418,36 @@ backend.listen('td-tray-boot', function (ev) {
 
 function createMockBackend() {
   const rules = [
-    mockRule(1, 'Chrome 缓存', 'browser', '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache', 'browsers\\chrome-cache', '✅', 'link_ok', '链接正常', { last_files: 34521, last_bytes: 1288490188, auto_clean_policy: 'older:86400' }),
-    mockRule(2, 'Edge 缓存', 'browser', '%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache', 'browsers\\edge-cache', '✅', 'link_ok', '链接正常', { last_files: 21002, last_bytes: 734003200 }),
-    mockRule(3, 'Firefox 缓存', 'browser', '%APPDATA%\\Mozilla\\Firefox\\Profiles\\xxxx.default-release\\cache2', 'browsers\\firefox-cache2', '⚠️', 'link_ok_empty', '目录联接 → R:\\browsers\\firefox-cache2（目标为空（RAM 盘刚重启））'),
-    mockRule(4, 'Photoshop 暂存盘', 'design', 'C:\\Users\\me\\AppData\\Roaming\\Adobe\\Common\\Media Cache Files', 'design\\ps-media-cache', '⚠️', 'link_broken', '目录联接 断裂，目标不可达：R:\\design\\ps-media-cache', { needs_attention: true }),
-    mockRule(5, 'VS Code 缓存', 'dev', '%APPDATA%\\Code\\Cache', 'dev\\vscode-cache', '❌', 'plain_dir', '未链接（真实目录）', { excludes: ['logs', 'CachedData\\old'] }),
-    mockRule(6, '微信文件缓存', 'office', '%APPDATA%\\Tencent\\WeChat\\FileStorage', 'office\\wechat-files', '❌', 'plain_dir', '未链接（真实目录）', { want_enabled: false }),
-    mockRule(7, 'npm 缓存', 'dev', '%LOCALAPPDATA%\\npm-cache', 'dev\\npm-cache', '✅', 'link_ok', '链接正常', { last_files: 88213, last_bytes: 3221225472 }),
-    mockRule(8, 'Premiere 媒体缓存', 'design', 'C:\\Users\\me\\AppData\\Roaming\\Adobe\\Common\\Media Cache', 'design\\pr-media-cache', '❌', 'plain_dir', '未链接（真实目录）', { needs_elevation: true, has_acl: true, want_enabled: false }),
+    mockRule(1, t('mock.rule.chrome'), 'browser', '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache', 'browsers\\chrome-cache', '✅', 'link_ok', { last_files: 34521, last_bytes: 1288490188, auto_clean_policy: 'older:86400' }),
+    mockRule(2, t('mock.rule.edge'), 'browser', '%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache', 'browsers\\edge-cache', '✅', 'link_ok', { last_files: 21002, last_bytes: 734003200 }),
+    mockRule(3, t('mock.rule.firefox'), 'browser', '%APPDATA%\\Mozilla\\Firefox\\Profiles\\xxxx.default-release\\cache2', 'browsers\\firefox-cache2', '⚠️', 'link_ok_empty', {}),
+    mockRule(4, t('mock.rule.photoshop'), 'design', 'C:\\Users\\me\\AppData\\Roaming\\Adobe\\Common\\Media Cache Files', 'design\\ps-media-cache', '⚠️', 'link_broken', { needs_attention: true }),
+    mockRule(5, t('mock.rule.vscode'), 'dev', '%APPDATA%\\Code\\Cache', 'dev\\vscode-cache', '❌', 'plain_dir', { excludes: ['logs', 'CachedData\\old'] }),
+    mockRule(6, t('mock.rule.wechat'), 'office', '%APPDATA%\\Tencent\\WeChat\\FileStorage', 'office\\wechat-files', '❌', 'plain_dir', { want_enabled: false }),
+    mockRule(7, t('mock.rule.npm'), 'dev', '%LOCALAPPDATA%\\npm-cache', 'dev\\npm-cache', '✅', 'link_ok', { last_files: 88213, last_bytes: 3221225472 }),
+    mockRule(8, t('mock.rule.premiere'), 'design', 'C:\\Users\\me\\AppData\\Roaming\\Adobe\\Common\\Media Cache', 'design\\pr-media-cache', '❌', 'plain_dir', { needs_elevation: true, has_acl: true, want_enabled: false }),
   ];
 
-  function mockRule(id, name, category, tpl, sub, badge, stateKey, label, extra) {
+  /** 状态说明按当前语言生成（键在 i18n.js 的 mock.state.*，措辞与后端对齐）。
+   *  切换语言时由 relabelRules() 重算，行为与真机一致（名称是用户数据，不重算）。 */
+  function stateLabel(r) {
+    if (r._state === 'link_ok') return t('mock.state.link_ok');
+    if (r._state === 'link_ok_empty') return tf('mock.state.link_ok_empty', { target: r.target });
+    if (r._state === 'link_broken') return tf('mock.state.link_broken', { target: r.target });
+    return t('mock.state.plain_dir');
+  }
+
+  /** 语言切换后重算状态文案（mock.set_locale 里调用）。 */
+  function relabelRules() {
+    rules.forEach(function (r) {
+      r.label = stateLabel(r);
+      r.warnings = r.needs_elevation ? [t('rule.src.elev')] : [];
+    });
+  }
+
+  function mockRule(id, name, category, tpl, sub, badge, stateKey, extra) {
     const e = extra || {};
-    return {
+    const r = {
       id: id, name: name, category: category,
       source_template: tpl,
       source: tpl.replace('%LOCALAPPDATA%', 'C:\\Users\\me\\AppData\\Local').replace('%APPDATA%', 'C:\\Users\\me\\AppData\\Roaming'),
@@ -2440,13 +2457,15 @@ function createMockBackend() {
       has_acl: !!e.has_acl, needs_elevation: !!e.needs_elevation, notes: null,
       excludes: e.excludes || [],
       auto_clean_policy: e.auto_clean_policy || '',
-      badge: badge, label: label,
+      badge: badge, label: '',
       needs_attention: !!e.needs_attention || badge === '❌',
-      warnings: e.needs_elevation ? ['该路径位于受保护位置，应用时需要管理员权限'] : [],
       unknown_vars: [], last_files: e.last_files || null, last_bytes: e.last_bytes || null,
       applied_at: e.last_files ? '2026-10-14 09:45:56' : null,
       _state: stateKey,
     };
+    r.label = stateLabel(r);
+    r.warnings = e.needs_elevation ? [t('rule.src.elev')] : [];
+    return r;
   }
 
   let mockCloseToTray = true;
@@ -2473,13 +2492,13 @@ function createMockBackend() {
       categories: ['browser', 'design', 'dev', 'system', 'media', 'office', 'game', 'other'],
       roots: [{
         id: 1, label: 'RAMDisk 4G', path: 'R:', is_ramdisk: true, wait_timeout_ms: 90000,
-        state: 'ready', message: '就绪，可用空间 3.7 GB', unknown_vars: [],
+        state: 'ready', message: tf('mock.root_ready', { free: '3.7 GB' }), unknown_vars: [],
       }],
       rules: rules.map(function (r) { const c = Object.assign({}, r); delete c._state; return c; }),
       stats: stats(),
       banners: [
-        { level: 'warn', text: '有 4 条规则需要处理（断链 / 真实目录 / 外来重解析点）' },
-        { level: 'error', text: 'RAM 盘即将写满：RAMDisk 4G（R:）已用 96.4%，仅剩 147.5 MB —— 建议清理或缩小规则', action: 'sweep' },
+        { level: 'warn', text: tf('mock.banner.attention', { n: stats().needs_attention }) },
+        { level: 'error', text: tf('mock.banner.disk_critical', { label: 'RAMDisk 4G', path: 'R:', pct: '96.4', free: '147.5 MB' }), action: 'sweep' },
       ],
       open_ops: [],
     };
@@ -2554,7 +2573,7 @@ function createMockBackend() {
         case 'add_rule': {
           const f = assertFormShape(args.form);
           const id = Math.max.apply(null, rules.map(function (r) { return r.id; })) + 1;
-          rules.push(mockRule(id, f.name, f.category, f.source_template, f.target_subpath, '❌', 'plain_dir', '未链接（真实目录）', { want_enabled: f.want_enabled, auto_clean_policy: f.auto_clean_policy || '' }));
+          rules.push(mockRule(id, f.name, f.category, f.source_template, f.target_subpath, '❌', 'plain_dir', { want_enabled: f.want_enabled, auto_clean_policy: f.auto_clean_policy || '' }));
           return Promise.resolve(id);
         }
         case 'update_rule': {
@@ -2585,7 +2604,7 @@ function createMockBackend() {
         case 'clear_acl': { const r = find(args.id); if (r) r.has_acl = false; return Promise.resolve(null); }
         case 'water_poll':
           return Promise.resolve([
-            { root_id: 1, label: 'RAMDisk 4G', path: 'R:', used_pct: 70.0, free: 1288490188, free_text: '1.2 GB', total_text: '4.0 GB', level: 'ok', message: '已用 70.0%，剩余 1.2 GB' },
+            { root_id: 1, label: 'RAMDisk 4G', path: 'R:', used_pct: 70.0, free: 1288490188, free_text: '1.2 GB', total_text: '4.0 GB', level: 'ok', message: tf('mock.water_msg', { pct: '70.0', free: '1.2 GB' }) },
           ]);
         case 'preset_rules':
           return Promise.resolve([
@@ -2646,7 +2665,7 @@ function createMockBackend() {
               out.push({ rule_id: id, name: r.name, ok: false, action: 'failed', message: '源目录正被占用，已中止（未做任何改动）：3 个文件被占用，占用者：WeChat.exe（PID 8024）', elapsed_ms: 0 });
               return;
             }
-            r.badge = '✅'; r.label = '链接正常'; r.needs_attention = false;
+            r._state = 'link_ok'; r.badge = '✅'; r.label = stateLabel(r); r.needs_attention = false;
             out.push({ rule_id: id, name: r.name, ok: true, action: 'moved_and_linked', message: '同卷重命名：120 个文件 / 4.0 MB；已建链', elapsed_ms: 42 });
           });
           if (MOCK) simulateProgress(args.ids.length);
@@ -2657,14 +2676,14 @@ function createMockBackend() {
           args.ids.forEach(function (id) {
             const r = find(id);
             if (!r) return;
-            r.badge = '❌'; r.label = '未链接（真实目录）'; r.needs_attention = true;
+            r._state = 'plain_dir'; r.badge = '❌'; r.label = stateLabel(r); r.needs_attention = true;
             out.push({ rule_id: id, name: r.name, ok: true, action: 'restored', message: '已恢复：120 个文件 / 4.0 MB 已搬回', elapsed_ms: 31 });
           });
           return Promise.resolve(out);
         }
         case 'relink_rule': {
           const r = find(args.id);
-          if (r && r.badge !== '✅') { r.badge = '✅'; r.label = '链接正常'; r.needs_attention = false; }
+          if (r && r.badge !== '✅') { r._state = 'link_ok'; r.badge = '✅'; r.label = stateLabel(r); r.needs_attention = false; }
           return Promise.resolve({ rule_id: args.id, name: r ? r.name : '', ok: true, action: 'relinked', message: '链接已重建', elapsed_ms: 8 });
         }
         case 'check_locks':
@@ -2705,7 +2724,7 @@ function createMockBackend() {
             registered: true,
             task_name: 'TempDirector-BootRebuild',
             command: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild',
-            message: '已注册：C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild',
+            message: tf('mock.autostart_registered', { cmd: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild' }),
             elevated: false,
             data_dir: 'C:\\ProgramData\\TempDirector',
             extra_args: '',
@@ -2719,7 +2738,7 @@ function createMockBackend() {
           (args.ids || []).forEach(function (id) {
             const r = find(id);
             if (!r) return;
-            r.badge = '✅'; r.label = '链接正常'; r.needs_attention = false;
+            r._state = 'link_ok'; r.badge = '✅'; r.label = stateLabel(r); r.needs_attention = false;
             out.push({ rule_id: id, name: r.name, ok: true, action: 'moved_and_linked', message: '（提权）跨卷复制：120 个文件 / 4.0 MB；已建链', elapsed_ms: 88 });
           });
           return Promise.resolve(out);
@@ -2749,6 +2768,8 @@ function createMockBackend() {
           return Promise.resolve({ ran: false, done: 0, failed: 0, skipped: 0, deleted_files: 0, deleted_bytes: 0, deleted_text: '0 B' });
         case 'set_locale':
           try { localStorage.setItem(LOCALE_KEY, args.locale); } catch (e) { /* 忽略 */ }
+          // 与真机一致：语言切换后状态文案按新语言重算（随后 td-lang-change 会触发重渲染）
+          relabelRules();
           return Promise.resolve(null);
         case 'get_locale':
           return Promise.resolve(getLang());
@@ -2761,10 +2782,10 @@ function createMockBackend() {
 
 function simulateProgress(total) {
   let i = 0;
-  showProgress('正在处理 ' + total + ' 条规则…');
+  showProgress(tf('mock.simulate_running', { n: total }));
   const timer = setInterval(function () {
     i += 1;
-    setProgress((i / total) * 100, '#' + i + '/' + total + ' 示例规则 · 已复制 ' + (i * 4200) + ' 个文件 / ' + (i * 137) + ' MB');
+    setProgress((i / total) * 100, tf('mock.simulate_detail', { i: i, n: total, files: i * 4200, mb: i * 137 }));
     if (i >= total) clearInterval(timer);
   }, 260);
 }
@@ -2795,7 +2816,7 @@ function simulateProgress(total) {
   await refresh(false);
   if (PARAMS.has('progress')) {
     showProgress(t('mock.progress_title'));
-    setProgress(46, '#2/3 Edge 缓存 · 已复制 12800 个文件 / 512.4 MB');
+    setProgress(46, t('mock.progress_detail'));
   }
   if (PARAMS.has('modal')) {
     await openRuleForm(null);
