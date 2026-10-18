@@ -1719,11 +1719,11 @@ function toLocalInputValue(d) {
 /**
  * 打开清理对话框。
  *
- * `targets` 是清理目标数组：单条规则时 `[{kind:'rule', id}]`；底部「清理…」批量清理时
- * 把全部规则一次性传入，共用同一套策略。破坏性操作，走「先预演、看到清单再点确认删除」
+ * `targets` 是清理目标数组：单条规则时 `[{kind:'rule', id}]`；批量清理时
+ * 把规则目标一次性传入，共用同一套策略。破坏性操作，走「先预演、看到清单再点确认删除」
  * 两步，删除按钮在预演前禁用。
  */
-async function openCleanDialog(targets, headingText) {
+async function openCleanDialog(targets, headingText, dialogTitle) {
   const multi = targets.length > 1;
   const body = document.createElement('div');
 
@@ -1973,7 +1973,7 @@ async function openCleanDialog(targets, headingText) {
   });
 
   openModal({
-    title: multi ? t('clean.batch_title') : t('clean.title'),
+    title: dialogTitle || (multi ? t('clean.batch_title') : t('clean.title')),
     body: body,
     wide: true,
     actions: [{ label: t('common.close'), onClick: closeModal }],
@@ -1989,6 +1989,22 @@ async function openBatchCleanDialog() {
   }
   const targets = rules.map(function (r) { return { kind: 'rule', id: r.id }; });
   await openCleanDialog(targets, tf('clean.batch_heading', { n: rules.length }));
+}
+
+/** 工具栏「清理…」：按统一策略清理所有已选条目的目标目录。 */
+async function openSelectedCleanDialog() {
+  if (!requirePicked(t('pick.clean'))) return;
+  const rules = (state.snap.rules || []).filter(function (r) { return state.picked.has(r.id); });
+  if (!rules.length) {
+    toast(t('clean.nothing'), t('clean.nothing_hint'), 'warn');
+    return;
+  }
+  const targets = rules.map(function (r) { return { kind: 'rule', id: r.id }; });
+  await openCleanDialog(
+    targets,
+    tf('clean.selected_batch_heading', { n: rules.length }),
+    t('clean.selected_batch_title'),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2218,7 +2234,7 @@ document.addEventListener('click', async function (ev) {
     if (!requirePicked(t('pick.detect'))) return;
     await doLocks(pickedIds()[0]);
   } else if (el.id === 'btn-clean') {
-    await openBatchCleanDialog();
+    await openSelectedCleanDialog();
   } else if (el.id === 'btn-disk') {
     await openDiskStats();
   } else if (el.id === 'btn-relink') {
