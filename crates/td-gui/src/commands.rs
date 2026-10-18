@@ -82,7 +82,7 @@ pub fn hint_tray_once(app: &AppHandle) {
     notify::notify(
         app,
         "TempDirector 仍在后台运行",
-        "窗口已隐藏到托盘，水位巡检与预授权自动清理继续生效。点托盘图标可重新打开。",
+        "窗口已隐藏到托盘，水位巡检与预授权自动清理继续生效。双击托盘图标可重新打开。",
     );
 }
 

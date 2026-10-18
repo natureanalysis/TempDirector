@@ -2,12 +2,12 @@
 //!
 //! 托盘提供两个"不用打开窗口就能做"的动作：
 //! * 立即执行开机重建（用户手动补一次，比如 RAM 盘是登录后才挂上的）；
-//! * 显示主窗口 / 退出。
+//! * 双击图标或通过菜单显示主窗口 / 退出。
 //!
 //! 重建动作放到后台线程跑：托盘事件是在主线程派发的，在这里做耗时 IO 会把界面卡死。
 
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::{self, AppState};
@@ -30,6 +30,15 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             "boot" => spawn_boot(app.clone()),
             "quit" => app.exit(0),
             _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } = event
+            {
+                focus_main(tray.app_handle());
+            }
         });
 
     if let Some(icon) = app.default_window_icon().cloned() {
