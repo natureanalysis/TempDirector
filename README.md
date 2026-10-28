@@ -28,6 +28,9 @@ launch defaults to English, and the choice is remembered.
   🚫 foreign reparse point), source → target paths side by side, wanted/boot-rebuild flags;
   search, category filter and "needs attention only" narrow the list; checked rows drive
   batch actions (apply / restore / enable / disable / relink / delete).
+  Presets whose source dir exists on this machine also show up as template rows at the
+  bottom of the list (badge "➕ Not added"): check one and press **Apply selected**, or use
+  its own **Add & apply**, to create and link it without opening the dialog.
 * **Detail panel**: full info per rule (source template and expanded path, link type,
   warnings, last applied time and size) plus single-rule actions.
 * **Add / edit rule**: live validation (path expansion, protected location, target state),
@@ -246,6 +249,12 @@ exists on this machine are shown. The chain is covered by the integration test
 `crates/td-gui/tests/preset_override.rs`.
 
 ---
+
+Besides the dialog dropdown, presets whose source directory exists on this machine are
+rendered **directly as template rows at the bottom of the rule list** (badge "➕ Not added"):
+check one and press **Apply selected**, or click the row's own **Add & apply**, to create and
+link it with the template defaults (junction, wanted on, rebuild on boot) — no dialog, no
+manual add step. Templates matching a `source_template` that already has a rule are hidden.
 
 ## Development
 

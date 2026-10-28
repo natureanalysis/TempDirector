@@ -51,6 +51,11 @@ function invoke(name, args) {
 const state = {
   snap: null,
   picked: new Set(),
+  // 内置模板（preset_rules 的返回，后端已按"本机存在源目录"过滤）。
+  // 还没建成本地规则的模板会作为"未添加"行直接显示在主列表里。
+  presets: [],
+  // 已勾选但还没建成规则的内置模板（键 = source_template 小写）。
+  pickedTpl: new Set(),
   focusId: null,
   filters: { q: '', category: '', onlyEnabled: false, onlyAttention: false },
   busy: false,
@@ -138,9 +143,13 @@ async function refresh(keepFocus) {
     state.snap = await invoke('ui_snapshot');
     const alive = state.snap.rules.some(function (r) { return r.id === state.focusId; });
     if (!keepFocus || !alive) state.focusId = state.snap.rules.length ? state.snap.rules[0].id : null;
+    // 内置模板：后端已按"本机是否存在该源目录"过滤，模板源目录不存在的机型自然拿不到条目。
+    // 命令不存在（旧后端）时静默降级为"没有模板"，不影响主列表。
+    try { state.presets = await invoke('preset_rules', {}); } catch (e) { state.presets = []; }
     // 清掉已经不存在的勾选项
     const ids = new Set(state.snap.rules.map(function (r) { return r.id; }));
     state.picked.forEach(function (id) { if (!ids.has(id)) state.picked.delete(id); });
+    pruneTplPicks();
     render();
   } catch (e) {
     toast(t('toast.load_failed'), e.message, 'error');
@@ -239,6 +248,101 @@ function filteredRules() {
   return sortRows(rows);
 }
 
+// ---------------------------------------------------------------------------
+// 内置模板（还没添加成规则的预设）
+//
+// 预设库（内置 + 用户外置）本来的唯一入口是「添加规则」弹窗顶部的下拉。
+// 这里把"还没建过规则"的模板直接铺成主列表的行（带「未添加」标记）：
+// 勾选后点「应用选中」就自动建规则 + 建链，不用再开表单弹窗逐字段填。
+// ---------------------------------------------------------------------------
+
+/** 模板身份键：source_template 是路径模板，Windows 路径大小写不敏感。 */
+function tplKey(tpl) { return String(tpl || '').toLowerCase(); }
+
+/** 主列表里要显示的模板行：排除已经建过同源规则的，再套用当前的分类 / 搜索筛选。
+ *  「只看已开启 / 只看需处理」描述的是规则状态，模板还没有状态 —— 这两项筛选
+ *  生效时直接不展示模板，免得用户以为它们是规则。 */
+function visibleTemplates() {
+  const f = state.filters;
+  if (f.onlyEnabled || f.onlyAttention) return [];
+  const used = new Set((state.snap.rules || []).map(function (r) { return tplKey(r.source_template); }));
+  const q = f.q.trim().toLowerCase();
+  return (state.presets || []).filter(function (p) {
+    if (used.has(tplKey(p.source_template))) return false;
+    if (f.category && p.category !== f.category) return false;
+    if (q) {
+      const hay = (p.name + ' ' + p.source + ' ' + p.source_template + ' ' + p.target_subpath).toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+}
+
+/** 模板建规则时默认落到的目标根：与「添加规则」弹窗的默认值一致（第一个根）。 */
+function tplTargetRoot() {
+  const roots = (state.snap && state.snap.roots) || [];
+  return roots[0] || null;
+}
+
+/** 模板行的目标路径预览（根 + 模板的默认子路径）。 */
+function tplTargetPath(p) {
+  const root = tplTargetRoot();
+  if (!root) return p.target_subpath;
+  return String(root.path).replace(/[\\\/]+$/, '') + '\\' + p.target_subpath;
+}
+
+/** 模板 → add_rule 的表单（字段名必须是 snake_case，契约见 view.rs 的 RuleForm）。 */
+function templateForm(p, rootId) {
+  return {
+    name: p.name,
+    category: p.category,
+    source_template: p.source_template,
+    target_root_id: rootId,
+    target_subpath: p.target_subpath,
+    link_type: 'junction',
+    want_enabled: true,
+    rebuild_on_boot: true,
+    notes: p.note || null,
+    excludes: [],
+    auto_clean_policy: '',
+  };
+}
+
+/** 勾选状态清理：模板从列表消失（后端不再返回 / 已建成规则）时同步取消勾选。
+ *  只看模板自身是否还存在，不受当前筛选影响 —— 与规则勾选的保留语义一致。 */
+function pruneTplPicks() {
+  if (!state.pickedTpl.size) return;
+  const used = new Set((state.snap.rules || []).map(function (r) { return tplKey(r.source_template); }));
+  const alive = new Set(
+    (state.presets || [])
+      .filter(function (p) { return !used.has(tplKey(p.source_template)); })
+      .map(function (p) { return tplKey(p.source_template); })
+  );
+  state.pickedTpl.forEach(function (k) { if (!alive.has(k)) state.pickedTpl.delete(k); });
+}
+
+/** 把当前勾选的模板逐个建成规则（add_rule），返回新建规则的 id 列表。
+ *  建失败的单独弹 toast 并跳过，不拖累其余模板。 */
+async function addPickedTemplates() {
+  const picked = (state.presets || []).filter(function (p) { return state.pickedTpl.has(tplKey(p.source_template)); });
+  if (!picked.length) return [];
+  const root = tplTargetRoot();
+  if (!root) {
+    toast(t('rule.no_root_title'), t('rule.no_root_hint'), 'warn');
+    return [];
+  }
+  const ids = [];
+  for (const p of picked) {
+    try {
+      const id = await invoke('add_rule', { form: templateForm(p, root.id) });
+      ids.push(id);
+    } catch (e) {
+      toast(tf('tpl.add_failed', { name: p.name }), e.message, 'error');
+    }
+  }
+  return ids;
+}
+
 /** 表头点击排序：客户端、不写库（持久顺序靠拖拽 sort_order）。
  *  key=null 时原样返回（保持后端顺序）。badge 按"好→坏"排，旗标按
  *  期望开启优先、再按开机重建。 */
@@ -295,16 +399,17 @@ function syncSelectAll(rows) {
 
 function renderRows() {
   const rows = filteredRules();
+  const tpls = visibleTemplates();
   const tbody = $('rows');
   tbody.textContent = '';
 
   $('filter-summary').textContent =
     tf('filter.summary', { shown: rows.length, total: (state.snap.rules || []).length }) +
-    (state.picked.size ? tf('filter.summary_picked', { n: state.picked.size }) : '');
+    (totalPicked() ? tf('filter.summary_picked', { n: totalPicked() }) : '');
   syncSelectAll(rows);
 
   const empty = $('empty');
-  if (!rows.length) {
+  if (!rows.length && !tpls.length) {
     empty.classList.remove('hidden');
     empty.textContent = state.snap.rules.length
       ? t('empty.no_match')
@@ -432,7 +537,103 @@ function renderRows() {
 
     frag.appendChild(tr);
   });
+  // 内置模板行排在真实规则之后：它们只是"可一键添加的预设"（.tpl-row 淡背景 +
+  // 「未添加」徽标），与库里已有规则视觉上分开。
+  tpls.forEach(function (p) { frag.appendChild(templateRow(p)); });
   tbody.appendChild(frag);
+}
+
+/** 单条内置模板行。勾选后随「应用选中」一并建规则 + 建链，全程不开表单。 */
+function templateRow(p) {
+  const key = tplKey(p.source_template);
+  const tr = document.createElement('tr');
+  tr.className = 'tpl-row';
+  tr.dataset.tpl = p.source_template;
+
+  // 勾选框（模板没有 id，用 source_template 当键）
+  const tdCheck = document.createElement('td');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = state.pickedTpl.has(key);
+  cb.dataset.act = 'pick-tpl';
+  cb.dataset.tpl = p.source_template;
+  tdCheck.appendChild(cb);
+  tr.appendChild(tdCheck);
+
+  // 状态徽标：明确"还没添加成规则"
+  const tdBadge = document.createElement('td');
+  const badge = document.createElement('span');
+  badge.className = 'badge tpl';
+  badge.textContent = t('tpl.badge');
+  badge.title = t('tpl.badge_tip');
+  tdBadge.appendChild(badge);
+  tr.appendChild(tdBadge);
+
+  // 名称 + 提示（有 note 用 note，没有就给默认的"勾选即应用"说明）
+  const tdName = document.createElement('td');
+  const nm = document.createElement('div');
+  nm.className = 'cell-name';
+  nm.textContent = p.name;
+  tdName.appendChild(nm);
+  const note = document.createElement('div');
+  note.className = 'row-note';
+  note.textContent = p.note ? ('⚠ ' + p.note) : t('tpl.hint');
+  tdName.appendChild(note);
+  tr.appendChild(tdName);
+
+  // 分类
+  const tdCat = document.createElement('td');
+  const pill = document.createElement('span');
+  pill.className = 'pill';
+  pill.textContent = categoryLabel(p.category);
+  tdCat.appendChild(pill);
+  tr.appendChild(tdCat);
+
+  // 源路径（展开后的路径，title 显示原始模板）
+  const tdSrc = document.createElement('td');
+  const src = document.createElement('div');
+  src.className = 'cell-path';
+  src.textContent = p.source;
+  src.title = p.source_template;
+  tdSrc.appendChild(src);
+  tr.appendChild(tdSrc);
+
+  // 目标（预计落在第一个目标根下）
+  const tdTgt = document.createElement('td');
+  const tgt = document.createElement('div');
+  tgt.className = 'cell-path root';
+  tgt.textContent = tplTargetPath(p);
+  tdTgt.appendChild(tgt);
+  tr.appendChild(tdTgt);
+
+  // 旗标：模板还没有状态，按"新建即期望开启 + 开机重建"灰显
+  const tdFlags = document.createElement('td');
+  const flags = document.createElement('div');
+  flags.className = 'row-flags';
+  [['●', t('row.expect_on')], ['⟳', t('row.rebuild_on')]].forEach(function (f2) {
+    const s = document.createElement('span');
+    s.className = 'toggle tpl';
+    s.textContent = f2[0];
+    s.title = f2[1];
+    flags.appendChild(s);
+  });
+  tdFlags.appendChild(flags);
+  tr.appendChild(tdFlags);
+
+  // 行操作：一键"添加并应用"（与勾选后按「应用选中」等价，只是省一步）
+  const tdAct = document.createElement('td');
+  const wrap = document.createElement('div');
+  wrap.className = 'row-actions';
+  const btn = document.createElement('button');
+  btn.className = 'mini primary';
+  btn.textContent = t('tpl.add_apply');
+  btn.dataset.act = 'tpl-apply';
+  btn.dataset.tpl = p.source_template;
+  wrap.appendChild(btn);
+  tdAct.appendChild(wrap);
+  tr.appendChild(tdAct);
+
+  return tr;
 }
 
 function renderDetail() {
@@ -643,12 +844,33 @@ function hideProgress() { $('progress').classList.add('hidden'); }
 
 function pickedIds() { return Array.from(state.picked); }
 
+/** 勾选总数：规则 + 还没添加成规则的内置模板。 */
+function totalPicked() { return state.picked.size + state.pickedTpl.size; }
+
 function requirePicked(what) {
   if (!state.picked.size) {
     toast(t('toast.no_pick'), tf('toast.no_pick_hint', { what: what }), 'warn');
     return false;
   }
   return true;
+}
+
+/** 「应用选中」专用：规则和内置模板都算数（模板会先建成规则再一起建链）。
+ *  其余批量操作（恢复 / 开关 / 删除 / …）只对已有规则有意义，仍走 requirePicked。 */
+function requireAnyPick(what) {
+  if (!totalPicked()) {
+    toast(t('toast.no_pick'), tf('toast.no_pick_hint', { what: what }), 'warn');
+    return false;
+  }
+  return true;
+}
+
+/** 勾选的模板先建规则，再和已勾选的规则一起交回给调用方建链。 */
+async function applyPickedAll() {
+  const created = await addPickedTemplates();
+  const ids = pickedIds().concat(created);
+  if (!ids.length) return;
+  await runApply(ids, false);
 }
 
 const OPTS_NORMAL = { dry_run: false, allow_merge: false, skip_lock_check: false, sha256: false };
@@ -2196,6 +2418,20 @@ document.addEventListener('click', async function (ev) {
       catch (e) { toast(t('toast.reveal_failed'), e.message, 'error'); }
       return;
     }
+    // 内置模板行：「添加并应用」= 建规则 + 立刻建链（等价于勾选后按「应用选中」）
+    if (act === 'tpl-apply') {
+      const p = (state.presets || []).find(function (x) { return tplKey(x.source_template) === tplKey(target.dataset.tpl); });
+      if (!p) return;
+      const root = tplTargetRoot();
+      if (!root) { toast(t('rule.no_root_title'), t('rule.no_root_hint'), 'warn'); return; }
+      try {
+        const newId = await invoke('add_rule', { form: templateForm(p, root.id) });
+        await runApply([newId], false);
+      } catch (e) {
+        toast(tf('tpl.add_failed', { name: p.name }), e.message, 'error');
+      }
+      return;
+    }
     return;
   }
 
@@ -2220,7 +2456,7 @@ document.addEventListener('click', async function (ev) {
   if (closest('#more-menu')) hideMoreMenu();
   if (el.id === 'btn-refresh') await refresh(true);
   else if (el.id === 'btn-add') await openRuleForm(null);
-  else if (el.id === 'btn-apply') { if (requirePicked(t('pick.apply'))) await runApply(pickedIds(), false); }
+  else if (el.id === 'btn-apply') { if (requireAnyPick(t('pick.apply'))) await applyPickedAll(); }
   else if (el.id === 'btn-restore') { if (requirePicked(t('pick.restore'))) await runRestore(pickedIds()); }
   else if (el.id === 'btn-enable' || el.id === 'btn-disable') {
     if (!requirePicked(t('pick.toggle'))) return;
@@ -2297,6 +2533,13 @@ document.addEventListener('change', function (ev) {
   if (el.dataset && el.dataset.act === 'pick') {
     const id = Number(el.dataset.id);
     if (el.checked) state.picked.add(id); else state.picked.delete(id);
+    renderRows();
+    return;
+  }
+  // 内置模板行的勾选：模板还没有 id，用 source_template 小写当键。
+  if (el.dataset && el.dataset.act === 'pick-tpl') {
+    const key = tplKey(el.dataset.tpl);
+    if (el.checked) state.pickedTpl.add(key); else state.pickedTpl.delete(key);
     renderRows();
     return;
   }

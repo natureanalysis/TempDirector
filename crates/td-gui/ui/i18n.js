@@ -35,8 +35,9 @@ const DICT = {
     'toolbar.delete': '删除',
     'toolbar.more': '更多 ▾',
     'toolbar.more_tip': '诊断与低频操作',
+    'toolbar.disk': '空间统计',
+    'toolbar.disk_tip': '查看各规则与磁盘空间占用',
     'menu.locks': '检测占用',
-    'menu.disk': '空间统计',
     'menu.relink': '仅重建链接',
     'menu.boot': '执行开机重建',
     'menu.restore_all': '恢复全部规则…',
@@ -124,6 +125,13 @@ const DICT = {
     'row.act.relink': '重链',
     'row.act.clean': '清理…',
     'row.act.edit': '编辑',
+
+    // 内置模板行（还没添加成规则）
+    'tpl.badge': '➕ 未添加',
+    'tpl.badge_tip': '内置模板：勾选后点「应用选中」即可建规则并重定向',
+    'tpl.hint': '内置模板 —— 勾选后点「应用选中」自动建规则并重定向',
+    'tpl.add_apply': '添加并应用',
+    'tpl.add_failed': '添加模板失败：{name}',
 
     // 详情
     'detail.chip.want_enabled': '期望开启',
@@ -464,8 +472,9 @@ const DICT = {
     'toolbar.delete': 'Delete',
     'toolbar.more': 'More ▾',
     'toolbar.more_tip': 'Diagnostics and low-frequency actions',
+    'toolbar.disk': 'Disk usage',
+    'toolbar.disk_tip': 'Show space usage per rule and on disk',
     'menu.locks': 'Check locks',
-    'menu.disk': 'Disk usage',
     'menu.relink': 'Relink only',
     'menu.boot': 'Run boot rebuild',
     'menu.restore_all': 'Restore all rules…',
@@ -553,6 +562,13 @@ const DICT = {
     'row.act.relink': 'Relink',
     'row.act.clean': 'Clean…',
     'row.act.edit': 'Edit',
+
+    // Built-in template rows (not added as rules yet)
+    'tpl.badge': '➕ Not added',
+    'tpl.badge_tip': 'Built-in template: tick it and click “Apply selected” to create the rule and redirect',
+    'tpl.hint': 'Built-in template — tick it and “Apply selected” creates the rule and redirects',
+    'tpl.add_apply': 'Add & apply',
+    'tpl.add_failed': 'Failed to add template: {name}',
 
     // detail
     'detail.chip.want_enabled': 'Desired on',

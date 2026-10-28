@@ -105,6 +105,13 @@
     "note": "体积最大也最容易被占用：应用时被占的文件会自动跳过，建议先关闭后台软件"
   },
   {
+    "name": "系统 TEMP",
+    "category": "system",
+    "source_template": "%WINDIR%\\Temp",
+    "target_subpath": "system\\windows-temp",
+    "note": "需要管理员权限：C:\\Windows\\Temp 常被系统组件占用，被占文件会自动跳过"
+  },
+  {
     "name": "NVIDIA DX 着色器缓存",
     "category": "system",
     "source_template": "%LOCALAPPDATA%\\NVIDIA\\DXCache",
