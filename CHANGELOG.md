@@ -41,7 +41,17 @@
 * `index.html?mock=1` 浏览器取证：工具栏直接含「空间统计 / Disk usage」按钮且「更多」里没有它；
   列表底部出现「➕ 未添加」模板行；勾选模板行后摘要出现 "1 selected"，点「应用选中」后规则数
   自增并生成对应规则行、该模板行消失；点模板行自带的「添加并应用」同样生效。
-* 纯前端 + 预设数据改动；本机沙箱无法构建 Tauri 链路（缺 Windows SDK），未跑 `cargo test`。
+* **构建与测试**（本轮补跑，此前【构建被沙箱挡住、未跑 cargo test】的记录已不成立）：
+  `scripts\cargo.cmd build --release --workspace` 通过、无 warning，产物
+  `target\release\tempdirector-gui.exe` —— 二进制内可搜到新增预设 `系统 TEMP`、
+  `%WINDIR%\Temp`、`system\windows-temp` 原文（`include_str!` 直出）。
+  `cargo test --workspace` 全绿：8 个测试目标、186 passed / 0 failed；其中
+  `builtin_presets_parse` 覆盖本次新增预设需要的一切（内嵌 JSON 解析、条数下限 ≥20、
+  逐条 `validate_preset`、`%VAR%` 模板前缀、名字 / 模板 / 子路径唯一性），
+  `preset_rules_filters_by_existence` 与 `preset_override` 集成用例同批通过。
+* release 下前端资源经 Tauri（`frontendDist: ui`）压缩内嵌，所以在 exe 里搜
+  `toolbar.disk` 这类 UI 文案是 0 命中 —— 属正常，不作为界面未内嵌的判断依据；
+  界面行为仍以 `?mock=1` 预览取证为准。
 
 ## 2026-10-17（界面：语言切换改分段按钮 + 默认英文 + 切换即整片刷新）
 
