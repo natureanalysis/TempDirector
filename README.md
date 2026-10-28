@@ -260,7 +260,7 @@ manual add step. Templates matching a `source_template` that already has a rule 
 
 ```powershell
 scripts\cargo.cmd check --workspace --all-targets
-scripts\cargo.cmd test  --workspace          # 104 unit tests (td-core 88 + td-gui 16)
+scripts\cargo.cmd test  --workspace          # 186 tests (unit: td-core 165, td-cli 11, td-gui 6; integration: 4)
 scripts\cargo.cmd build --release            # both exes at once
 rebuild.bat                                  # full rebuild: clean + release + refresh the desktop shortcut
 python scripts\make_icon.py                  # regenerate the app icon

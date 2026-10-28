@@ -245,7 +245,7 @@ rebuild.bat                一键全量重建（clean + release）并刷新桌�
 
 ```powershell
 scripts\cargo.cmd check --workspace --all-targets
-scripts\cargo.cmd test  --workspace          # 104 个单元测试（td-core 88 + td-gui 16）
+scripts\cargo.cmd test  --workspace          # 共 186 个测试（单元：td-core 165、td-cli 11、td-gui 6；集成：4）
 scripts\cargo.cmd build --release            # 两个 exe 一起出
 rebuild.bat                                  # 全量重建：clean + release + 刷新桌面快捷方式
 python scripts\make_icon.py                  # 需要改图标时重跑
