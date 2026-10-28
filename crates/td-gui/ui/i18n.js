@@ -58,6 +58,8 @@ const DICT = {
     'table.target': '目标（RAM 盘）',
     'table.flag': '旗标',
     'table.flag_tip': '左：期望开启（● 开 / ○ 关）；右：开机自动重建（⟳ 参与）',
+    'table.usage': '占用(M)',
+    'table.usage_tip': '规则缓存目录当前占用；点「空间统计」后更新',
 
     // 通用
     'common.close': '关闭',
@@ -125,6 +127,8 @@ const DICT = {
     'row.act.relink': '重链',
     'row.act.clean': '清理…',
     'row.act.edit': '编辑',
+    'row.usage_pending': '点「空间统计」后显示占用',
+    'row.usage_title': '缓存目录占用 {size}（{files} 个文件）',
 
     // 内置模板行（还没添加成规则）
     'tpl.badge': '➕ 未添加',
@@ -132,6 +136,11 @@ const DICT = {
     'tpl.hint': '内置模板 —— 勾选后点「应用选中」自动建规则并重定向',
     'tpl.add_apply': '添加并应用',
     'tpl.add_failed': '添加模板失败：{name}',
+
+    // 行右键菜单
+    'ctx.title_rules': '{n} 条规则',
+    'ctx.title_tpl': '模板：{name}',
+    'ctx.title_tpl_multi': '{n} 个内置模板',
 
     // 详情
     'detail.chip.want_enabled': '期望开启',
@@ -495,6 +504,8 @@ const DICT = {
     'table.target': 'Target (RAM disk)',
     'table.flag': 'Flags',
     'table.flag_tip': 'Left: desired enabled (● on / ○ off); Right: rebuild on boot (⟳ participates)',
+    'table.usage': 'Size (MB)',
+    'table.usage_tip': 'Current cache usage per rule; updated after you click “Disk usage”',
 
     // 通用
     'common.close': 'Close',
@@ -562,6 +573,8 @@ const DICT = {
     'row.act.relink': 'Relink',
     'row.act.clean': 'Clean…',
     'row.act.edit': 'Edit',
+    'row.usage_pending': 'Click “Disk usage” to load',
+    'row.usage_title': 'Cache dir {size} ({files} files)',
 
     // Built-in template rows (not added as rules yet)
     'tpl.badge': '➕ Not added',
@@ -569,6 +582,11 @@ const DICT = {
     'tpl.hint': 'Built-in template — tick it and “Apply selected” creates the rule and redirects',
     'tpl.add_apply': 'Add & apply',
     'tpl.add_failed': 'Failed to add template: {name}',
+
+    // row context menu
+    'ctx.title_rules': '{n} rules',
+    'ctx.title_tpl': 'Template: {name}',
+    'ctx.title_tpl_multi': '{n} templates',
 
     // detail
     'detail.chip.want_enabled': 'Desired on',

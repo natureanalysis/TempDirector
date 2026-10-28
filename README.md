@@ -27,7 +27,11 @@ launch defaults to English, and the choice is remembered.
 * **Rule list**: status badges (✅ OK / ⚠️ broken link or empty target / ❌ not linked /
   🚫 foreign reparse point), source → target paths side by side, wanted/boot-rebuild flags;
   search, category filter and "needs attention only" narrow the list; checked rows drive
-  batch actions (apply / restore / enable / disable / relink / delete).
+  batch actions (apply / restore / enable / disable / relink / delete); **right-click a row**
+  for the same per-row actions on that row (or on the whole checked selection, if the row is
+  already checked).
+  A **Size (MB)** column shows each rule's cache usage; it stays `—` until you press
+  **Disk usage** in the toolbar, which fills the column in.
   Presets whose source dir exists on this machine also show up as template rows at the
   bottom of the list (badge "➕ Not added"): check one and press **Apply selected**, or use
   its own **Add & apply**, to create and link it without opening the dialog.

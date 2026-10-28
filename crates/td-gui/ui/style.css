@@ -240,6 +240,37 @@ input, select { font-family: inherit; font-size: 13px; }
 .menu-item.danger:hover { background: var(--danger-bg); color: var(--danger); }
 .menu-sep { height: 1px; background: var(--line); margin: 5px 4px; }
 
+/* 行右键菜单（上下文菜单）：对所选条目执行特定操作。定位走 CSSOM
+   （position:fixed + 光标坐标），z-index 40 —— 高于「更多」下拉(30)、
+   低于详情面板(60) / 弹窗(70)，保证不会盖住弹窗。 */
+.ctx-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  min-width: 208px;
+  max-width: 320px;
+  padding: 5px;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, .18);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+}
+.ctx-head {
+  padding: 4px 10px 7px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu-item:disabled { color: var(--muted); opacity: .55; cursor: default; background: transparent; }
+table.rules tbody tr.ctx-target { background: #e8f0ff; }
+
 .input, .select {
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -298,6 +329,7 @@ table.rules tbody tr.tpl-row .cell-name { color: var(--ink-2); }
 .col-check { width: 34px; }
 .col-badge { width: 82px; }
 .col-cat { width: 76px; }
+.col-usage { width: 96px; }
 .col-flag { width: 78px; }
 .col-actions { width: 196px; }
 .col-name { width: 168px; }
@@ -312,6 +344,11 @@ table.rules tbody tr.tpl-row .cell-name { color: var(--ink-2); }
   word-break: break-all;
 }
 .cell-path.root { color: var(--muted); }
+
+/* 占用空间列（单位 MB）：右对齐 + 等宽数字；未统计时灰显占位 */
+table.rules thead th.col-usage { text-align: right; }
+.cell-usage { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); white-space: nowrap; }
+.cell-usage.none { color: var(--muted); }
 .row-note { font-size: 11.5px; color: var(--warn); margin-top: 3px; }
 .row-note.err { color: var(--danger); }
 

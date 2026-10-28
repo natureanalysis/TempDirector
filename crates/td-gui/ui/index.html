@@ -74,6 +74,7 @@
           <th class="col-cat" data-sort="category" data-i18n="table.category">分类</th>
           <th class="col-source" data-sort="source" data-i18n="table.source">源路径</th>
           <th class="col-target" data-sort="target" data-i18n="table.target">目标（RAM 盘）</th>
+          <th class="col-usage" data-sort="usage" data-i18n="table.usage" data-i18n-title="table.usage_tip" title="规则缓存目录当前占用（点「空间统计」后更新）">占用(M)</th>
           <th class="col-flag" data-sort="flag" data-i18n="table.flag" data-i18n-title="table.flag_tip" title="左：期望开启（● 开 / ○ 关）；右：开机自动重建（⟳ 参与）">旗标</th>
           <th class="col-actions"></th>
         </tr>
@@ -104,6 +105,7 @@
     </div>
   </div>
 
+  <div id="row-menu" class="ctx-menu hidden"></div>
   <div id="toasts" class="toasts"></div>
 
   <script src="i18n.js"></script>

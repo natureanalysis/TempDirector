@@ -63,6 +63,9 @@ const state = {
   // 表头点击排序：key=null 表示用后端返回顺序（category, sort_order, id）。
   // 客户端排序只影响展示，不写库 —— 拖拽排序（sort_order）才是持久顺序。
   sort: { key: null, dir: 'asc' },
+  // 「空间统计」的扫描结果：rule_id -> DiskUsageEntry（bytes / files / bytes_text）。
+  // 只有点过「空间统计」才有值；为 null 时表格该列显示占位符。
+  diskUsage: null,
 };
 
 // 分类标签走 i18n（键 cat.<category>）；未收录的分类回退原始值。
@@ -359,6 +362,7 @@ function sortRows(rows) {
       case 'source': return r.source || '';
       case 'target': return r.target || '';
       case 'flag': return (r.want_enabled ? 0 : 1) + ',' + (r.rebuild_on_boot ? 0 : 1);
+      case 'usage': return (state.diskUsage && state.diskUsage[r.id]) ? state.diskUsage[r.id].bytes : -1;
       default: return '';
     }
   };
@@ -398,6 +402,8 @@ function syncSelectAll(rows) {
 }
 
 function renderRows() {
+  // 重画行会丢掉 .ctx-target 高亮，菜单留着也没意义 —— 直接收起。
+  if (ctxTarget) closeRowMenu();
   const rows = filteredRules();
   const tpls = visibleTemplates();
   const tbody = $('rows');
@@ -494,6 +500,20 @@ function renderRows() {
     tgt.textContent = r.target;
     tdTgt.appendChild(tgt);
     tr.appendChild(tdTgt);
+
+    // 占用空间（MB）：只有点过「空间统计」才有数，未统计时给占位符。
+    const tdUsage = document.createElement('td');
+    tdUsage.className = 'cell-usage';
+    const usageEntry = state.diskUsage ? state.diskUsage[r.id] : null;
+    if (usageEntry) {
+      tdUsage.textContent = (usageEntry.bytes / 1048576).toFixed(1);
+      tdUsage.title = tf('row.usage_title', { size: usageEntry.bytes_text, files: usageEntry.files });
+    } else {
+      tdUsage.className += ' none';
+      tdUsage.textContent = '—';
+      tdUsage.title = t('row.usage_pending');
+    }
+    tr.appendChild(tdUsage);
 
     // 旗标：期望开启 + 开机重建合并成一列
     // （两个布尔各占一列太浪费横向空间，完整含义在详情面板 chips 里也有一份）
@@ -605,6 +625,13 @@ function templateRow(p) {
   tgt.textContent = tplTargetPath(p);
   tdTgt.appendChild(tgt);
   tr.appendChild(tdTgt);
+
+  // 占用空间：模板还没建规则，没有可统计的缓存目录。
+  const tdUsage = document.createElement('td');
+  tdUsage.className = 'cell-usage none';
+  tdUsage.textContent = '—';
+  tdUsage.title = t('row.usage_pending');
+  tr.appendChild(tdUsage);
 
   // 旗标：模板还没有状态，按"新建即期望开启 + 开机重建"灰显
   const tdFlags = document.createElement('td');
@@ -871,6 +898,87 @@ async function applyPickedAll() {
   const ids = pickedIds().concat(created);
   if (!ids.length) return;
   await runApply(ids, false);
+}
+
+/** 批量开启 / 关闭规则（工具栏「开启 / 关闭」与行右键菜单共用）。 */
+async function setRulesEnabled(ids, enabled) {
+  if (!ids.length) return;
+  try {
+    await invoke('set_rules_enabled', { ids: ids, enabled: enabled });
+    toast(enabled ? t('toast.enabled') : t('toast.disabled'), tf('toast.toggle_hint', { n: ids.length }), 'ok');
+    await refresh(true);
+  } catch (e) { toast(t('toast.op_failed'), e.message, 'error'); }
+}
+
+/** 删除规则的确认弹窗（工具栏「删除」与行右键菜单共用）。 */
+function confirmDeleteRules(ids) {
+  if (!ids.length) return;
+  const body = document.createElement('div');
+  const p1 = document.createElement('div');
+  p1.className = 'field';
+  p1.textContent = tf('del.confirm_body', { n: ids.length });
+  const p2 = document.createElement('div');
+  p2.className = 'field';
+  const h = document.createElement('div');
+  h.className = 'hint warn';
+  h.textContent = t('del.confirm_warn');
+  p2.appendChild(h);
+  body.appendChild(p1);
+  body.appendChild(p2);
+  openModal({
+    title: t('del.confirm_title'),
+    body: body,
+    actions: [
+      { label: t('common.cancel'), onClick: closeModal },
+      {
+        label: t('common.delete'), kind: 'danger',
+        onClick: async function () {
+          try {
+            await invoke('delete_rules', { ids: ids });
+            state.picked.clear();
+            closeModal();
+            toast(t('del.done'), tf('del.done_hint', { n: ids.length }), 'ok');
+            await refresh(false);
+          } catch (e) { toast(t('del.failed'), e.message, 'error'); }
+        },
+      },
+    ],
+  });
+}
+
+/** 「清理…」弹窗的公共入口：把规则 id 列表转成 targets 再复用 openCleanDialog。 */
+async function openCleanTargets(ids) {
+  const rules = ids.map(function (id) {
+    return state.snap.rules.find(function (r) { return r.id === id; });
+  }).filter(Boolean);
+  if (!rules.length) {
+    toast(t('clean.nothing'), t('clean.nothing_hint'), 'warn');
+    return;
+  }
+  const targets = rules.map(function (r) { return { kind: 'rule', id: r.id }; });
+  await openCleanDialog(
+    targets,
+    tf('clean.selected_batch_heading', { n: rules.length }),
+    t('clean.selected_batch_title'),
+  );
+}
+
+/** 把一组内置模板逐个建成规则并立刻建链（模板行「添加并应用」与右键菜单共用）。 */
+async function applyTemplates(tpls) {
+  if (!tpls.length) return;
+  const root = tplTargetRoot();
+  if (!root) { toast(t('rule.no_root_title'), t('rule.no_root_hint'), 'warn'); return; }
+  const ids = [];
+  for (const p of tpls) {
+    try {
+      const newId = await invoke('add_rule', { form: templateForm(p, root.id) });
+      ids.push(newId);
+      state.pickedTpl.delete(tplKey(p.source_template));
+    } catch (e) {
+      toast(tf('tpl.add_failed', { name: p.name }), e.message, 'error');
+    }
+  }
+  if (ids.length) await runApply(ids, false);
 }
 
 const OPTS_NORMAL = { dry_run: false, allow_merge: false, skip_lock_check: false, sha256: false };
@@ -2216,17 +2324,7 @@ async function openBatchCleanDialog() {
 /** 工具栏「清理…」：按统一策略清理所有已选条目的目标目录。 */
 async function openSelectedCleanDialog() {
   if (!requirePicked(t('pick.clean'))) return;
-  const rules = (state.snap.rules || []).filter(function (r) { return state.picked.has(r.id); });
-  if (!rules.length) {
-    toast(t('clean.nothing'), t('clean.nothing_hint'), 'warn');
-    return;
-  }
-  const targets = rules.map(function (r) { return { kind: 'rule', id: r.id }; });
-  await openCleanDialog(
-    targets,
-    tf('clean.selected_batch_heading', { n: rules.length }),
-    t('clean.selected_batch_title'),
-  );
+  await openCleanTargets(pickedIds());
 }
 
 // ---------------------------------------------------------------------------
@@ -2275,6 +2373,11 @@ async function openDiskStats() {
     try {
       const data = await invoke('disk_usage');
       renderDiskStats(host, status, data);
+      // 把本次扫描结果回填到主列表的「占用(M)」列（rule_id -> 条目）。
+      const usage = {};
+      (data.rules || []).forEach(function (r) { usage[r.id] = r; });
+      state.diskUsage = usage;
+      renderRows();
     } catch (e) {
       status.className = 'hint err';
       status.textContent = t('disk.failed') + '：' + e.message;
@@ -2381,11 +2484,157 @@ function volumeRow(v) {
 }
 
 // ---------------------------------------------------------------------------
+// 行右键菜单：对"所选条目"执行特定操作
+//
+// 作用范围（与资源管理器一致）：右键点中的行若已在勾选集合里，就对**全部已
+// 勾选条目**生效；否则只对右键点中的这一条生效 —— 不改动勾选状态，只用
+// .ctx-target 高亮标出作用对象。模板行同理，作用对象换成内置模板。
+// ---------------------------------------------------------------------------
+
+/** 当前打开的右键菜单目标行；null 表示没开。 */
+let ctxTarget = null;
+
+/** 复制多条路径时的分隔符（换行，便于直接粘进命令行）。 */
+const CTX_NL = String.fromCharCode(10);
+
+function closeRowMenu() {
+  const m = $('row-menu');
+  if (m) { m.classList.add('hidden'); m.textContent = ''; }
+  document.querySelectorAll('tr.ctx-target').forEach(function (tr) { tr.classList.remove('ctx-target'); });
+  ctxTarget = null;
+}
+
+/** 右键点中的行在勾选集合内 -> 整批；否则只此一条。 */
+function scopeIds(clickedId) { return state.picked.has(clickedId) ? pickedIds() : [clickedId]; }
+function scopeTplKeys(clickedKey) { return state.pickedTpl.has(clickedKey) ? Array.from(state.pickedTpl) : [clickedKey]; }
+
+function mkCtxHead(text) {
+  const h = document.createElement('div');
+  h.className = 'ctx-head';
+  h.textContent = text;
+  return h;
+}
+
+function mkCtxSep() {
+  const s = document.createElement('div');
+  s.className = 'menu-sep';
+  return s;
+}
+
+/** 菜单项：点击先收起菜单再执行动作。disabled 的项保留位置但不可点。 */
+function mkCtxItem(label, onClick, opts) {
+  opts = opts || {};
+  const b = document.createElement('button');
+  b.className = 'menu-item' + (opts.danger ? ' danger' : '');
+  b.textContent = label;
+  if (opts.disabled) {
+    b.disabled = true;
+  } else {
+    b.addEventListener('click', function () { closeRowMenu(); onClick(); });
+  }
+  return b;
+}
+
+function openRowMenu(ev, tr) {
+  const m = $('row-menu');
+  if (!m) return;
+  closeRowMenu();
+  m.textContent = '';
+
+  const ruleId = tr.dataset.id ? Number(tr.dataset.id) : null;
+  if (ruleId !== null && !Number.isNaN(ruleId)) {
+    buildRuleMenu(m, scopeIds(ruleId));
+  } else if (tr.dataset.tpl) {
+    buildTplMenu(m, scopeTplKeys(tplKey(tr.dataset.tpl)));
+  } else {
+    return;
+  }
+  tr.classList.add('ctx-target');
+  ctxTarget = tr;
+
+  // 先摆到左上量尺寸，再按视口夹紧，避免菜单贴边溢出。
+  m.classList.remove('hidden');
+  m.style.left = '0px';
+  m.style.top = '0px';
+  const rect = m.getBoundingClientRect();
+  const pad = 8;
+  const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
+  const maxY = Math.max(pad, window.innerHeight - rect.height - pad);
+  m.style.left = Math.min(Math.max(pad, ev.clientX), maxX) + 'px';
+  m.style.top = Math.min(Math.max(pad, ev.clientY), maxY) + 'px';
+}
+
+function buildRuleMenu(m, ids) {
+  const single = ids.length === 1;
+  const rules = ids.map(function (id) {
+    return state.snap.rules.find(function (r) { return r.id === id; });
+  }).filter(Boolean);
+  if (!rules.length) return;
+  const anyLinked = rules.some(function (r) { return r.badge === '✅' || r.badge === '⚠️'; });
+  const anyUnlinked = rules.some(function (r) { return r.badge === '⚠️' || r.badge === '❌'; });
+  const allOn = rules.every(function (r) { return r.want_enabled; });
+  const allOff = rules.every(function (r) { return !r.want_enabled; });
+
+  m.appendChild(mkCtxHead(single ? rules[0].name : tf('ctx.title_rules', { n: rules.length })));
+  m.appendChild(mkCtxItem(t('detail.act.apply'), function () { runApply(ids, false); }));
+  m.appendChild(mkCtxItem(t('detail.act.restore'), function () { runRestore(ids); }, { disabled: !anyLinked }));
+  m.appendChild(mkCtxItem(t('detail.act.relink'), function () { doRelink(ids[0]); }, { disabled: !single || !anyUnlinked }));
+  m.appendChild(mkCtxItem(t('detail.act.locks'), function () { doLocks(ids[0]); }, { disabled: !single }));
+  m.appendChild(mkCtxItem(t('detail.act.clean'), function () { openCleanTargets(ids); }));
+  m.appendChild(mkCtxSep());
+  m.appendChild(mkCtxItem(t('detail.act.edit'), function () { openRuleForm(ids[0]); }, { disabled: !single }));
+  m.appendChild(mkCtxItem(t('detail.act.copy_source'), function () {
+    copyText(rules.map(function (r) { return r.source; }).join(CTX_NL));
+  }));
+  m.appendChild(mkCtxItem(t('detail.act.reveal'), function () { revealSource(rules[0].source); }, { disabled: !single }));
+  m.appendChild(mkCtxSep());
+  m.appendChild(mkCtxItem(t('toolbar.enable'), function () { setRulesEnabled(ids, true); }, { disabled: allOn }));
+  m.appendChild(mkCtxItem(t('toolbar.disable'), function () { setRulesEnabled(ids, false); }, { disabled: allOff }));
+  m.appendChild(mkCtxItem(t('toolbar.delete'), function () { confirmDeleteRules(ids); }, { danger: true }));
+}
+
+function buildTplMenu(m, keys) {
+  const tpls = (state.presets || []).filter(function (p) { return keys.indexOf(tplKey(p.source_template)) >= 0; });
+  if (!tpls.length) return;
+  m.appendChild(mkCtxHead(tpls.length > 1 ? tf('ctx.title_tpl_multi', { n: tpls.length }) : tf('ctx.title_tpl', { name: tpls[0].name })));
+  m.appendChild(mkCtxItem(t('tpl.add_apply'), function () { applyTemplates(tpls); }));
+  m.appendChild(mkCtxSep());
+  m.appendChild(mkCtxItem(t('detail.act.copy_source'), function () {
+    copyText(tpls.map(function (p) { return p.source; }).join(CTX_NL));
+  }));
+  m.appendChild(mkCtxItem(t('detail.act.reveal'), function () { revealSource(tpls[0].source); }, { disabled: tpls.length > 1 }));
+}
+
+/** 打开源目录（行右键菜单 / 详情面板共用同一后端命令）。 */
+function revealSource(path) {
+  invoke('reveal_in_explorer', { path: path }).catch(function (e) {
+    toast(t('toast.reveal_failed'), e.message, 'error');
+  });
+}
+
+/** 列表行右键 -> 上下文菜单。只在规则行 / 模板行上生效；列表区域内其它
+   位置右键只收起菜单，不弹系统菜单。 */
+document.addEventListener('contextmenu', function (ev) {
+  const row = ev.target.closest ? ev.target.closest('tr[data-id], tr[data-tpl]') : null;
+  if (row) { ev.preventDefault(); openRowMenu(ev, row); return; }
+  if (ev.target.closest && ev.target.closest('main.table-wrap')) {
+    ev.preventDefault();
+    closeRowMenu();
+    return;
+  }
+  closeRowMenu();
+});
+document.addEventListener('scroll', function () { if (ctxTarget) closeRowMenu(); }, true);
+window.addEventListener('resize', function () { if (ctxTarget) closeRowMenu(); });
+
+// ---------------------------------------------------------------------------
 // 事件绑定（事件委托）
 // ---------------------------------------------------------------------------
 
 document.addEventListener('click', async function (ev) {
   const target = ev.target.closest('[data-act]');
+  // 行右键菜单：点菜单以外任意位置都收起（菜单项自身的 click 会先收起再执行动作）。
+  if (ctxTarget && !(ev.target.closest && ev.target.closest('#row-menu'))) closeRowMenu();
   if (target) {
     const act = target.dataset.act;
     const id = Number(target.dataset.id);
@@ -2422,14 +2671,7 @@ document.addEventListener('click', async function (ev) {
     if (act === 'tpl-apply') {
       const p = (state.presets || []).find(function (x) { return tplKey(x.source_template) === tplKey(target.dataset.tpl); });
       if (!p) return;
-      const root = tplTargetRoot();
-      if (!root) { toast(t('rule.no_root_title'), t('rule.no_root_hint'), 'warn'); return; }
-      try {
-        const newId = await invoke('add_rule', { form: templateForm(p, root.id) });
-        await runApply([newId], false);
-      } catch (e) {
-        toast(tf('tpl.add_failed', { name: p.name }), e.message, 'error');
-      }
+      await applyTemplates([p]);
       return;
     }
     return;
@@ -2460,12 +2702,7 @@ document.addEventListener('click', async function (ev) {
   else if (el.id === 'btn-restore') { if (requirePicked(t('pick.restore'))) await runRestore(pickedIds()); }
   else if (el.id === 'btn-enable' || el.id === 'btn-disable') {
     if (!requirePicked(t('pick.toggle'))) return;
-    const enabled = el.id === 'btn-enable';
-    try {
-      await invoke('set_rules_enabled', { ids: pickedIds(), enabled: enabled });
-      toast(enabled ? t('toast.enabled') : t('toast.disabled'), tf('toast.toggle_hint', { n: pickedIds().length }), 'ok');
-      await refresh(true);
-    } catch (e) { toast(t('toast.op_failed'), e.message, 'error'); }
+    await setRulesEnabled(pickedIds(), el.id === 'btn-enable');
   } else if (el.id === 'btn-locks') {
     if (!requirePicked(t('pick.detect'))) return;
     await doLocks(pickedIds()[0]);
@@ -2478,38 +2715,7 @@ document.addEventListener('click', async function (ev) {
     for (const id of pickedIds()) await doRelink(id);
   } else if (el.id === 'btn-delete') {
     if (!requirePicked(t('pick.delete'))) return;
-    const ids = pickedIds();
-    const body = document.createElement('div');
-    const p1 = document.createElement('div');
-    p1.className = 'field';
-    p1.textContent = tf('del.confirm_body', { n: ids.length });
-    const p2 = document.createElement('div');
-    p2.className = 'field';
-    const h = document.createElement('div');
-    h.className = 'hint warn';
-    h.textContent = t('del.confirm_warn');
-    p2.appendChild(h);
-    body.appendChild(p1);
-    body.appendChild(p2);
-    openModal({
-      title: t('del.confirm_title'),
-      body: body,
-      actions: [
-        { label: t('common.cancel'), onClick: closeModal },
-        {
-          label: t('common.delete'), kind: 'danger',
-          onClick: async function () {
-            try {
-              await invoke('delete_rules', { ids: ids });
-              state.picked.clear();
-              closeModal();
-              toast(t('del.done'), tf('del.done_hint', { n: ids.length }), 'ok');
-              await refresh(false);
-            } catch (e) { toast(t('del.failed'), e.message, 'error'); }
-          },
-        },
-      ],
-    });
+    confirmDeleteRules(pickedIds());
   } else if (el.id === 'btn-boot') await doBoot();
   else if (el.id === 'btn-restore-all') await restoreAllRules();
   else if (el.id === 'btn-ops') await openOps();
@@ -2563,6 +2769,8 @@ document.addEventListener('input', function (ev) {
 
 document.addEventListener('keydown', function (ev) {
   if (ev.key === 'Escape') {
+    // 行右键菜单最轻，最先关（再按一次才轮到弹窗 / 详情）。
+    if (ctxTarget) { closeRowMenu(); return; }
     // 弹窗优先于详情：弹窗开着时 Esc 只关弹窗，不顺手把详情也收掉。
     if (!$('modal').classList.contains('hidden')) {
       closeModal();
