@@ -40,3 +40,6 @@ tempdirector-config.json
 
 # 本地临时实验目录
 %TEMP%/
+
+# 浏览器自动化会话产物（dumate-browser-use）
+.dumate/
