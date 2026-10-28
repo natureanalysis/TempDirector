@@ -55,10 +55,10 @@ pub(crate) fn load_user_presets(path: &Path) -> (Vec<PresetDef>, Vec<String>) {
     for p in parsed {
         match validate_preset(&p) {
             Ok(()) => ok.push(p),
-            Err(e) => skipped.push(tf("preset.skipped", &[
-                ("name", &p.name),
-                ("err", &e.to_string()),
-            ])),
+            Err(e) => skipped.push(tf(
+                "preset.skipped",
+                &[("name", &p.name), ("err", &e.to_string())],
+            )),
         }
     }
     (ok, skipped)
@@ -69,10 +69,10 @@ pub(crate) fn validate_preset(p: &PresetDef) -> TdResult<()> {
         return Err(TdError::InvalidPath(t("form.name_empty").into()));
     }
     if !CATEGORIES.contains(&p.category.as_str()) {
-        return Err(TdError::InvalidPath(tf("form.unknown_category", &[
-            ("cat", &p.category),
-            ("list", &CATEGORIES.join(" / ")),
-        ])));
+        return Err(TdError::InvalidPath(tf(
+            "form.unknown_category",
+            &[("cat", &p.category), ("list", &CATEGORIES.join(" / "))],
+        )));
     }
     if p.source_template.trim().is_empty() {
         return Err(TdError::InvalidPath(t("form.source_empty").into()));

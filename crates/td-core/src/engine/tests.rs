@@ -49,6 +49,7 @@ fn setup(tag: &str) -> Env {
             notes: None,
             excludes: Vec::new(),
             auto_clean_policy: String::new(),
+            auto_clean_limit_bytes: 0,
         })
         .unwrap();
     let target = ram.join("dev").join("test-cache");

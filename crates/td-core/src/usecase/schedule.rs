@@ -110,10 +110,10 @@ pub(crate) fn scheduled_clean_at(
                 Some(rule.id),
                 "warn",
                 "scheduled_clean",
-                &tf("schedule.bad_rule_policy", &[
-                    ("name", &rule.name),
-                    ("s", &rule.auto_clean_policy),
-                ]),
+                &tf(
+                    "schedule.bad_rule_policy",
+                    &[("name", &rule.name), ("s", &rule.auto_clean_policy)],
+                ),
             )?;
             continue;
         };
@@ -121,6 +121,7 @@ pub(crate) fn scheduled_clean_at(
             store,
             &super::view::CleanTarget::Rule { id: rule.id },
             &policy,
+            &[],
             false,
             &mut |_| {},
         ) {
@@ -140,16 +141,22 @@ pub(crate) fn scheduled_clean_at(
             None,
             level,
             "scheduled_clean",
-            &tf("schedule.log", &[
-                ("n", &(v.done + v.failed).to_string()),
-                ("files", &v.deleted_files.to_string()),
-                ("size", &v.deleted_text),
-                ("failed", &if v.failed > 0 {
-                    tf("schedule.failed_suffix", &[("n", &v.failed.to_string())])
-                } else {
-                    String::new()
-                }),
-            ]),
+            &tf(
+                "schedule.log",
+                &[
+                    ("n", &(v.done + v.failed).to_string()),
+                    ("files", &v.deleted_files.to_string()),
+                    ("size", &v.deleted_text),
+                    (
+                        "failed",
+                        &if v.failed > 0 {
+                            tf("schedule.failed_suffix", &[("n", &v.failed.to_string())])
+                        } else {
+                            String::new()
+                        },
+                    ),
+                ],
+            ),
         )?;
     }
     Ok(v)

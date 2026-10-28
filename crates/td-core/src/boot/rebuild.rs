@@ -328,6 +328,7 @@ mod tests {
                 notes: None,
                 excludes: Vec::new(),
                 auto_clean_policy: String::new(),
+                auto_clean_limit_bytes: 0,
             })
             .unwrap();
 
@@ -398,6 +399,7 @@ mod tests {
                 notes: None,
                 excludes: Vec::new(),
                 auto_clean_policy: String::new(),
+                auto_clean_limit_bytes: 0,
             })
             .unwrap();
 

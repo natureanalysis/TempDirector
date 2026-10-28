@@ -54,13 +54,12 @@ pub fn run_elevated_job(
                 None,
                 if r.ok { "info" } else { "warn" },
                 "elevated_job",
-                &tf("elevated.job_log", &[
-                    ("kind", kind),
-                    ("summary", &r.one_line()),
-                ]),
+                &tf(
+                    "elevated.job_log",
+                    &[("kind", kind), ("summary", &r.one_line())],
+                ),
             )?;
-            Ok(r
-                .items
+            Ok(r.items
                 .into_iter()
                 .map(|i| ItemOutcome {
                     rule_id: i.rule_id,
@@ -72,8 +71,9 @@ pub fn run_elevated_job(
                 })
                 .collect())
         }
-        None => Err(TdError::Other(tf("elevated.no_result", &[
-            ("code", &code.to_string()),
-        ]))),
+        None => Err(TdError::Other(tf(
+            "elevated.no_result",
+            &[("code", &code.to_string())],
+        ))),
     }
 }

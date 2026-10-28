@@ -113,7 +113,9 @@ fn print_usage() {
     println!("直接运行不带参数会打开界面。");
     println!();
     println!("无界面模式：");
-    println!("  tempdirector-gui boot-rebuild [--data-dir <路径>]    静默重建目标目录（登录任务用）");
+    println!(
+        "  tempdirector-gui boot-rebuild [--data-dir <路径>]    静默重建目标目录（登录任务用）"
+    );
     println!("  tempdirector-gui elevated <job.json>                 以管理员身份执行一份任务");
     println!();
     println!("日常命令行操作请用 tempdirector.exe（见其 help）。");

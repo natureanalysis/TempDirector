@@ -35,8 +35,8 @@ pub fn run() {
         Err(e) => {
             // 降级到内存库：界面还能打开，并在顶部横幅显示真实原因，
             // 总比"双击没反应"或者一闪而过要好。
-            let fallback = Store::open_in_memory()
-                .expect("连内存数据库都打不开，说明 SQLite 链接失败");
+            let fallback =
+                Store::open_in_memory().expect("连内存数据库都打不开，说明 SQLite 链接失败");
             (fallback, Some(e.to_string()))
         }
     };
@@ -89,6 +89,7 @@ pub fn run() {
             commands::update_rule,
             commands::delete_rules,
             commands::set_rules_enabled,
+            commands::set_rules_hidden,
             commands::reorder_rules,
             commands::capture_acl,
             commands::clear_acl,

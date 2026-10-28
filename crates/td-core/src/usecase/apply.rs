@@ -34,7 +34,12 @@ pub fn apply_rules(
                 continue;
             }
         };
-        on_progress(i, total, &rule.name, &Progress::Enumerated { files: 0, bytes: 0 });
+        on_progress(
+            i,
+            total,
+            &rule.name,
+            &Progress::Enumerated { files: 0, bytes: 0 },
+        );
         let mut sink = |p: Progress| on_progress(i, total, &rule.name, &p);
         match engine::apply_rule(store, &rule, &opts.to_engine(), &mut sink) {
             Ok(o) => out.push(ItemOutcome {
@@ -122,9 +127,10 @@ pub fn check_locks(store: &Store, id: i64) -> TdResult<LockReport> {
     let rule = store.get_rule(id)?;
     let resolved = engine::resolve(store, &rule)?;
     if !resolved.source.is_dir() {
-        return Err(TdError::InvalidPath(tf("apply.no_source_dir", &[
-            ("path", &resolved.source.display().to_string()),
-        ])));
+        return Err(TdError::InvalidPath(tf(
+            "apply.no_source_dir",
+            &[("path", &resolved.source.display().to_string())],
+        )));
     }
     let report = occupancy::scan_locks(&resolved.source, &LockScanOptions::default())?;
     if !report.is_clear() {
@@ -132,10 +138,10 @@ pub fn check_locks(store: &Store, id: i64) -> TdResult<LockReport> {
             Some(id),
             "warn",
             "blocked",
-            &tf("apply.blocked_log", &[
-                ("name", &rule.name),
-                ("summary", &report.summary()),
-            ]),
+            &tf(
+                "apply.blocked_log",
+                &[("name", &rule.name), ("summary", &report.summary())],
+            ),
         )?;
     }
     Ok(report)

@@ -56,6 +56,9 @@ pub struct BundleRule {
     /// 水位预授权策略（v3 起支持；旧配置文件无此字段 → 未启用）。
     #[serde(default)]
     pub auto_clean_policy: String,
+    /// 文件夹级容量上限（字节，v4 起支持；旧配置文件无此字段 → 0 = 不启用）。
+    #[serde(default)]
+    pub auto_clean_limit_bytes: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,14 +95,24 @@ pub struct ImportReport {
 
 impl ImportReport {
     pub fn one_line(&self) -> String {
-        tf("portable.summary", &[
-            ("prefix", if self.dry_run { t("portable.dry_prefix") } else { "" }),
-            ("roots_new", &self.roots_created.to_string()),
-            ("roots_reuse", &self.roots_reused.to_string()),
-            ("rules_new", &self.rules_created.to_string()),
-            ("rules_skip", &self.rules_skipped.to_string()),
-            ("errors", &self.errors.len().to_string()),
-        ])
+        tf(
+            "portable.summary",
+            &[
+                (
+                    "prefix",
+                    if self.dry_run {
+                        t("portable.dry_prefix")
+                    } else {
+                        ""
+                    },
+                ),
+                ("roots_new", &self.roots_created.to_string()),
+                ("roots_reuse", &self.roots_reused.to_string()),
+                ("rules_new", &self.rules_created.to_string()),
+                ("rules_skip", &self.rules_skipped.to_string()),
+                ("errors", &self.errors.len().to_string()),
+            ],
+        )
     }
 }
 
@@ -145,6 +158,7 @@ pub fn export_bundle(store: &Store) -> TdResult<Bundle> {
             notes: rule.notes,
             excludes: rule.excludes,
             auto_clean_policy: rule.auto_clean_policy,
+            auto_clean_limit_bytes: rule.auto_clean_limit_bytes,
         });
     }
 
@@ -165,10 +179,13 @@ pub fn import_bundle(
     dry_run: bool,
 ) -> TdResult<ImportReport> {
     if bundle.schema > FORMAT_VERSION {
-        return Err(TdError::Other(tf("portable.version_too_high", &[
-            ("ver", &bundle.schema.to_string()),
-            ("max", &FORMAT_VERSION.to_string()),
-        ])));
+        return Err(TdError::Other(tf(
+            "portable.version_too_high",
+            &[
+                ("ver", &bundle.schema.to_string()),
+                ("max", &FORMAT_VERSION.to_string()),
+            ],
+        )));
     }
 
     let mut report = ImportReport {
@@ -184,14 +201,13 @@ pub fn import_bundle(
             _ => br.path.clone(),
         };
         if path.trim().is_empty() {
-            report.errors.push(tf("portable.root_path_empty", &[
-                ("ref", &br.root_ref),
-            ]));
+            report
+                .errors
+                .push(tf("portable.root_path_empty", &[("ref", &br.root_ref)]));
             continue;
         }
         let existing = store.list_roots()?.into_iter().find(|r| {
-            crate::util::normalize_root_path(&r.path)
-                == crate::util::normalize_root_path(&path)
+            crate::util::normalize_root_path(&r.path) == crate::util::normalize_root_path(&path)
         });
         match existing {
             Some(r) => {
@@ -203,7 +219,8 @@ pub fn import_bundle(
                     id_of.insert(br.root_ref.clone(), -1);
                     report.roots_created += 1;
                 } else {
-                    let id = store.insert_root(&br.label, &path, br.is_ramdisk, br.wait_timeout_ms)?;
+                    let id =
+                        store.insert_root(&br.label, &path, br.is_ramdisk, br.wait_timeout_ms)?;
                     id_of.insert(br.root_ref.clone(), id);
                     report.roots_created += 1;
                 }
@@ -216,12 +233,10 @@ pub fn import_bundle(
         let root_id = match id_of.get(&br.root_ref) {
             Some(id) => *id,
             None => {
-                report
-                    .errors
-                    .push(tf("portable.unknown_root", &[
-                        ("name", &br.name),
-                        ("ref", &br.root_ref),
-                    ]));
+                report.errors.push(tf(
+                    "portable.unknown_root",
+                    &[("name", &br.name), ("ref", &br.root_ref)],
+                ));
                 continue;
             }
         };
@@ -237,6 +252,7 @@ pub fn import_bundle(
             notes: br.notes.clone(),
             excludes: br.excludes.clone(),
             auto_clean_policy: br.auto_clean_policy.clone(),
+            auto_clean_limit_bytes: br.auto_clean_limit_bytes,
         };
 
         if dry_run {
@@ -253,13 +269,14 @@ pub fn import_bundle(
             Err(e) => {
                 // 已存在 / 安全检查拒绝都算"跳过"而不是"错误中断"
                 report.rules_skipped += 1;
-                report
-                    .errors
-                    .push(tf("portable.rule_import_failed", &[
+                report.errors.push(tf(
+                    "portable.rule_import_failed",
+                    &[
                         ("idx", &(idx + 1).to_string()),
                         ("name", &br.name),
                         ("err", &e.to_string()),
-                    ]));
+                    ],
+                ));
             }
         }
     }
@@ -288,6 +305,7 @@ mod tests {
             notes: Some("先关 Chrome".into()),
             excludes: vec!["sessions".into()],
             auto_clean_policy: "older:3600".into(),
+            auto_clean_limit_bytes: 4 * 1024 * 1024 * 1024,
         })
         .unwrap();
 
@@ -297,6 +315,11 @@ mod tests {
         assert_eq!(bundle.rules.len(), 1);
         assert_eq!(bundle.rules[0].root_ref, "r0");
         assert_eq!(bundle.rules[0].auto_clean_policy, "older:3600");
+        assert_eq!(
+            bundle.rules[0].auto_clean_limit_bytes,
+            4 * 1024 * 1024 * 1024,
+            "文件夹级容量上限必须随导出带出"
+        );
 
         let json = serde_json::to_string_pretty(&bundle).unwrap();
         assert!(!json.contains("{RAM_ROOT}")); // 导出是实路径，占位符由使用者手改
@@ -312,6 +335,11 @@ mod tests {
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].name, "Chrome");
         assert_eq!(rules[0].target_subpath, "browsers\\chrome");
+        assert_eq!(
+            rules[0].auto_clean_limit_bytes,
+            4 * 1024 * 1024 * 1024,
+            "导入必须还原文件夹级容量上限"
+        );
     }
 
     #[test]
@@ -330,6 +358,7 @@ mod tests {
             notes: None,
             excludes: Vec::new(),
             auto_clean_policy: String::new(),
+            auto_clean_limit_bytes: 0,
         })
         .unwrap();
         let bundle = export_bundle(&src).unwrap();
@@ -369,7 +398,7 @@ mod tests {
                 notes: None,
                 excludes: Vec::new(),
                 auto_clean_policy: String::new(),
-
+                auto_clean_limit_bytes: 0,
             }],
         };
         let dst = Store::open_in_memory().unwrap();

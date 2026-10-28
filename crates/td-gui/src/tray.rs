@@ -68,7 +68,9 @@ fn spawn_boot(app: AppHandle) {
                     "warnings": report.warnings,
                     "failed": report.failed,
                 }),
-                Err(e) => serde_json::json!({ "ok": false, "message": e.to_string(), "warnings": [], "failed": [] }),
+                Err(e) => {
+                    serde_json::json!({ "ok": false, "message": e.to_string(), "warnings": [], "failed": [] })
+                }
             },
             Err(e) => {
                 serde_json::json!({ "ok": false, "message": e, "warnings": [], "failed": [] })

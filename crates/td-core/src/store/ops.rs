@@ -181,7 +181,9 @@ mod tests {
     #[test]
     fn op_lifecycle() {
         let s = Store::open_in_memory().unwrap();
-        let id = s.op_begin(None, "apply", Some("C:\\a"), Some("R:\\a")).unwrap();
+        let id = s
+            .op_begin(None, "apply", Some("C:\\a"), Some("R:\\a"))
+            .unwrap();
         assert_eq!(s.list_open_ops().unwrap().len(), 1);
 
         s.op_phase(id, "copying", None).unwrap();

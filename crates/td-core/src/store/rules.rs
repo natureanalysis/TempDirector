@@ -3,7 +3,9 @@
 use rusqlite::{params, OptionalExtension};
 
 use crate::error::{TdError, TdResult};
-use crate::store::model::{rule_from_row, root_from_row, NewRule, Root, Rule, RULE_COLUMNS, ROOT_COLUMNS};
+use crate::store::model::{
+    root_from_row, rule_from_row, NewRule, Root, Rule, ROOT_COLUMNS, RULE_COLUMNS,
+};
 use crate::store::Store;
 use crate::util;
 
@@ -38,11 +40,22 @@ impl Store {
         self.conn()
             .query_row(&sql, [id], root_from_row)
             .optional()?
-            .ok_or_else(|| TdError::NotFound(crate::i18n::tf("db.root_not_in_lib", &[("id", &id.to_string())])))
+            .ok_or_else(|| {
+                TdError::NotFound(crate::i18n::tf(
+                    "db.root_not_in_lib",
+                    &[("id", &id.to_string())],
+                ))
+            })
     }
 
     /// 按路径查找目标根（不存在则创建）。`path` 可为模板，入库前会规范化。
-    pub fn ensure_root(&self, label: &str, path: &str, is_ramdisk: bool, wait_timeout_ms: i64) -> TdResult<i64> {
+    pub fn ensure_root(
+        &self,
+        label: &str,
+        path: &str,
+        is_ramdisk: bool,
+        wait_timeout_ms: i64,
+    ) -> TdResult<i64> {
         let norm = util::normalize_root_path(path);
         if let Some(id) = self
             .conn()
@@ -56,10 +69,18 @@ impl Store {
         self.insert_root(label, path, is_ramdisk, wait_timeout_ms)
     }
 
-    pub fn insert_root(&self, label: &str, path: &str, is_ramdisk: bool, wait_timeout_ms: i64) -> TdResult<i64> {
+    pub fn insert_root(
+        &self,
+        label: &str,
+        path: &str,
+        is_ramdisk: bool,
+        wait_timeout_ms: i64,
+    ) -> TdResult<i64> {
         let norm = util::normalize_root_path(path);
         if norm.trim().is_empty() {
-            return Err(TdError::InvalidPath(crate::i18n::t("db.root_path_empty").into()));
+            return Err(TdError::InvalidPath(
+                crate::i18n::t("db.root_path_empty").into(),
+            ));
         }
         self.conn().execute(
             "INSERT INTO roots(label, path, is_ramdisk, wait_timeout_ms) VALUES(?1, ?2, ?3, ?4)",
@@ -68,30 +89,47 @@ impl Store {
         Ok(self.conn().last_insert_rowid())
     }
 
-    pub fn update_root(&self, id: i64, label: &str, path: &str, is_ramdisk: bool, wait_timeout_ms: i64) -> TdResult<()> {
+    pub fn update_root(
+        &self,
+        id: i64,
+        label: &str,
+        path: &str,
+        is_ramdisk: bool,
+        wait_timeout_ms: i64,
+    ) -> TdResult<()> {
         let norm = util::normalize_root_path(path);
         let n = self.conn().execute(
             "UPDATE roots SET label=?2, path=?3, is_ramdisk=?4, wait_timeout_ms=?5 WHERE id=?1",
             params![id, label, norm, is_ramdisk, wait_timeout_ms],
         )?;
         if n == 0 {
-            return Err(TdError::NotFound(crate::i18n::tf("db.root_not_found", &[("id", &id.to_string())])));
+            return Err(TdError::NotFound(crate::i18n::tf(
+                "db.root_not_found",
+                &[("id", &id.to_string())],
+            )));
         }
         Ok(())
     }
 
     pub fn delete_root(&self, id: i64) -> TdResult<()> {
-        let used: i64 = self
-            .conn()
-            .query_row("SELECT count(*) FROM rules WHERE target_root_id = ?1", [id], |r| r.get(0))?;
+        let used: i64 = self.conn().query_row(
+            "SELECT count(*) FROM rules WHERE target_root_id = ?1",
+            [id],
+            |r| r.get(0),
+        )?;
         if used > 0 {
             return Err(TdError::Other(format!(
                 "还有 {used} 条规则在引用这个目标根，请先删除或改绑这些规则"
             )));
         }
-        let n = self.conn().execute("DELETE FROM roots WHERE id = ?1", [id])?;
+        let n = self
+            .conn()
+            .execute("DELETE FROM roots WHERE id = ?1", [id])?;
         if n == 0 {
-            return Err(TdError::NotFound(crate::i18n::tf("db.root_not_found", &[("id", &id.to_string())])));
+            return Err(TdError::NotFound(crate::i18n::tf(
+                "db.root_not_found",
+                &[("id", &id.to_string())],
+            )));
         }
         Ok(())
     }
@@ -101,9 +139,7 @@ impl Store {
     // ------------------------------------------------------------------
 
     pub fn list_rules(&self) -> TdResult<Vec<Rule>> {
-        let sql = format!(
-            "SELECT {RULE_COLUMNS} FROM rules ORDER BY category, sort_order, id"
-        );
+        let sql = format!("SELECT {RULE_COLUMNS} FROM rules ORDER BY category, sort_order, id");
         let mut stmt = self.conn().prepare(&sql)?;
         let rows = stmt.query_map([], rule_from_row)?;
         let mut out = Vec::new();
@@ -154,7 +190,12 @@ impl Store {
         self.conn()
             .query_row(&sql, [id], rule_from_row)
             .optional()?
-            .ok_or_else(|| TdError::NotFound(crate::i18n::tf("db.rule_not_found", &[("id", &id.to_string())])))
+            .ok_or_else(|| {
+                TdError::NotFound(crate::i18n::tf(
+                    "db.rule_not_found",
+                    &[("id", &id.to_string())],
+                ))
+            })
     }
 
     pub fn find_rule_by_source(&self, source_norm: &str) -> TdResult<Option<Rule>> {
@@ -170,14 +211,22 @@ impl Store {
     pub fn insert_rule(&self, nr: &NewRule) -> TdResult<i64> {
         let (source, unknown) = util::expand_path(&nr.source_template);
         if !unknown.is_empty() {
-            return Err(TdError::InvalidPath(crate::i18n::tf("db.unresolved_vars", &[("vars", &unknown.join("、"))])));
+            return Err(TdError::InvalidPath(crate::i18n::tf(
+                "db.unresolved_vars",
+                &[("vars", &unknown.join("、"))],
+            )));
         }
         if !source.is_absolute() {
-            return Err(TdError::InvalidPath(crate::i18n::t("db.must_be_absolute").into()));
+            return Err(TdError::InvalidPath(
+                crate::i18n::t("db.must_be_absolute").into(),
+            ));
         }
         let norm = util::normalize_key(&source.to_string_lossy());
         if self.find_rule_by_source(&norm)?.is_some() {
-            return Err(TdError::Other(crate::i18n::tf("db.duplicate_rule", &[("norm", &norm)])));
+            return Err(TdError::Other(crate::i18n::tf(
+                "db.duplicate_rule",
+                &[("norm", &norm)],
+            )));
         }
         let pf = crate::safety::preflight_source(&source);
         if pf.is_blocked() {
@@ -188,8 +237,9 @@ impl Store {
         self.conn().execute(
             "INSERT INTO rules(name, category, source_template, source_norm, target_root_id,
                                target_subpath, link_type, want_enabled, rebuild_on_boot,
-                               notes, needs_elevation, excludes, auto_clean_policy)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                               notes, needs_elevation, excludes, auto_clean_policy,
+                               auto_clean_limit_bytes)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 nr.name,
                 nr.category,
@@ -204,6 +254,7 @@ impl Store {
                 needs_elev,
                 serde_json::to_string(&nr.excludes).unwrap_or_else(|_| "[]".into()),
                 nr.auto_clean_policy,
+                nr.auto_clean_limit_bytes,
             ],
         )?;
         Ok(self.conn().last_insert_rowid())
@@ -212,12 +263,18 @@ impl Store {
     pub fn update_rule(&self, id: i64, nr: &NewRule) -> TdResult<()> {
         let (source, unknown) = util::expand_path(&nr.source_template);
         if !unknown.is_empty() {
-            return Err(TdError::InvalidPath(crate::i18n::tf("db.unresolved_vars", &[("vars", &unknown.join("、"))])));
+            return Err(TdError::InvalidPath(crate::i18n::tf(
+                "db.unresolved_vars",
+                &[("vars", &unknown.join("、"))],
+            )));
         }
         let norm = util::normalize_key(&source.to_string_lossy());
         if let Some(other) = self.find_rule_by_source(&norm)? {
             if other.id != id {
-                return Err(TdError::Other(crate::i18n::tf("db.duplicate_rule_other", &[("id", &other.id.to_string())])));
+                return Err(TdError::Other(crate::i18n::tf(
+                    "db.duplicate_rule_other",
+                    &[("id", &other.id.to_string())],
+                )));
             }
         }
 
@@ -225,7 +282,8 @@ impl Store {
             "UPDATE rules SET name=?2, category=?3, source_template=?4, source_norm=?5,
                     target_root_id=?6, target_subpath=?7, link_type=?8,
                     want_enabled=?9, rebuild_on_boot=?10, notes=?11, excludes=?12,
-                    auto_clean_policy=?13, updated_at=datetime('now')
+                    auto_clean_policy=?13, auto_clean_limit_bytes=?14,
+                     updated_at=datetime('now')
              WHERE id=?1",
             params![
                 id,
@@ -241,18 +299,27 @@ impl Store {
                 nr.notes,
                 serde_json::to_string(&nr.excludes).unwrap_or_else(|_| "[]".into()),
                 nr.auto_clean_policy,
+                nr.auto_clean_limit_bytes,
             ],
         )?;
         if n == 0 {
-            return Err(TdError::NotFound(crate::i18n::tf("db.rule_not_found", &[("id", &id.to_string())])));
+            return Err(TdError::NotFound(crate::i18n::tf(
+                "db.rule_not_found",
+                &[("id", &id.to_string())],
+            )));
         }
         Ok(())
     }
 
     pub fn delete_rule(&self, id: i64) -> TdResult<()> {
-        let n = self.conn().execute("DELETE FROM rules WHERE id = ?1", [id])?;
+        let n = self
+            .conn()
+            .execute("DELETE FROM rules WHERE id = ?1", [id])?;
         if n == 0 {
-            return Err(TdError::NotFound(crate::i18n::tf("db.rule_not_found", &[("id", &id.to_string())])));
+            return Err(TdError::NotFound(crate::i18n::tf(
+                "db.rule_not_found",
+                &[("id", &id.to_string())],
+            )));
         }
         Ok(())
     }
@@ -263,7 +330,10 @@ impl Store {
             params![id, enabled],
         )?;
         if n == 0 {
-            return Err(TdError::NotFound(crate::i18n::tf("db.rule_not_found", &[("id", &id.to_string())])));
+            return Err(TdError::NotFound(crate::i18n::tf(
+                "db.rule_not_found",
+                &[("id", &id.to_string())],
+            )));
         }
         Ok(())
     }
@@ -281,7 +351,10 @@ impl Store {
                 params![id, (i + 1) as i64],
             )?;
             if n == 0 {
-                return Err(TdError::NotFound(crate::i18n::tf("db.rule_not_found", &[("id", &id.to_string())])));
+                return Err(TdError::NotFound(crate::i18n::tf(
+                    "db.rule_not_found",
+                    &[("id", &id.to_string())],
+                )));
             }
         }
         tx.commit()?;
@@ -364,6 +437,7 @@ mod tests {
             notes: None,
             excludes: Vec::new(),
             auto_clean_policy: String::new(),
+            auto_clean_limit_bytes: 0,
         }
     }
 
@@ -375,7 +449,8 @@ mod tests {
         assert_eq!(id, 1, "相同路径应复用而不是新建");
         let id2 = s.insert_root("Second", "S:\\Redir", true, 30000).unwrap();
         assert_eq!(s.list_roots().unwrap().len(), 2);
-        s.update_root(id2, "Second2", "S:\\Redir", true, 45000).unwrap();
+        s.update_root(id2, "Second2", "S:\\Redir", true, 45000)
+            .unwrap();
         assert_eq!(s.get_root(id2).unwrap().wait_timeout_ms, 45000);
         s.delete_root(id2).unwrap();
         assert_eq!(s.list_roots().unwrap().len(), 1);
@@ -384,8 +459,12 @@ mod tests {
     #[test]
     fn delete_root_blocked_when_referenced() {
         let s = mk_store();
-        s.insert_rule(&new_rule("Chrome", r"C:\Users\a\AppData\Local\Chrome\Cache", "browsers\\chrome"))
-            .unwrap();
+        s.insert_rule(&new_rule(
+            "Chrome",
+            r"C:\Users\a\AppData\Local\Chrome\Cache",
+            "browsers\\chrome",
+        ))
+        .unwrap();
         assert!(s.delete_root(1).is_err());
     }
 
@@ -420,22 +499,37 @@ mod tests {
     #[test]
     fn query_filters_work() {
         let s = mk_store();
-        s.insert_rule(&new_rule("Chrome", r"C:\Temp\Chrome", "c")).unwrap();
-        s.insert_rule(&new_rule("Photoshop", r"C:\Temp\PS", "p")).unwrap();
+        s.insert_rule(&new_rule("Chrome", r"C:\Temp\Chrome", "c"))
+            .unwrap();
+        s.insert_rule(&new_rule("Photoshop", r"C:\Temp\PS", "p"))
+            .unwrap();
         s.set_rule_enabled(2, false).unwrap();
 
         assert_eq!(s.query_rules(None, false, None).unwrap().len(), 2);
         assert_eq!(s.query_rules(None, true, None).unwrap().len(), 1);
-        assert_eq!(s.query_rules(Some("browser"), false, None).unwrap().len(), 2);
-        assert_eq!(s.query_rules(None, false, Some("photoshop")).unwrap().len(), 1);
-        assert_eq!(s.query_rules(None, false, Some("Temp\\Chrome")).unwrap().len(), 1);
+        assert_eq!(
+            s.query_rules(Some("browser"), false, None).unwrap().len(),
+            2
+        );
+        assert_eq!(
+            s.query_rules(None, false, Some("photoshop")).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            s.query_rules(None, false, Some("Temp\\Chrome"))
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(s.query_rules(None, false, Some("不存在")).unwrap().len(), 0);
     }
 
     #[test]
     fn resolved_target_joins_subpath() {
         let s = mk_store();
-        let id = s.insert_rule(&new_rule("A", r"C:\Temp\A", "browsers\\chrome")).unwrap();
+        let id = s
+            .insert_rule(&new_rule("A", r"C:\Temp\A", "browsers\\chrome"))
+            .unwrap();
         let rule = s.get_rule(id).unwrap();
         let root = s.get_root(1).unwrap();
         let (t, unk) = rule.resolved_target(&root);
@@ -478,7 +572,9 @@ mod tests {
     #[test]
     fn bad_excludes_json_falls_back_to_empty() {
         let s = mk_store();
-        let id = s.insert_rule(&new_rule("BAD", r"C:\Temp\BAD", "bad")).unwrap();
+        let id = s
+            .insert_rule(&new_rule("BAD", r"C:\Temp\BAD", "bad"))
+            .unwrap();
         // 模拟手工改库写坏 JSON
         s.conn()
             .execute("UPDATE rules SET excludes='{oops' WHERE id=?1", [id])
@@ -503,8 +599,35 @@ mod tests {
     }
 
     #[test]
-    fn v2_database_migrates_to_v3() {
-        // 手工造一个 v2 库（有 excludes 无 auto_clean_policy），迁移后补列且数据无损。
+    fn auto_clean_limit_roundtrip() {
+        let s = mk_store();
+        // 上限与策略是两条独立配置：有策略未必有上限，有上限必须配策略
+        // （配对关系由 usecase 层的 validate_form 把关，这里只管存取无损）。
+        let mut nr = new_rule("AL", r"C:\Temp\AL", "al");
+        nr.auto_clean_policy = "older:3600".into();
+        nr.auto_clean_limit_bytes = 2 * 1024 * 1024 * 1024;
+        let id = s.insert_rule(&nr).unwrap();
+        let r = s.get_rule(id).unwrap();
+        assert_eq!(r.auto_clean_limit_bytes, 2 * 1024 * 1024 * 1024);
+        assert_eq!(r.auto_clean_policy, "older:3600", "同一行上两者都要保留");
+
+        // 更新覆盖为空 → 关闭文件夹级触发，策略仍可独立保留
+        let mut off = new_rule("AL", r"C:\Temp\AL", "al2");
+        off.auto_clean_policy = "empty".into();
+        s.update_rule(id, &off).unwrap();
+        let r = s.get_rule(id).unwrap();
+        assert_eq!(r.auto_clean_limit_bytes, 0);
+        assert_eq!(r.auto_clean_policy, "empty");
+
+        // 默认不启用
+        let id2 = s.insert_rule(&new_rule("N", r"C:\Temp\N", "n")).unwrap();
+        assert_eq!(s.get_rule(id2).unwrap().auto_clean_limit_bytes, 0);
+    }
+
+    #[test]
+    fn v2_database_migrates_to_current() {
+        // 手工造一个 v2 库（有 excludes，无 auto_clean_policy / 无上限），
+        // 迁移后补齐 v3 + v4 两列且数据无损。
         let dir = std::env::temp_dir().join(format!("td_v3mig_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -538,6 +661,48 @@ mod tests {
         assert_eq!(r.name, "M");
         assert_eq!(r.excludes, vec!["x".to_string()], "v2 数据迁移后无损");
         assert_eq!(r.auto_clean_policy, "", "v3 新列默认未启用");
+        assert_eq!(r.auto_clean_limit_bytes, 0, "v4 新列默认不启用");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn v3_database_migrates_to_v4() {
+        // v3 库有 auto_clean_policy、无 auto_clean_limit_bytes：迁移后策略保留、
+        // 上限补 0（= 不启用文件夹级触发，行为与 v3 完全一致，不改变老库语义）。
+        let dir = std::env::temp_dir().join(format!("td_v4mig_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("mig.db");
+        {
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE rules(id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                    category TEXT NOT NULL, source_template TEXT NOT NULL,
+                    source_norm TEXT NOT NULL UNIQUE, target_root_id INTEGER NOT NULL,
+                    target_subpath TEXT NOT NULL, link_type TEXT NOT NULL DEFAULT 'junction',
+                    want_enabled INTEGER NOT NULL DEFAULT 0,
+                    rebuild_on_boot INTEGER NOT NULL DEFAULT 1,
+                    acl_sddl TEXT, needs_elevation INTEGER NOT NULL DEFAULT 0,
+                    notes TEXT, sort_order INTEGER NOT NULL DEFAULT 0,
+                    excludes TEXT NOT NULL DEFAULT '[]',
+                    auto_clean_policy TEXT NOT NULL DEFAULT '',
+                    last_state TEXT, last_checked_at TEXT, last_error TEXT,
+                    last_files INTEGER, last_bytes INTEGER, applied_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+                 PRAGMA user_version=3;
+                 INSERT INTO rules(name, category, source_template, source_norm,
+                     target_root_id, target_subpath, auto_clean_policy)
+                 VALUES('M3', 'dev', 'C:\\Temp\\M3', 'c:\\temp\\m3', 1, 'm3', 'older:7200');",
+            )
+            .unwrap();
+        }
+        let s = Store::open(&db).unwrap();
+        assert_eq!(s.user_version().unwrap(), crate::store::SCHEMA_VERSION);
+        let r = s.get_rule(1).unwrap();
+        assert_eq!(r.name, "M3");
+        assert_eq!(r.auto_clean_policy, "older:7200", "v3 数据迁移后无损");
+        assert_eq!(r.auto_clean_limit_bytes, 0, "v4 新列默认不启用");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

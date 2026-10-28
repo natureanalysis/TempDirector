@@ -93,7 +93,7 @@ pub(crate) fn cmd_clean(store: &Store, p: &Parsed) -> TdResult<()> {
 
     // 默认预演；只有显式 --yes 才真正删除（破坏性操作，两步走）。
     if !p.has("yes") {
-        let pv = clean_preview(store, &target, &policy)?;
+        let pv = clean_preview(store, &target, &policy, &[])?;
         if p.json() {
             println!(
                 "{}",
@@ -167,7 +167,7 @@ pub(crate) fn cmd_clean(store: &Store, p: &Parsed) -> TdResult<()> {
         }
     };
     // 事件流水由 usecase 层统一落库（原 CLI 自行记一条会重复）。
-    let report = clean_run(store, &target, &policy, false, &mut sink)?;
+    let report = clean_run(store, &target, &policy, &[], false, &mut sink)?;
     if !quiet {
         println!();
     }

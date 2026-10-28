@@ -96,9 +96,10 @@ pub const EV_DISK_PROGRESS: &str = "td-disk-progress";
 pub fn lock_store<'a>(
     state: &'a State<'_, AppState>,
 ) -> Result<std::sync::MutexGuard<'a, Store>, String> {
-    state.store.lock().map_err(|_| {
-        "内部状态锁已损坏（前一次操作 panic 了），请重启程序".to_string()
-    })
+    state
+        .store
+        .lock()
+        .map_err(|_| "内部状态锁已损坏（前一次操作 panic 了），请重启程序".to_string())
 }
 
 type R<T> = Result<T, String>;
@@ -156,7 +157,14 @@ pub fn add_root(
     is_ramdisk: bool,
     wait_timeout_ms: i64,
 ) -> R<i64> {
-    api::add_root(&*lock_store(&state)?, &label, &path, is_ramdisk, wait_timeout_ms).map_err(map_err)
+    api::add_root(
+        &*lock_store(&state)?,
+        &label,
+        &path,
+        is_ramdisk,
+        wait_timeout_ms,
+    )
+    .map_err(map_err)
 }
 
 #[tauri::command]
@@ -188,6 +196,12 @@ pub fn set_rules_enabled(state: State<'_, AppState>, ids: Vec<i64>, enabled: boo
     api::set_enabled(&*lock_store(&state)?, &ids, enabled).map_err(map_err)
 }
 
+/// 隐藏 / 取消隐藏列表条目（纯展示偏好，存在 settings，不写 rules 表）。
+#[tauri::command]
+pub fn set_rules_hidden(state: State<'_, AppState>, ids: Vec<i64>, hidden: bool) -> R<usize> {
+    api::set_hidden(&*lock_store(&state)?, &ids, hidden).map_err(map_err)
+}
+
 #[tauri::command]
 pub fn reorder_rules(state: State<'_, AppState>, ordered_ids: Vec<i64>) -> R<usize> {
     api::reorder_rules(&*lock_store(&state)?, &ordered_ids).map_err(map_err)
@@ -215,7 +229,11 @@ pub fn preset_rules() -> Vec<api::PresetView> {
 }
 
 #[tauri::command]
-pub fn inspect_target(state: State<'_, AppState>, root_id: i64, subpath: String) -> R<api::TargetInspection> {
+pub fn inspect_target(
+    state: State<'_, AppState>,
+    root_id: i64,
+    subpath: String,
+) -> R<api::TargetInspection> {
     api::inspect_target(&*lock_store(&state)?, root_id, &subpath).map_err(map_err)
 }
 
@@ -301,8 +319,10 @@ pub fn clean_preview(
     state: State<'_, AppState>,
     target: api::CleanTarget,
     policy: td_core::fsops::clean::CleanPolicy,
+    type_excludes: Option<Vec<String>>,
 ) -> R<api::CleanPreviewView> {
-    api::clean_preview(&*lock_store(&state)?, &target, &policy).map_err(map_err)
+    let type_excludes = type_excludes.unwrap_or_default();
+    api::clean_preview(&*lock_store(&state)?, &target, &policy, &type_excludes).map_err(map_err)
 }
 
 #[tauri::command]
@@ -312,10 +332,12 @@ pub fn clean_run(
     target: api::CleanTarget,
     policy: td_core::fsops::clean::CleanPolicy,
     dry_run: bool,
+    type_excludes: Option<Vec<String>>,
 ) -> R<api::CleanResultView> {
+    let type_excludes = type_excludes.unwrap_or_default();
     let guard = lock_store(&state)?;
     let app2 = app.clone();
-    let out = api::clean_run(&guard, &target, &policy, dry_run, &mut move |p| {
+    let out = api::clean_run(&guard, &target, &policy, &type_excludes, dry_run, &mut move |p| {
         let _ = app2.emit(
             EV_PROGRESS,
             serde_json::json!({
@@ -393,11 +415,7 @@ pub fn water_poll(app: AppHandle, state: State<'_, AppState>) -> R<Vec<api::Wate
 ///
 /// 只在 critical 通知：warn 已在界面上有横幅，也推通知会迅速让人麻木 ——
 /// 通知是给"窗口关着"的场景用的，必须稀缺才有效。
-fn notify_water_critical(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-    levels: &[api::WaterLevel],
-) {
+fn notify_water_critical(app: &AppHandle, state: &State<'_, AppState>, levels: &[api::WaterLevel]) {
     let mut notified = match state.water_notified.lock() {
         Ok(g) => g,
         Err(_) => return,
@@ -482,7 +500,11 @@ pub fn import_config(
 
 /// 系统目录选择框（走 Tauri dialog 插件的 Rust API，前端不依赖 npm 包）。
 #[tauri::command]
-pub fn pick_folder(app: AppHandle, title: String, default_path: Option<String>) -> R<Option<String>> {
+pub fn pick_folder(
+    app: AppHandle,
+    title: String,
+    default_path: Option<String>,
+) -> R<Option<String>> {
     use tauri_plugin_dialog::DialogExt;
     let mut fb = app.dialog().file().set_title(&title);
     if let Some(p) = default_path.filter(|p| !p.trim().is_empty()) {

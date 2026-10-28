@@ -291,6 +291,8 @@ fn zh(key: &str) -> &'static str {
         "form.acl_no_source" => "源目录不存在，无法导出权限：{path}",
         "form.acl_captured_log" => "{name}：已保存目录权限模板",
         "form.preset_subpath_relative" => "目标子目录应为非空的相对路径",
+        "form.bad_auto_limit" => "文件夹容量上限不能为负数：{n}",
+        "form.auto_limit_needs_policy" => "配了文件夹容量上限就必须同时选一种自动清理策略（策略决定删什么，上限决定何时删）",
         "preset.parse_failed" => "presets.json 解析失败，已忽略：{err}",
         "preset.skipped" => "预设「{name}」已跳过：{err}",
         "preset.warn_prefix" => "TempDirector 预设：{msg}",
@@ -298,6 +300,8 @@ fn zh(key: &str) -> &'static str {
         "exclude.empty" => "排除模式不能为空",
         "exclude.too_long" => "排除模式过长（>{max} 字符）：{pat}",
         "exclude.no_parent" => "排除模式里不允许 ..（模式只匹配相对路径）：{pat}",
+        "exclude.too_many_exts" => "保留的文件类型最多 {max} 种",
+        "exclude.bad_ext" => "文件类型只写扩展名（如 py、.py），不要带点号或路径：{ext}",
         "link.slot_occupied" => "链接位置已被占用（可能是上次失败残留），请先处理：{path}",
         "link.parent_missing" => "源目录的父目录不存在，请先创建：{path}",
         "link.target_missing" => "目标目录不存在，请先重建 RAM 盘目录结构：{path}",
@@ -395,6 +399,7 @@ fn zh(key: &str) -> &'static str {
         "water.recovered" => "水位恢复：{label}（{path}）已用 {pct}%，剩余 {free}",
         "water.bad_rule_policy" => "规则「{name}」的水位自动清理策略不合法：{s}，已跳过（可用：empty / older:<秒>）",
         "water.auto_clean_log" => "水位触线，自动清理 {done} 条预授权规则：删除 {files} 个文件 / {size}{failed}",
+        "water.folder_auto_clean_log" => "目录超限，自动清理 {done} 条预授权规则：删除 {files} 个文件 / {size}{failed}",
         "water.failed_suffix" => "，{n} 条失败",
         "schedule.bad_time" => "定时清理的时刻格式不对：{time}（应为 HH:MM），本次跳过",
         "schedule.bad_rule_policy" => "规则「{name}」的自动清理策略不合法：{s}，已跳过（可用：empty / older:<秒>）",
@@ -423,6 +428,7 @@ fn zh(key: &str) -> &'static str {
         "cli.label_notes" => "       备注：{notes}",
         "cli.label_excludes" => "       清理排除：{list}",
         "cli.label_auto_clean" => "       水位自动清理：{policy}",
+        "cli.label_auto_clean_limit" => "       文件夹容量上限：{size}（自身占用到量即按上述策略清理）",
         "cli.tag_dry_run" => "预演",
         "cli.tag_skip" => "跳过",
         "cli.tag_done" => "完成",
@@ -740,6 +746,8 @@ fn en(key: &str) -> &'static str {
         "form.acl_no_source" => "Source directory does not exist; cannot export permissions: {path}",
         "form.acl_captured_log" => "{name}: saved directory permission template",
         "form.preset_subpath_relative" => "Target subdirectory must be a non-empty relative path",
+        "form.bad_auto_limit" => "Folder capacity limit cannot be negative: {n}",
+        "form.auto_limit_needs_policy" => "A folder capacity limit requires an auto-clean policy (the policy decides what to delete, the limit decides when)",
         "preset.parse_failed" => "presets.json parse failed, ignored: {err}",
         "preset.skipped" => "Preset \"{name}\" skipped: {err}",
         "preset.warn_prefix" => "TempDirector preset: {msg}",
@@ -747,6 +755,8 @@ fn en(key: &str) -> &'static str {
         "exclude.empty" => "Exclude pattern cannot be empty",
         "exclude.too_long" => "Exclude pattern too long (>{max} chars): {pat}",
         "exclude.no_parent" => ".. is not allowed in exclude patterns (patterns match relative paths only): {pat}",
+        "exclude.too_many_exts" => "At most {max} kept file types allowed",
+        "exclude.bad_ext" => "File type must be a bare extension (like py or .py), without dots or path separators: {ext}",
         "link.slot_occupied" => "Link slot is already occupied (possibly a leftover from a previous failure); please resolve first: {path}",
         "link.parent_missing" => "Parent directory of the source does not exist; please create it first: {path}",
         "link.target_missing" => "Target directory does not exist; please rebuild the RAM disk directory structure first: {path}",
@@ -844,6 +854,7 @@ fn en(key: &str) -> &'static str {
         "water.recovered" => "Water level recovered: {label} ({path}) {pct}% used, {free} free",
         "water.bad_rule_policy" => "Rule \"{name}\" has invalid water auto-clean policy: {s}, skipped (valid: empty / older:<seconds>)",
         "water.auto_clean_log" => "Water triggered, auto-cleaned {done} pre-authorized rules: deleted {files} files / {size}{failed}",
+        "water.folder_auto_clean_log" => "Directory over limit, auto-cleaned {done} pre-authorized rules: deleted {files} files / {size}{failed}",
         "water.failed_suffix" => ", {n} failed",
         "schedule.bad_time" => "Invalid scheduled clean time: {time} (expected HH:MM), skipped this run",
         "schedule.bad_rule_policy" => "Rule \"{name}\" has invalid auto-clean policy: {s}, skipped (valid: empty / older:<seconds>)",
@@ -872,6 +883,7 @@ fn en(key: &str) -> &'static str {
         "cli.label_notes" => "       Notes: {notes}",
         "cli.label_excludes" => "       Clean excludes: {list}",
         "cli.label_auto_clean" => "       Water auto-clean: {policy}",
+        "cli.label_auto_clean_limit" => "       Folder capacity limit: {size} (cleaned by the policy above on reaching it)",
         "cli.tag_dry_run" => "dry-run",
         "cli.tag_skip" => "skip",
         "cli.tag_done" => "done",
@@ -1012,10 +1024,26 @@ mod tests {
     #[test]
     fn interpolates_placeholders() {
         set_locale(Locale::Zh);
-        let s = tf("io.failed", &[("action", "搬运"), ("err", "boom"), ("hint", ""), ("path", "C:\\x")]);
+        let s = tf(
+            "io.failed",
+            &[
+                ("action", "搬运"),
+                ("err", "boom"),
+                ("hint", ""),
+                ("path", "C:\\x"),
+            ],
+        );
         assert_eq!(s, "搬运失败：boom（路径：C:\\x）");
         set_locale(Locale::En);
-        let s = tf("io.failed", &[("action", "move"), ("err", "boom"), ("hint", ""), ("path", "C:\\x")]);
+        let s = tf(
+            "io.failed",
+            &[
+                ("action", "move"),
+                ("err", "boom"),
+                ("hint", ""),
+                ("path", "C:\\x"),
+            ],
+        );
         assert_eq!(s, "move failed: boom (path: C:\\x)");
         set_locale(Locale::Zh);
     }

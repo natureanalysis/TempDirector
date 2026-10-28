@@ -25,8 +25,10 @@
 //! ## 排除（[`Excludes`]）
 //!
 //! 规则可带排除模式（`sessions`、`logs/old` 这类），枚举与剪空目录都跳过
-//! 命中的子树，计入 `excluded_skipped` 如实汇报。语义与限制见
-//! [`exclude`](super::exclude) 模块文档 —— 排除**只影响清理**，不改搬运。
+//! 命中的子树，计入 `excluded_skipped` 如实汇报。也可以给一列文件扩展名
+//! （`.py` 这类，"保留这些类型的文件"）—— 与模式的区别是它**只跳过文件**，
+//! 目录照常进入、照常剪空。语义与限制见 [`exclude`](super::exclude) 模块
+//! 文档 —— 排除**只影响清理**，不改搬运。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -204,8 +206,18 @@ fn walk_files(
             if e.depth() == 0 {
                 return true;
             }
+            if excludes.is_empty() {
+                return true;
+            }
             let rel = rel_path(&vroot, e.path());
-            if !excludes.is_empty() && excludes.matches(&rel) {
+            // 扩展名只作用于文件：目录永因"类型"被排除，否则名为 `x.py` 的
+            // 目录会连里面不匹配的文件一起被剪掉。
+            let hit = if e.file_type().is_file() {
+                excludes.matches_file(&rel)
+            } else {
+                excludes.matches(&rel)
+            };
+            if hit {
                 *excluded_skipped += 1;
                 return false;
             }
@@ -685,6 +697,79 @@ mod tests {
         let mut sink = |_| {};
         let rep = run(&base, &CleanPolicy::Empty, &ex, false, &mut sink).unwrap();
         assert!(rep.summary().contains("按排除规则保留"), "{}", rep.summary());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn type_excludes_spare_files_by_extension() {
+        let base = fixture("ext_excl");
+        let t = axis();
+        put(&base, "keep.py", b"1111", t.two_days_ago);
+        put(&base, "old.log", b"11", t.two_days_ago);
+        put(&base, "del.bin", b"222", t.two_days_ago);
+        put(&base, "sub/also.py", b"1", t.two_days_ago);
+
+        let ex = mk_excludes(&[])
+            .with_exts(&[".py".into(), "log".into()])
+            .unwrap();
+        let p = plan(&base, &CleanPolicy::Empty, &ex).unwrap();
+        assert_eq!(p.files, 1, "只有 del.bin 该被清");
+        assert_eq!(p.excluded_skipped, 3, "两个 .py 与一个 .log 被类型排除跳过");
+
+        let mut sink = |_| {};
+        let rep = run(&base, &CleanPolicy::Empty, &ex, false, &mut sink).unwrap();
+        assert_eq!(rep.deleted_files, 1);
+        assert!(base.join("keep.py").exists(), "被保留的文件必须原样在");
+        assert!(base.join("old.log").exists());
+        assert!(base.join("sub/also.py").exists(), "子目录里的同类型文件同样保留");
+        assert!(!base.join("del.bin").exists(), "未命中类型的照常清理");
+        assert!(base.join("sub").is_dir(), "还留着文件的目录不能剪");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn type_excludes_never_cut_directories() {
+        let base = fixture("ext_dir");
+        let t = axis();
+        put(&base, "app.py/data.bin", b"1", t.two_days_ago);
+        let ex = mk_excludes(&[]).with_exts(&["py".into()]).unwrap();
+        let p = plan(&base, &CleanPolicy::Empty, &ex).unwrap();
+        assert_eq!(p.files, 1, "名为 app.py 的目录照常进入（扩展名只对文件生效）");
+        assert_eq!(p.excluded_skipped, 0);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn type_excludes_prune_only_truly_empty_dirs() {
+        let base = fixture("ext_prune");
+        let t = axis();
+        put(&base, "only_py/stays.py", b"1", t.two_days_ago);
+        put(&base, "gone/tmp.bin", b"2", t.two_days_ago);
+        let ex = mk_excludes(&[]).with_exts(&[".py".into()]).unwrap();
+        let mut sink = |_| {};
+        let rep = run(&base, &CleanPolicy::Empty, &ex, false, &mut sink).unwrap();
+        assert_eq!(rep.deleted_files, 1);
+        assert!(base.join("only_py/stays.py").exists(), "被保留的文件在，目录就不能剪");
+        assert!(!base.join("gone").exists(), "清空后变空的目录照常剪掉");
+        assert!(base.join("only_py").is_dir(), "含保留文件的目录不剪");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn type_exclude_reported_in_summary() {
+        let base = fixture("ext_summary");
+        let t = axis();
+        put(&base, "a.py", b"11", t.now);
+        put(&base, "b.bin", b"1", t.now);
+        let ex = mk_excludes(&[]).with_exts(&["py".into()]).unwrap();
+        let mut sink = |_| {};
+        let rep = run(&base, &CleanPolicy::Empty, &ex, false, &mut sink).unwrap();
+        assert_eq!(rep.deleted_files, 1);
+        assert!(
+            rep.summary().contains("按排除规则保留"),
+            "被保留的类型也要如实汇报：{}",
+            rep.summary()
+        );
         let _ = fs::remove_dir_all(&base);
     }
 }

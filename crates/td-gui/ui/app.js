@@ -57,7 +57,9 @@ const state = {
   // 已勾选但还没建成规则的内置模板（键 = source_template 小写）。
   pickedTpl: new Set(),
   focusId: null,
-  filters: { q: '', category: '', onlyEnabled: false, onlyAttention: false },
+  // showHidden：把被隐藏的条目也显示出来（默认关）。隐藏态由后端存在 settings 里
+  // （见 usecase::rules::KEY_HIDDEN_RULES），所以这里只是个"要不要看"的开关。
+  filters: { q: '', category: '', onlyEnabled: false, onlyAttention: false, showHidden: false },
   busy: false,
   drag: null,
   // 表头点击排序：key=null 表示用后端返回顺序（category, sort_order, id）。
@@ -235,17 +237,33 @@ function renderFilterOptions() {
   sel.value = state.filters.category;
 }
 
-function filteredRules() {
+/** 分类 / 状态 / 搜索三项筛选（**不含隐藏态**）。
+ *  单独抽出来是为了把"被隐藏的"和"被真筛掉的"分开统计：列表空的时候，
+ *  界面要能说清是哪一种（两种情况的提示语不一样）。 */
+function matchesFilters(r) {
   const f = state.filters;
+  if (f.category && r.category !== f.category) return false;
+  if (f.onlyEnabled && !r.want_enabled) return false;
+  if (f.onlyAttention && !r.needs_attention) return false;
   const q = f.q.trim().toLowerCase();
+  if (q) {
+    const hay = (r.name + ' ' + r.source + ' ' + r.source_template + ' ' + r.target + ' ' + r.target_subpath).toLowerCase();
+    if (hay.indexOf(q) < 0) return false;
+  }
+  return true;
+}
+
+/** 通过其它筛选、只是被隐藏掉的条目数（用于筛选摘要与空态提示）。 */
+function hiddenMatchCount() {
+  return (state.snap.rules || []).filter(function (r) {
+    return r.hidden && matchesFilters(r);
+  }).length;
+}
+
+function filteredRules() {
   const rows = (state.snap.rules || []).filter(function (r) {
-    if (f.category && r.category !== f.category) return false;
-    if (f.onlyEnabled && !r.want_enabled) return false;
-    if (f.onlyAttention && !r.needs_attention) return false;
-    if (q) {
-      const hay = (r.name + ' ' + r.source + ' ' + r.source_template + ' ' + r.target + ' ' + r.target_subpath).toLowerCase();
-      if (hay.indexOf(q) < 0) return false;
-    }
+    if (!matchesFilters(r)) return false;
+    if (r.hidden && !state.filters.showHidden) return false;
     return true;
   });
   return sortRows(rows);
@@ -409,17 +427,26 @@ function renderRows() {
   const tbody = $('rows');
   tbody.textContent = '';
 
+  // 「已隐藏 N」只在有隐藏条目时出现，且**不受当前筛选影响**（说的是"你藏了多少"，
+  // 不是"这一屏藏了多少"），否则会被误读成筛选结果。
+  const hiddenTotal = (state.snap.rules || []).filter(function (r) { return r.hidden; }).length;
   $('filter-summary').textContent =
     tf('filter.summary', { shown: rows.length, total: (state.snap.rules || []).length }) +
-    (totalPicked() ? tf('filter.summary_picked', { n: totalPicked() }) : '');
+    (totalPicked() ? tf('filter.summary_picked', { n: totalPicked() }) : '') +
+    (hiddenTotal ? tf('filter.summary_hidden', { n: hiddenTotal }) : '');
   syncSelectAll(rows);
 
   const empty = $('empty');
   if (!rows.length && !tpls.length) {
     empty.classList.remove('hidden');
-    empty.textContent = state.snap.rules.length
-      ? t('empty.no_match')
-      : t('empty.no_rules');
+    // 三选一：被隐藏了 / 被筛选了 / 一条规则都还没有。
+    if (state.snap.rules.length && !state.filters.showHidden && hiddenMatchCount()) {
+      empty.textContent = tf('empty.all_hidden', { n: hiddenMatchCount() });
+    } else {
+      empty.textContent = state.snap.rules.length
+        ? t('empty.no_match')
+        : t('empty.no_rules');
+    }
     return;
   }
   empty.classList.add('hidden');
@@ -430,6 +457,9 @@ function renderRows() {
     tr.dataset.id = String(r.id);
     if (state.picked.has(r.id)) tr.className += ' picked';
     if (r.id === state.focusId) tr.className += ' selected';
+    // 已隐藏的条目只在「显示已隐藏」打开时才会被渲染；整行淡一点 + 名字后带标记，
+    // 免得和正常条目混淆（它们照样参与开机重建与巡检，只是不占列表位置）。
+    if (r.hidden) tr.className += ' row-hidden';
 
     // 勾选框 + 拖拽把手
     const tdCheck = document.createElement('td');
@@ -460,6 +490,13 @@ function renderRows() {
     const nm = document.createElement('div');
     nm.className = 'cell-name';
     nm.textContent = r.name;
+    if (r.hidden) {
+      const tag = document.createElement('span');
+      tag.className = 'hidden-tag';
+      tag.textContent = t('row.hidden_tag');
+      tag.title = t('row.hidden_tip');
+      nm.appendChild(tag);
+    }
     tdName.appendChild(nm);
     if (r.needs_attention) {
       const note = document.createElement('div');
@@ -712,6 +749,9 @@ function renderDetail() {
   if (rule.auto_clean_policy) {
     addRow(grid, t('detail.key.auto_clean'), describeAutoPolicy(rule.auto_clean_policy), true);
   }
+  if (rule.auto_clean_limit_bytes > 0) {
+    addRow(grid, t('detail.key.auto_limit'), humanBytes(rule.auto_clean_limit_bytes), true);
+  }
   if (rule.unknown_vars && rule.unknown_vars.length) {
     addRow(grid, t('detail.key.unknown_vars'), rule.unknown_vars.join(t('list.sep')), true);
   }
@@ -906,6 +946,26 @@ async function setRulesEnabled(ids, enabled) {
   try {
     await invoke('set_rules_enabled', { ids: ids, enabled: enabled });
     toast(enabled ? t('toast.enabled') : t('toast.disabled'), tf('toast.toggle_hint', { n: ids.length }), 'ok');
+    await refresh(true);
+  } catch (e) { toast(t('toast.op_failed'), e.message, 'error'); }
+}
+
+/** 隐藏 / 取消隐藏条目（行右键菜单）。
+ *
+ *  隐藏是**展示偏好**：后端把它存在 settings 里（见 usecase::rules::KEY_HIDDEN_RULES），
+ *  规则本身一切照旧 —— 开机重建、水位巡检、清理都还管它，只是不占列表位置。
+ *  取消隐藏后行会立刻回到列表（因为快照里 hidden 已经变回 false）。 */
+async function setRulesHidden(ids, hidden) {
+  if (!ids.length) return;
+  try {
+    await invoke('set_rules_hidden', { ids: ids, hidden: hidden });
+    // 隐藏掉的条目要从勾选集合里摘掉：看不见的行不该再被「应用选中 / 删除」带上。
+    if (hidden) ids.forEach(function (id) { state.picked.delete(id); });
+    toast(
+      t('toast.hide_done'),
+      hidden ? tf('toast.hide_done_hint', { n: ids.length }) : tf('toast.unhide_done_hint', { n: ids.length }),
+      'ok'
+    );
     await refresh(true);
   } catch (e) { toast(t('toast.op_failed'), e.message, 'error'); }
 }
@@ -1923,19 +1983,76 @@ async function openRuleForm(id) {
   if (initPolicy === 'empty') autoSelect.value = 'empty';
   else if (initHours) { autoSelect.value = 'older'; autoHours.value = String(Math.max(1, Math.round(Number(initHours[1]) / 3600))); }
   const autoWrap = mk(t('rule.auto.label'), autoSelect);
+  const hoursWrap = mk(t('rule.auto.before'), autoHours);
+  // 两个控件并排。提示文案**不能**塞进 .field-row：flex 行里它会把两个输入框
+  // 挤到近乎 0 宽（输入框 flex-basis 为 0，抢不过带内容的提示）。挂到外层
+  // .field 的下方，走 .field .hint 样式，输入框自然各占约一半宽度。
   const autoRow = document.createElement('div');
   autoRow.className = 'field-row';
   autoRow.appendChild(autoWrap.field);
-  const hoursWrap = mk(t('rule.auto.before'), autoHours);
   autoRow.appendChild(hoursWrap.field);
+  const autoField = document.createElement('div');
+  autoField.className = 'field';
+  autoField.appendChild(autoRow);
   const autoHint = document.createElement('div');
   autoHint.className = 'hint';
   autoHint.textContent = t('rule.auto.hint');
-  autoRow.appendChild(autoHint);
+  autoField.appendChild(autoHint);
   function syncAutoHours() { hoursWrap.field.style.display = autoSelect.value === 'older' ? '' : 'none'; }
   autoSelect.addEventListener('change', syncAutoHours);
   syncAutoHours();
-  body.appendChild(autoRow);
+  body.appendChild(autoField);
+
+  // 文件夹级容量上限：这条规则**自己的目录**占用到量即按上面的策略清理。
+  // 与「水位」那条路径互不依赖 —— 单个缓存目录撑到几 GB 时整块盘可能还很宽裕。
+  const limitNum = mkInput(t('rule.auto.limit_ph'));
+  limitNum.type = 'number';
+  limitNum.min = '0';
+  limitNum.step = '1';
+  const limitUnit = document.createElement('select');
+  limitUnit.className = 'select';
+  [['gb', t('rule.auto.unit_gb')], ['mb', t('rule.auto.unit_mb')]].forEach(function (u) {
+    const o = document.createElement('option');
+    o.value = u[0];
+    o.textContent = u[1];
+    limitUnit.appendChild(o);
+  });
+  const initLimit = rule && rule.auto_clean_limit_bytes ? Number(rule.auto_clean_limit_bytes) : 0;
+  if (initLimit >= 1073741824 && initLimit % 1073741824 === 0) {
+    limitUnit.value = 'gb';
+    limitNum.value = String(initLimit / 1073741824);
+  } else if (initLimit > 0) {
+    limitUnit.value = 'mb';
+    limitNum.value = String(Math.max(1, Math.round(initLimit / 1048576)));
+  }
+  const limitWrap = mk(t('rule.auto.limit_label'), limitNum);
+  const unitWrap = mk(t('rule.auto.limit_unit'), limitUnit);
+  const limitRow = document.createElement('div');
+  limitRow.className = 'field-row';
+  limitRow.appendChild(limitWrap.field);
+  limitRow.appendChild(unitWrap.field);
+  const limitField = document.createElement('div');
+  limitField.className = 'field';
+  limitField.appendChild(limitRow);
+  const limitHint = document.createElement('div');
+  limitHint.className = 'hint';
+  limitField.appendChild(limitHint);
+  body.appendChild(limitField);
+
+  function autoLimitBytes() {
+    const n = Math.floor(Number(limitNum.value));
+    if (!(n > 0)) return 0;
+    return limitUnit.value === 'mb' ? n * 1048576 : n * 1073741824;
+  }
+  function syncLimitHint() {
+    const needs = autoLimitBytes() > 0 && !autoPolicyValue();
+    limitHint.textContent = needs ? '⚠️ ' + t('rule.auto.limit_needs_policy') : t('rule.auto.limit_hint');
+    limitHint.className = needs ? 'hint warn' : 'hint';
+  }
+  limitNum.addEventListener('input', syncLimitHint);
+  limitUnit.addEventListener('change', syncLimitHint);
+  autoSelect.addEventListener('change', syncLimitHint);
+  syncLimitHint();
 
   function autoPolicyValue() {
     if (autoSelect.value === 'empty') return 'empty';
@@ -2011,7 +2128,12 @@ async function openRuleForm(id) {
             excludes: excludes.value.split(/\r?\n/).map(function (s) { return s.trim(); })
               .filter(function (s) { return s.length > 0; }),
             auto_clean_policy: autoPolicyValue(),
+            auto_clean_limit_bytes: autoLimitBytes(),
           };
+          if (form.auto_clean_limit_bytes > 0 && !form.auto_clean_policy) {
+            toast(t('common.save_failed'), t('rule.auto.limit_needs_policy'), 'error');
+            return;
+          }
           try {
             if (rule) await invoke('update_rule', { id: rule.id, form: form });
             else await invoke('add_rule', { form: form });
@@ -2115,6 +2237,23 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
   rangeWrap.appendChild(row);
   body.appendChild(rangeWrap);
 
+  // 保留类型：这些扩展名的文件一律不删（对所有目标生效，见 fsops::exclude::Excludes）
+  const keepWrap = document.createElement('div');
+  keepWrap.className = 'field';
+  const keepLabel = document.createElement('label');
+  keepLabel.textContent = t('clean.keep_types');
+  const keepInput = document.createElement('input');
+  keepInput.type = 'text';
+  keepInput.className = 'input';
+  keepInput.placeholder = t('clean.keep_types_ph');
+  const keepHint = document.createElement('div');
+  keepHint.className = 'hint';
+  keepHint.textContent = t('clean.keep_types_hint');
+  keepWrap.appendChild(keepLabel);
+  keepWrap.appendChild(keepInput);
+  keepWrap.appendChild(keepHint);
+  body.appendChild(keepWrap);
+
   function selectedMode() {
     for (const r of radios) { if (r.checked) return r.value; }
     return 'empty';
@@ -2136,6 +2275,14 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
     return { mode: 'between', from: from, to: to };
   }
 
+  /** 解析「保留这些类型」输入：逗号/分号/空白分隔，逐项去空白，空项丢弃。 */
+  function keepTypes() {
+    return keepInput.value
+      .split(/[,，;；\s]+/)
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0; });
+  }
+
   // 预演结果区
   const previewHost = document.createElement('div');
   previewHost.className = 'field';
@@ -2153,6 +2300,16 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
   btnRow.appendChild(previewBtn);
   btnRow.appendChild(delBtn);
   body.appendChild(btnRow);
+
+  // 改了策略或保留类型后，之前的预演结果就过期了 —— 作废它，逼用户重新预演
+  // 再删，避免"看到的"和"删掉的"两套口径。
+  function invalidatePreview() {
+    previewHost.textContent = '';
+    delBtn.disabled = true;
+    delBtn.textContent = t('clean.confirm_del');
+  }
+  keepInput.addEventListener('input', invalidatePreview);
+  radios.forEach(function (r) { r.addEventListener('change', invalidatePreview); });
 
   function ruleName(t) {
     if (t.kind === 'rule') {
@@ -2233,10 +2390,11 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
 
   previewBtn.addEventListener('click', async function () {
     const policy = buildPolicy();
+    const types = keepTypes();
     previewBtn.disabled = true;
     try {
       if (!multi) {
-        const pv = await invoke('clean_preview', { target: targets[0], policy: policy });
+        const pv = await invoke('clean_preview', { target: targets[0], policy: policy, typeExcludes: types });
         renderPreview(pv);
       } else {
         const rows = [];
@@ -2249,7 +2407,7 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
           previewHost.appendChild(st);
           const name = ruleName(targets[i]);
           try {
-            const pv = await invoke('clean_preview', { target: targets[i], policy: policy });
+            const pv = await invoke('clean_preview', { target: targets[i], policy: policy, typeExcludes: types });
             rows.push({ name: name, pv: pv });
             files += pv.files;
             bytes += pv.bytes;
@@ -2271,9 +2429,10 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
   delBtn.addEventListener('click', async function () {
     delBtn.disabled = true;
     const policy = buildPolicy();
+    const types = keepTypes();
     try {
       if (!multi) {
-        const r = await invoke('clean_run', { target: targets[0], policy: policy, dryRun: false });
+        const r = await invoke('clean_run', { target: targets[0], policy: policy, dryRun: false, typeExcludes: types });
         closeModal();
         toast(t('clean.done'), r.summary, r.skipped ? 'warn' : 'ok');
       } else {
@@ -2281,7 +2440,7 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
         for (let i = 0; i < targets.length; i++) {
           delBtn.textContent = tf('clean.cleaning_progress', { i: i + 1, n: targets.length });
           try {
-            const r = await invoke('clean_run', { target: targets[i], policy: policy, dryRun: false });
+            const r = await invoke('clean_run', { target: targets[i], policy: policy, dryRun: false, typeExcludes: types });
             deletedFiles += r.deleted_files;
             deletedBytes += r.deleted_bytes;
             skipped += r.skipped;
@@ -2574,6 +2733,8 @@ function buildRuleMenu(m, ids) {
   const anyUnlinked = rules.some(function (r) { return r.badge === '⚠️' || r.badge === '❌'; });
   const allOn = rules.every(function (r) { return r.want_enabled; });
   const allOff = rules.every(function (r) { return !r.want_enabled; });
+  const allHidden = rules.every(function (r) { return r.hidden; });
+  const allShown = rules.every(function (r) { return !r.hidden; });
 
   m.appendChild(mkCtxHead(single ? rules[0].name : tf('ctx.title_rules', { n: rules.length })));
   m.appendChild(mkCtxItem(t('detail.act.apply'), function () { runApply(ids, false); }));
@@ -2590,6 +2751,8 @@ function buildRuleMenu(m, ids) {
   m.appendChild(mkCtxSep());
   m.appendChild(mkCtxItem(t('toolbar.enable'), function () { setRulesEnabled(ids, true); }, { disabled: allOn }));
   m.appendChild(mkCtxItem(t('toolbar.disable'), function () { setRulesEnabled(ids, false); }, { disabled: allOff }));
+  m.appendChild(mkCtxItem(t('ctx.hide'), function () { setRulesHidden(ids, true); }, { disabled: allHidden }));
+  m.appendChild(mkCtxItem(t('ctx.unhide'), function () { setRulesHidden(ids, false); }, { disabled: allShown }));
   m.appendChild(mkCtxItem(t('toolbar.delete'), function () { confirmDeleteRules(ids); }, { danger: true }));
 }
 
@@ -2752,6 +2915,7 @@ document.addEventListener('change', function (ev) {
   if (el.id === 'filter-category') { state.filters.category = el.value; renderRows(); }
   else if (el.id === 'only-enabled') { state.filters.onlyEnabled = el.checked; renderRows(); }
   else if (el.id === 'only-attention') { state.filters.onlyAttention = el.checked; renderRows(); }
+  else if (el.id === 'show-hidden') { state.filters.showHidden = el.checked; renderRows(); }
   else if (el.id === 'sel-all' || el.id === 'sel-all-head') {
     const rows = filteredRules();
     if (el.checked) rows.forEach(function (r) { state.picked.add(r.id); });
@@ -2885,7 +3049,7 @@ backend.listen('td-tray-boot', function (ev) {
 
 function createMockBackend() {
   const rules = [
-    mockRule(1, t('mock.rule.chrome'), 'browser', '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache', 'browsers\\chrome-cache', '✅', 'link_ok', { last_files: 34521, last_bytes: 1288490188, auto_clean_policy: 'older:86400' }),
+    mockRule(1, t('mock.rule.chrome'), 'browser', '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache', 'browsers\\chrome-cache', '✅', 'link_ok', { last_files: 34521, last_bytes: 1288490188, auto_clean_policy: 'older:86400', auto_clean_limit_bytes: 2147483648 }),
     mockRule(2, t('mock.rule.edge'), 'browser', '%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache', 'browsers\\edge-cache', '✅', 'link_ok', { last_files: 21002, last_bytes: 734003200 }),
     mockRule(3, t('mock.rule.firefox'), 'browser', '%APPDATA%\\Mozilla\\Firefox\\Profiles\\xxxx.default-release\\cache2', 'browsers\\firefox-cache2', '⚠️', 'link_ok_empty', {}),
     mockRule(4, t('mock.rule.photoshop'), 'design', 'C:\\Users\\me\\AppData\\Roaming\\Adobe\\Common\\Media Cache Files', 'design\\ps-media-cache', '⚠️', 'link_broken', { needs_attention: true }),
@@ -2924,6 +3088,8 @@ function createMockBackend() {
       has_acl: !!e.has_acl, needs_elevation: !!e.needs_elevation, notes: null,
       excludes: e.excludes || [],
       auto_clean_policy: e.auto_clean_policy || '',
+      auto_clean_limit_bytes: e.auto_clean_limit_bytes || 0,
+      hidden: !!e.hidden,
       badge: badge, label: '',
       needs_attention: !!e.needs_attention || badge === '❌',
       unknown_vars: [], last_files: e.last_files || null, last_bytes: e.last_bytes || null,
@@ -2978,7 +3144,8 @@ function createMockBackend() {
    * 而 mock 若不校验，就会一路绿灯把问题藏到用户手上（这正是一次真实教训）。 */
   function assertFormShape(f) {
     const need = ['name', 'category', 'source_template', 'target_root_id',
-      'target_subpath', 'link_type', 'want_enabled', 'rebuild_on_boot'];
+      'target_subpath', 'link_type', 'want_enabled', 'rebuild_on_boot',
+      'auto_clean_limit_bytes'];
     const miss = need.filter(function (k) { return !(f && (k in f)); });
     if (miss.length) {
       throw new Error('mock 校验失败：表单缺少字段 ' + miss.join('、') +
@@ -3040,7 +3207,7 @@ function createMockBackend() {
         case 'add_rule': {
           const f = assertFormShape(args.form);
           const id = Math.max.apply(null, rules.map(function (r) { return r.id; })) + 1;
-          rules.push(mockRule(id, f.name, f.category, f.source_template, f.target_subpath, '❌', 'plain_dir', { want_enabled: f.want_enabled, auto_clean_policy: f.auto_clean_policy || '' }));
+          rules.push(mockRule(id, f.name, f.category, f.source_template, f.target_subpath, '❌', 'plain_dir', { want_enabled: f.want_enabled, auto_clean_policy: f.auto_clean_policy || '', auto_clean_limit_bytes: f.auto_clean_limit_bytes || 0 }));
           return Promise.resolve(id);
         }
         case 'update_rule': {
@@ -3054,6 +3221,7 @@ function createMockBackend() {
             r.notes = args.form.notes;
             r.excludes = args.form.excludes || [];
             r.auto_clean_policy = args.form.auto_clean_policy || '';
+            r.auto_clean_limit_bytes = args.form.auto_clean_limit_bytes || 0;
           }
           return Promise.resolve(null);
         }
@@ -3067,6 +3235,9 @@ function createMockBackend() {
         case 'set_rules_enabled':
           args.ids.forEach(function (id) { const r = find(id); if (r) r.want_enabled = args.enabled; });
           return Promise.resolve(args.ids.length);
+        case 'set_rules_hidden':
+          args.ids.forEach(function (id) { const r = find(id); if (r) r.hidden = args.hidden; });
+          return Promise.resolve(rules.filter(function (r) { return r.hidden; }).length);
         case 'capture_acl': { const r = find(args.id); if (r) r.has_acl = true; return Promise.resolve('D:(A;;FA;;;SY)'); }
         case 'clear_acl': { const r = find(args.id); if (r) r.has_acl = false; return Promise.resolve(null); }
         case 'water_poll':
@@ -3083,11 +3254,13 @@ function createMockBackend() {
           ]);
         case 'clean_preview': {
           const tgt = args.target || {};
+          // 保留类型：mock 里按「配了类型就额外跳过 5 条」演示（真实计数由 core 算）。
+          const types = Array.isArray(args.typeExcludes) ? args.typeExcludes.length : 0;
           return Promise.resolve({
             dir: tgt.kind === 'folder' ? tgt.path : 'R:\\dev\\vscode-cache',
             label: '（模拟）VS Code 缓存',
             files: 1280, bytes: 536870912, bytes_text: '512.0 MB', links_skipped: 0,
-            excluded_skipped: tgt.kind === 'rule' ? 12 : 0,
+            excluded_skipped: (tgt.kind === 'rule' ? 12 : 0) + (types ? 5 : 0),
             sample: [
               { path: 'Cache\\f1', bytes: 1048576, mtime: Math.floor(Date.now() / 1000) - 86400 * 3 },
               { path: 'Cache\\f2', bytes: 2097152, mtime: Math.floor(Date.now() / 1000) - 3600 * 5 },
@@ -3100,7 +3273,7 @@ function createMockBackend() {
             dir: 'R:\\dev\\vscode-cache', label: '（模拟）VS Code 缓存',
             deleted_files: 1280, deleted_bytes: 536870912, deleted_bytes_text: '512.0 MB',
             dirs_pruned: 3, skipped: 2, skip_examples: ['f3', 'f4'], links_skipped: 0,
-            excluded_skipped: 12,
+            excluded_skipped: 12 + ((args.typeExcludes || []).length ? 5 : 0),
             summary: '已删除 1280 个文件 / 512.0 MB，剪除 3 个空目录；2 个文件被占用或无权限已跳过（例如：f3；f4）',
           });
         case 'inspect_source': {

@@ -287,6 +287,20 @@ textarea.input { resize: vertical; min-height: 3.2em; line-height: 1.5; font-fam
 .check input { accent-color: var(--brand); }
 .muted { color: var(--muted); font-size: 12px; }
 
+/* 已隐藏的行：列表里保留占位，视觉上弱化以区别于正常条目 */
+table.rules tbody tr.row-hidden { background: #fafafa; }
+table.rules tbody tr.row-hidden .cell-name { color: var(--muted); }
+.hidden-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: var(--muted);
+  font-size: 10.5px;
+  border: 1px dashed var(--line-strong);
+}
+
 /* ---------------- 表格 ---------------- */
 
 .table-wrap { flex: 1 1 auto; overflow: auto; background: var(--card); }
@@ -497,7 +511,8 @@ table.rules thead th.col-usage { text-align: right; }
 .field .hint.ok { color: var(--ok); }
 .field .input, .field .select { width: 100%; }
 .field-row { display: flex; gap: 10px; align-items: flex-end; }
-.field-row .field { flex: 1; }
+/* min-width 兜底：即使某一列带长提示，输入框也不会被压到看不见。 */
+.field-row .field { flex: 1; min-width: 120px; }
 .inline-check { display: flex; align-items: center; gap: 6px; color: var(--ink-2); margin-bottom: 10px; }
 /* 定时清理的时刻输入（跟在开关文案后，紧凑不占整行） */
 .inline-check input[type="time"] {

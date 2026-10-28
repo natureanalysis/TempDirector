@@ -367,7 +367,7 @@ fn water_sweep(store: &Store, p: &Parsed) -> TdResult<()> {
         let mut files = 0u64;
         let mut bytes = 0u64;
         for r in &rules {
-            let pv = clean_preview(store, &CleanTarget::Rule { id: r.id }, &policy)?;
+            let pv = clean_preview(store, &CleanTarget::Rule { id: r.id }, &policy, &[])?;
             files += pv.files;
             bytes += pv.bytes;
             if pv.files > 0 {
@@ -434,7 +434,14 @@ fn water_sweep(store: &Store, p: &Parsed) -> TdResult<()> {
             use std::io::Write;
             let _ = std::io::stdout().flush();
         }
-        match clean_run(store, &CleanTarget::Rule { id: r.id }, &policy, false, &mut |_| {}) {
+        match clean_run(
+            store,
+            &CleanTarget::Rule { id: r.id },
+            &policy,
+            &[],
+            false,
+            &mut |_| {},
+        ) {
             Ok(rep) => {
                 deleted_files += rep.deleted_files;
                 deleted_bytes += rep.deleted_bytes;

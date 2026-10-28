@@ -56,6 +56,13 @@ pub struct Rule {
     /// 水位预授权策略：`''` 未启用 / `empty` / `older:<秒>`。
     /// 仅 water 巡检在 critical 时触发；手动 clean 不读它。
     pub auto_clean_policy: String,
+    /// 文件夹级容量上限（字节，`0` = 不启用）。
+    ///
+    /// 与 `auto_clean_policy` 配合：策略决定「删什么」，上限决定「什么时候删」。
+    /// `> 0` 时每轮巡检测量这条规则目录**自身**的占用，达到上限就按策略清理
+    /// —— 这条路径**不看卷水位**（单个文件夹撑爆不必等整块盘到严重线）。
+    /// `0` 时只剩「卷水位 critical」那一条触发路径（旧行为，向后兼容）。
+    pub auto_clean_limit_bytes: i64,
 
     pub last_state: Option<String>,
     pub last_checked_at: Option<String>,
@@ -135,6 +142,9 @@ pub struct NewRule {
     /// 水位预授权策略：`''` / `empty` / `older:<秒>`。缺省（老配置文件）= 未启用。
     #[serde(default)]
     pub auto_clean_policy: String,
+    /// 文件夹级容量上限（字节，`0` = 不启用）。缺省（老配置文件）= 不启用。
+    #[serde(default)]
+    pub auto_clean_limit_bytes: i64,
 }
 
 /// 操作流水的一行。
@@ -167,6 +177,7 @@ pub struct EventRow {
 pub const RULE_COLUMNS: &str = "id, name, category, source_template, source_norm, \
      target_root_id, target_subpath, link_type, want_enabled, rebuild_on_boot, \
      acl_sddl, needs_elevation, notes, sort_order, excludes, auto_clean_policy, \
+     auto_clean_limit_bytes, \
      last_state, last_checked_at, last_error, last_files, last_bytes, applied_at, \
      created_at, updated_at";
 
@@ -194,14 +205,15 @@ pub fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Rule> {
         sort_order: row.get(13)?,
         excludes: excludes_from_db(row.get(14)?),
         auto_clean_policy: row.get(15)?,
-        last_state: row.get(16)?,
-        last_checked_at: row.get(17)?,
-        last_error: row.get(18)?,
-        last_files: row.get(19)?,
-        last_bytes: row.get(20)?,
-        applied_at: row.get(21)?,
-        created_at: row.get(22)?,
-        updated_at: row.get(23)?,
+        auto_clean_limit_bytes: row.get(16)?,
+        last_state: row.get(17)?,
+        last_checked_at: row.get(18)?,
+        last_error: row.get(19)?,
+        last_files: row.get(20)?,
+        last_bytes: row.get(21)?,
+        applied_at: row.get(22)?,
+        created_at: row.get(23)?,
+        updated_at: row.get(24)?,
     })
 }
 

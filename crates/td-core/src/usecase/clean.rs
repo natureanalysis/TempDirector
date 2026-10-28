@@ -19,10 +19,7 @@ use super::view::{CleanPreviewView, CleanResultView, CleanTarget};
 /// 规则：源目录若已是链接（联接/符号链接），真实内容在 RAM 盘目标上，清目标；
 /// 否则（普通目录 / 未链接）清源。文件夹：展开 `%VAR%` 后过一遍系统目录黑名单。
 /// 排除模式只来自规则（任意文件夹清理不带排除）。
-fn resolve_clean_dir(
-    store: &Store,
-    target: &CleanTarget,
-) -> TdResult<(PathBuf, String, Excludes)> {
+fn resolve_clean_dir(store: &Store, target: &CleanTarget) -> TdResult<(PathBuf, String, Excludes)> {
     match target {
         CleanTarget::Rule { id } => {
             let rule = store.get_rule(*id)?;
@@ -43,12 +40,17 @@ fn resolve_clean_dir(
 }
 
 /// 预演：只算不删。目录不存在时返回空计划（而不是报错——清理一个还没内容的缓存是常见的）。
+///
+/// `type_excludes` 是本次清理要**保留**的文件扩展名（如 `.py`，来自清理弹窗的
+/// "保留这些类型的文件"），叠加在规则自身的排除模式之上；空 = 不按类型过滤。
 pub fn clean_preview(
     store: &Store,
     target: &CleanTarget,
     policy: &clean::CleanPolicy,
+    type_excludes: &[String],
 ) -> TdResult<CleanPreviewView> {
     let (dir, label, excludes) = resolve_clean_dir(store, target)?;
+    let excludes = excludes.with_exts(type_excludes)?;
     policy.validate()?;
     let plan = if dir.is_dir() {
         clean::plan(&dir, policy, &excludes)?
@@ -71,14 +73,19 @@ pub fn clean_preview(
 }
 
 /// 执行清理。`dry_run` 走预演分支不写盘。完成后落一条事件流水。
+///
+/// `type_excludes` 见 [`clean_preview`]；判定口径与预演共用同一 `Excludes`，
+/// 保证"看到的"与"删掉的"一致。
 pub fn clean_run(
     store: &Store,
     target: &CleanTarget,
     policy: &clean::CleanPolicy,
+    type_excludes: &[String],
     dry_run: bool,
     on_progress: &mut dyn FnMut(&Progress),
 ) -> TdResult<CleanResultView> {
     let (dir, label, excludes) = resolve_clean_dir(store, target)?;
+    let excludes = excludes.with_exts(type_excludes)?;
     policy.validate()?;
     let report = if dir.is_dir() {
         let mut sink = |p: Progress| on_progress(&p);
@@ -97,10 +104,10 @@ pub fn clean_run(
             rule_id,
             "info",
             "clean",
-            &tf("usecase_clean.log", &[
-                ("label", label.as_str()),
-                ("summary", &summary),
-            ]),
+            &tf(
+                "usecase_clean.log",
+                &[("label", label.as_str()), ("summary", &summary)],
+            ),
         )?;
         // 同时落一条操作流水：event 的 message 聚合不了，「效益统计」要从
         // operations 的结构化列（file_count / bytes）上取数。

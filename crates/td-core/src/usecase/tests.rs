@@ -53,6 +53,7 @@ fn form(env: &Env, name: &str, sub: &str) -> RuleForm {
         notes: None,
         excludes: Vec::new(),
         auto_clean_policy: String::new(),
+        auto_clean_limit_bytes: 0,
     }
 }
 
@@ -73,10 +74,10 @@ fn rule_form_wire_contract_is_snake_case() {
             "rebuild_on_boot": true,
             "notes": null,
             "excludes": ["sessions", "logs/old"],
-            "auto_clean_policy": "empty"
+            "auto_clean_policy": "empty",
+            "auto_clean_limit_bytes": 2147483648
         }"#;
-    let form: RuleForm =
-        serde_json::from_str(json).expect("前端发送的表单必须能反序列化");
+    let form: RuleForm = serde_json::from_str(json).expect("前端发送的表单必须能反序列化");
     assert_eq!(form.name, "Chrome 缓存");
     assert_eq!(form.category, "browser");
     assert_eq!(form.target_root_id, 1);
@@ -87,6 +88,7 @@ fn rule_form_wire_contract_is_snake_case() {
     assert!(form.notes.is_none());
     assert_eq!(form.excludes, vec!["sessions", "logs/old"]);
     assert_eq!(form.auto_clean_policy, "empty");
+    assert_eq!(form.auto_clean_limit_bytes, 2147483648);
 
     // 老前端不带 excludes / auto_clean_policy 字段时按"无排除 / 未启用"处理
     let legacy: RuleForm = serde_json::from_str(
@@ -96,6 +98,7 @@ fn rule_form_wire_contract_is_snake_case() {
     .unwrap();
     assert!(legacy.excludes.is_empty());
     assert!(legacy.auto_clean_policy.is_empty());
+    assert_eq!(legacy.auto_clean_limit_bytes, 0, "缺字段时默认 0 = 不启用");
 }
 
 #[test]
@@ -188,7 +191,12 @@ fn batch_apply_collects_failures_without_aborting() {
     )
     .unwrap();
 
-    let res = apply_rules(&env.store, &[bad, good], &ApplyOpts::default(), &mut |_, _, _, _| {});
+    let res = apply_rules(
+        &env.store,
+        &[bad, good],
+        &ApplyOpts::default(),
+        &mut |_, _, _, _| {},
+    );
     assert_eq!(res.len(), 2);
     assert!(!res[0].ok, "坏规则应当失败");
     assert!(res[1].ok, "好规则不受影响：{}", res[1].message);
@@ -290,7 +298,12 @@ fn check_locks_on_clean_dir_is_clear() {
 fn boot_rebuild_through_api_recovers_from_ram_loss() {
     let env = setup("boot");
     let id = add_rule(&env.store, &form(&env, "开机", "dev\\b")).unwrap();
-    apply_rules(&env.store, &[id], &ApplyOpts::default(), &mut |_, _, _, _| {});
+    apply_rules(
+        &env.store,
+        &[id],
+        &ApplyOpts::default(),
+        &mut |_, _, _, _| {},
+    );
     // 模拟 RAM 盘重启
     fs::remove_dir_all(env.ram.join("dev")).unwrap();
 
@@ -310,12 +323,22 @@ fn delete_rules_and_set_enabled() {
     let env = setup("enabled");
     let a = add_rule(
         &env.store,
-        &form_at(&env, "A", &env.base.join("srcA").to_string_lossy(), "dev\\a"),
+        &form_at(
+            &env,
+            "A",
+            &env.base.join("srcA").to_string_lossy(),
+            "dev\\a",
+        ),
     )
     .unwrap();
     let b = add_rule(
         &env.store,
-        &form_at(&env, "B", &env.base.join("srcB").to_string_lossy(), "dev\\b"),
+        &form_at(
+            &env,
+            "B",
+            &env.base.join("srcB").to_string_lossy(),
+            "dev\\b",
+        ),
     )
     .unwrap();
     assert_eq!(set_enabled(&env.store, &[b], false).unwrap(), 1);
@@ -326,11 +349,61 @@ fn delete_rules_and_set_enabled() {
 }
 
 #[test]
+fn hide_and_unhide_rules_round_trip() {
+    let env = setup("hidden");
+    let src = |d: &str| env.base.join(d).to_string_lossy().into_owned();
+    let a = add_rule(
+        &env.store,
+        &form_at(&env, "藏起来", &src("hide"), "dev\\hide"),
+    )
+    .unwrap();
+    let b = add_rule(
+        &env.store,
+        &form_at(&env, "留着", &src("keep"), "dev\\keep"),
+    )
+    .unwrap();
+
+    // 初始都可见。
+    assert!(hidden_rule_ids(&env.store).unwrap().is_empty());
+    assert!(rule_views(&env.store).unwrap().iter().all(|v| !v.hidden));
+
+    // 隐藏一条：视图里只有它 hidden，且隐藏只影响展示、规则本身照旧。
+    assert_eq!(set_hidden(&env.store, &[a], true).unwrap(), 1);
+    assert_eq!(hidden_rule_ids(&env.store).unwrap(), vec![a]);
+    let views = rule_views(&env.store).unwrap();
+    assert_eq!(views.iter().filter(|v| v.hidden).count(), 1);
+    assert!(views.iter().find(|v| v.id == a).unwrap().hidden);
+    assert!(!views.iter().find(|v| v.id == b).unwrap().hidden);
+    // 不影响功能：两条规则都还在，也都没被关掉。
+    let snap = snapshot(&env.store).unwrap();
+    assert_eq!(snap.stats.total, 2);
+    assert_eq!(snap.stats.enabled, 2);
+
+    // 取消隐藏：恢复可见（可恢复显示）。
+    assert_eq!(set_hidden(&env.store, &[a], false).unwrap(), 0);
+    assert!(hidden_rule_ids(&env.store).unwrap().is_empty());
+    assert!(rule_views(&env.store).unwrap().iter().all(|v| !v.hidden));
+
+    // 不存在的 id 静默忽略。
+    assert_eq!(set_hidden(&env.store, &[99999], true).unwrap(), 0);
+
+    // 规则删除后残留的隐藏 id 会被自动剔除，不会留给将来同号的新规则。
+    assert_eq!(set_hidden(&env.store, &[b], true).unwrap(), 1);
+    delete_rules(&env.store, &[b]).unwrap();
+    assert!(hidden_rule_ids(&env.store).unwrap().is_empty());
+
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
 fn duplicate_source_path_is_rejected() {
     let env = setup("dup");
     add_rule(&env.store, &form(&env, "第一条", "dev\\one")).unwrap();
     let err = add_rule(&env.store, &form(&env, "第二条", "dev\\two")).unwrap_err();
-    assert!(err.to_string().contains("已存在指向同一路径的规则"), "{err}");
+    assert!(
+        err.to_string().contains("已存在指向同一路径的规则"),
+        "{err}"
+    );
     let _ = fs::remove_dir_all(&env.base);
 }
 
@@ -379,7 +452,8 @@ fn builtin_presets_parse() {
         );
     }
     assert!(
-        all.iter().any(|p| p.source_template == r"%LOCALAPPDATA%\Temp"),
+        all.iter()
+            .any(|p| p.source_template == r"%LOCALAPPDATA%\Temp"),
         "任何 Windows 机器上都该有「用户 TEMP」预设兜底"
     );
 }
@@ -441,11 +515,15 @@ fn preset_rules_filters_by_existence() {
     assert!(
         out.iter().all(|v| v.exists),
         "返回的预设必须全部存在：{:?}",
-        out.iter().filter(|v| !v.exists).map(|v| &v.name).collect::<Vec<_>>()
+        out.iter()
+            .filter(|v| !v.exists)
+            .map(|v| &v.name)
+            .collect::<Vec<_>>()
     );
     // %LOCALAPPDATA%\Temp 在任何 Windows 上都有 —— 至少「用户 TEMP」会在
     assert!(
-        out.iter().any(|v| v.source_template == r"%LOCALAPPDATA%\Temp"),
+        out.iter()
+            .any(|v| v.source_template == r"%LOCALAPPDATA%\Temp"),
         "本机应至少命中「用户 TEMP」预设，实际命中 {} 条",
         out.len()
     );
@@ -464,6 +542,7 @@ fn preset_rules_filters_by_existence() {
             notes: v.note.clone(),
             excludes: Vec::new(),
             auto_clean_policy: String::new(),
+            auto_clean_limit_bytes: 0,
         };
         validate_form(&f).unwrap_or_else(|e| panic!("预设 {} 没通过表单校验：{e}", v.name));
     }
@@ -489,7 +568,7 @@ fn clean_preview_counts_folder_contents() {
     let t = CleanTarget::Folder {
         path: dir.to_string_lossy().into_owned(),
     };
-    let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+    let pv = clean_preview(&env.store, &t, &empty_policy(), &[]).unwrap();
     assert_eq!(pv.files, 2, "递归应数到子目录里的文件");
     assert_eq!(pv.bytes, 8);
     let _ = fs::remove_dir_all(&env.base);
@@ -505,7 +584,7 @@ fn clean_run_empty_removes_files_but_keeps_root() {
     let t = CleanTarget::Folder {
         path: dir.to_string_lossy().into_owned(),
     };
-    let r = clean_run(&env.store, &t, &empty_policy(), false, &mut |_| {}).unwrap();
+    let r = clean_run(&env.store, &t, &empty_policy(), &[], false, &mut |_| {}).unwrap();
     assert_eq!(r.deleted_files, 1);
     assert!(dir.is_dir(), "清理后根目录必须保留");
     assert!(!dir.join("a.bin").exists());
@@ -521,7 +600,7 @@ fn clean_blocks_system_folders() {
     let t = CleanTarget::Folder {
         path: r"C:\Windows".into(),
     };
-    let err = clean_preview(&env.store, &t, &empty_policy()).unwrap_err();
+    let err = clean_preview(&env.store, &t, &empty_policy(), &[]).unwrap_err();
     assert!(matches!(err, TdError::SafetyBlocked(_)), "{err}");
     let _ = fs::remove_dir_all(&env.base);
 }
@@ -532,7 +611,7 @@ fn clean_rule_target_resolves_to_source_when_unlinked() {
     // setup 造的 env.source 是普通目录，含 1 个 1024 字节的 a.bin；规则未链接 → 清源
     let id = add_rule(&env.store, &form(&env, "清理我", "dev\\clean")).unwrap();
     let t = CleanTarget::Rule { id };
-    let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+    let pv = clean_preview(&env.store, &t, &empty_policy(), &[]).unwrap();
     assert_eq!(pv.files, 1);
     assert_eq!(pv.bytes, 1024);
     let _ = fs::remove_dir_all(&env.base);
@@ -551,13 +630,16 @@ fn clean_rule_respects_excludes_end_to_end() {
     let id = add_rule(&env.store, &f).unwrap();
 
     let t = CleanTarget::Rule { id };
-    let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+    let pv = clean_preview(&env.store, &t, &empty_policy(), &[]).unwrap();
     assert_eq!(pv.files, 2, "只数到未排除的文件（a.bin + trash.bin）");
     assert!(pv.excluded_skipped >= 1, "预演要如实汇报排除计数");
 
-    let r = clean_run(&env.store, &t, &empty_policy(), false, &mut |_| {}).unwrap();
+    let r = clean_run(&env.store, &t, &empty_policy(), &[], false, &mut |_| {}).unwrap();
     assert_eq!(r.deleted_files, 2);
-    assert!(env.source.join("sessions/db.sqlite").exists(), "排除子树必须保留");
+    assert!(
+        env.source.join("sessions/db.sqlite").exists(),
+        "排除子树必须保留"
+    );
     assert!(!env.source.join("trash.bin").exists());
     let _ = fs::remove_dir_all(&env.base);
 }
@@ -577,12 +659,46 @@ fn add_rule_rejects_invalid_excludes() {
 }
 
 #[test]
+fn clean_keeps_requested_file_types_end_to_end() {
+    let env = setup("cleantypes");
+    fs::write(env.source.join("script.py"), b"print(1)").unwrap();
+    fs::write(env.source.join("junk.bin"), b"gone").unwrap();
+    let id = add_rule(&env.store, &form(&env, "保留 py", "dev\\keep-types")).unwrap();
+    let t = CleanTarget::Rule { id };
+    let types = vec![".py".to_string()];
+
+    let pv = clean_preview(&env.store, &t, &empty_policy(), &types).unwrap();
+    assert_eq!(pv.files, 2, "setup 的 a.bin + junk.bin（script.py 被保留）");
+    assert_eq!(pv.excluded_skipped, 1, "被保留的类型要如实计数");
+
+    let r = clean_run(&env.store, &t, &empty_policy(), &types, false, &mut |_| {}).unwrap();
+    assert_eq!(r.deleted_files, 2);
+    assert!(env.source.join("script.py").exists(), "声明保留的类型必须活着");
+    assert!(!env.source.join("junk.bin").exists(), "其余文件照常清理");
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn clean_rejects_bad_type_excludes() {
+    let env = setup("cleanbadtype");
+    let id = add_rule(&env.store, &form(&env, "坏类型", "dev\\bad-type")).unwrap();
+    let t = CleanTarget::Rule { id };
+    let err = clean_preview(&env.store, &t, &empty_policy(), &["tar.gz".to_string()]).unwrap_err();
+    assert!(matches!(err, TdError::InvalidPath(_)), "{err}");
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
 fn clean_preview_on_missing_dir_is_empty_not_error() {
     let env = setup("cleanmissing");
     let t = CleanTarget::Folder {
-        path: env.base.join("never-existed").to_string_lossy().into_owned(),
+        path: env
+            .base
+            .join("never-existed")
+            .to_string_lossy()
+            .into_owned(),
     };
-    let pv = clean_preview(&env.store, &t, &empty_policy()).unwrap();
+    let pv = clean_preview(&env.store, &t, &empty_policy(), &[]).unwrap();
     assert_eq!(pv.files, 0, "清理一个还没内容的目录是常见的，不该报错");
     let _ = fs::remove_dir_all(&env.base);
 }
@@ -619,7 +735,10 @@ fn water_poll_records_events_only_on_level_change() {
     assert_eq!(levels.len(), 1);
     assert_eq!(levels[0].level, "ok", "系统盘默认水位应低于 85%");
     assert!(levels[0].used_pct > 0.0, "水位来自真实卷容量");
-    assert!(env.store.recent_events(10).unwrap().is_empty(), "首次基线 ok 不落事件");
+    assert!(
+        env.store.recent_events(10).unwrap().is_empty(),
+        "首次基线 ok 不落事件"
+    );
 
     // 压低告警线 → 级别 ok→warn，落一条 warn 事件
     env.store.set_setting("water_warn_pct", "0.5").unwrap();
@@ -633,7 +752,11 @@ fn water_poll_records_events_only_on_level_change() {
 
     // 平稳期：级别不变 → 不刷事件
     let _ = water_poll(&env.store).unwrap();
-    assert_eq!(env.store.recent_events(10).unwrap().len(), 1, "平稳期不落事件");
+    assert_eq!(
+        env.store.recent_events(10).unwrap().len(),
+        1,
+        "平稳期不落事件"
+    );
 
     // 抬高告警线 → 降级恢复，落一条 info 事件
     env.store.set_setting("water_warn_pct", "99.9").unwrap();
@@ -641,7 +764,10 @@ fn water_poll_records_events_only_on_level_change() {
     assert_eq!(levels[0].level, "ok");
     let ev = env.store.recent_events(10).unwrap();
     assert_eq!(ev.len(), 2);
-    assert_eq!(ev[0].level, "info", "降级恢复落 info（recent_events 最新的在前）");
+    assert_eq!(
+        ev[0].level, "info",
+        "降级恢复落 info（recent_events 最新的在前）"
+    );
     let _ = fs::remove_dir_all(&env.base);
 }
 
@@ -655,10 +781,18 @@ fn snapshot_banners_warn_on_high_water_level() {
     // 压低告警线 → 横幅出现（快照只读，不落事件）
     env.store.set_setting("water_warn_pct", "0.5").unwrap();
     let snap = snapshot(&env.store).unwrap();
-    let hit: Vec<_> = snap.banners.iter().filter(|b| b.text.contains("水位偏高")).collect();
+    let hit: Vec<_> = snap
+        .banners
+        .iter()
+        .filter(|b| b.text.contains("水位偏高"))
+        .collect();
     assert_eq!(hit.len(), 1);
     assert_eq!(hit[0].level, "warn");
-    assert_eq!(hit[0].action.as_deref(), Some("sweep"), "水位横幅要带一键清理入口");
+    assert_eq!(
+        hit[0].action.as_deref(),
+        Some("sweep"),
+        "水位横幅要带一键清理入口"
+    );
     assert!(
         env.store.recent_events(10).unwrap().is_empty(),
         "snapshot 只读，事件只能由 water_poll 落"
@@ -684,14 +818,21 @@ fn water_critical_runs_preauthorized_auto_clean() {
     env.store.set_setting("water_critical_pct", "0.5").unwrap();
     let levels = water_poll(&env.store).unwrap();
     assert_eq!(levels[0].level, "critical");
-    assert!(!env.source.join("a.bin").exists(), "预授权规则的文件应被自动清掉");
+    assert!(
+        !env.source.join("a.bin").exists(),
+        "预授权规则的文件应被自动清掉"
+    );
     assert!(dir_b.join("b.bin").exists(), "未授权规则绝不动");
 
     // 事件：水位 error + 规则A的 clean + auto_clean 汇总
     let ev = env.store.recent_events(10).unwrap();
     assert!(ev.iter().any(|e| e.kind == "water" && e.level == "error"));
-    assert!(ev.iter().any(|e| e.kind == "auto_clean" && e.message.contains("1 条预授权规则")));
-    assert!(ev.iter().any(|e| e.kind == "clean" && e.rule_id == Some(id_a)));
+    assert!(ev
+        .iter()
+        .any(|e| e.kind == "auto_clean" && e.message.contains("1 条预授权规则")));
+    assert!(ev
+        .iter()
+        .any(|e| e.kind == "clean" && e.rule_id == Some(id_a)));
 
     // 冷却：补一个文件再巡检 → 30 分钟冷却期内不重复触发
     fs::write(env.source.join("a2.bin"), b"again").unwrap();
@@ -734,7 +875,11 @@ fn reorder_rules_reorders_within_category() {
     let a = add_rule(&env.store, &form_at(&env, "A", &src("ca"), "a")).unwrap();
     let b = add_rule(&env.store, &form_at(&env, "B", &src("cb"), "b")).unwrap();
     let c = add_rule(&env.store, &form_at(&env, "C", &src("cc"), "c")).unwrap();
-    assert_eq!(ids_in_order(&env.store, "dev"), vec![a, b, c], "初始按插入序");
+    assert_eq!(
+        ids_in_order(&env.store, "dev"),
+        vec![a, b, c],
+        "初始按插入序"
+    );
 
     let n = reorder_rules(&env.store, &[c, a, b]).unwrap();
     assert_eq!(n, 3);
@@ -810,10 +955,15 @@ fn scheduled_clean_runs_once_per_day_at_configured_time() {
     assert!(v.ran);
     assert_eq!(v.done, 1);
     assert_eq!(v.deleted_files, 1);
-    assert!(!env.source.join("a.bin").exists(), "预授权规则的文件应被清掉");
+    assert!(
+        !env.source.join("a.bin").exists(),
+        "预授权规则的文件应被清掉"
+    );
     assert!(dir_b.join("b.bin").exists(), "未授权规则绝不动");
     let ev = env.store.recent_events(10).unwrap();
-    assert!(ev.iter().any(|e| e.kind == "scheduled_clean" && e.level == "info"));
+    assert!(ev
+        .iter()
+        .any(|e| e.kind == "scheduled_clean" && e.level == "info"));
 
     // 时刻改成 05:00，但今天已跑过 → 不重复
     env.store
@@ -829,7 +979,9 @@ fn scheduled_clean_runs_once_per_day_at_configured_time() {
     let v = super::schedule::scheduled_clean_at(&env.store, &now(23, 0)).unwrap();
     assert!(!v.ran);
     let ev = env.store.recent_events(10).unwrap();
-    assert!(ev.iter().any(|e| e.kind == "scheduled_clean" && e.level == "warn"));
+    assert!(ev
+        .iter()
+        .any(|e| e.kind == "scheduled_clean" && e.level == "warn"));
 
     let _ = fs::remove_dir_all(&env.base);
 }

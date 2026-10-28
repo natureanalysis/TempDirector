@@ -30,9 +30,7 @@ pub fn parent_of_display(path: &str) -> Option<PathBuf> {
     if p.is_dir() {
         Some(p)
     } else {
-        p.parent()
-            .filter(|q| q.is_dir())
-            .map(|q| q.to_path_buf())
+        p.parent().filter(|q| q.is_dir()).map(|q| q.to_path_buf())
     }
 }
 

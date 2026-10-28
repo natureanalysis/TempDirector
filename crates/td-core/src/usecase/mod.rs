@@ -31,8 +31,8 @@ pub use overview::{
 };
 pub use presets::{preset_rules, user_presets_path};
 pub use rules::{
-    add_root, add_rule, capture_acl, clear_acl, delete_root, delete_rules, reorder_rules,
-    set_enabled, update_rule,
+    add_root, add_rule, capture_acl, clear_acl, delete_root, delete_rules, hidden_rule_ids,
+    reorder_rules, set_enabled, set_hidden, update_rule,
 };
 pub use schedule::scheduled_clean_poll;
 pub use stats::savings;

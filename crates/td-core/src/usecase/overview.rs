@@ -7,9 +7,7 @@ use crate::i18n::{t, tf};
 use crate::paths;
 use crate::store::{EventRow, Operation, Rule, Store, CATEGORIES};
 
-use super::view::{
-    Banner, RootView, RuleView, Stats, UiSnapshot, VERSION,
-};
+use super::view::{Banner, RootView, RuleView, Stats, UiSnapshot, VERSION};
 
 pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
     let roots = root_views(store)?;
@@ -66,7 +64,10 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
     if stats.needs_attention > 0 {
         banners.push(Banner {
             level: "warn",
-            text: tf("banner.needs_attention", &[("n", &stats.needs_attention.to_string())]),
+            text: tf(
+                "banner.needs_attention",
+                &[("n", &stats.needs_attention.to_string())],
+            ),
             action: None,
         });
     }
@@ -80,11 +81,14 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
     for r in roots.iter().filter(|r| r.state != "ready") {
         banners.push(Banner {
             level: "warn",
-            text: tf("banner.root_error", &[
-                ("id", &r.id.to_string()),
-                ("path", &r.path),
-                ("message", &r.message),
-            ]),
+            text: tf(
+                "banner.root_error",
+                &[
+                    ("id", &r.id.to_string()),
+                    ("path", &r.path),
+                    ("message", &r.message),
+                ],
+            ),
             action: None,
         });
     }
@@ -94,22 +98,28 @@ pub fn snapshot(store: &Store) -> TdResult<UiSnapshot> {
         match w.level.as_str() {
             "critical" => banners.push(Banner {
                 level: "error",
-                text: tf("banner.disk_critical", &[
-                    ("label", &w.label),
-                    ("path", &w.path),
-                    ("pct", &format!("{:.1}", w.used_pct)),
-                    ("free", &w.free_text),
-                ]),
+                text: tf(
+                    "banner.disk_critical",
+                    &[
+                        ("label", &w.label),
+                        ("path", &w.path),
+                        ("pct", &format!("{:.1}", w.used_pct)),
+                        ("free", &w.free_text),
+                    ],
+                ),
                 action: Some("sweep".into()),
             }),
             "warn" => banners.push(Banner {
                 level: "warn",
-                text: tf("banner.disk_warn", &[
-                    ("label", &w.label),
-                    ("path", &w.path),
-                    ("pct", &format!("{:.1}", w.used_pct)),
-                    ("free", &w.free_text),
-                ]),
+                text: tf(
+                    "banner.disk_warn",
+                    &[
+                        ("label", &w.label),
+                        ("path", &w.path),
+                        ("pct", &format!("{:.1}", w.used_pct)),
+                        ("free", &w.free_text),
+                    ],
+                ),
                 action: Some("sweep".into()),
             }),
             _ => {}
@@ -150,16 +160,26 @@ pub fn root_views(store: &Store) -> TdResult<Vec<RootView>> {
 }
 
 pub fn rule_views(store: &Store) -> TdResult<Vec<RuleView>> {
+    // 隐藏态存在 settings 里（不是 rules 表的列）：一次读出来，逐条比对，
+    // 不在这里反复查库。
+    let hidden: std::collections::HashSet<i64> =
+        super::rules::hidden_rule_ids(store)?.into_iter().collect();
     let mut out = Vec::new();
     for rule in store.list_rules()? {
         let resolved = engine::resolve(store, &rule)?;
         let status = engine::rule_status(store, &rule)?;
-        out.push(merge_view(rule, resolved, status));
+        let is_hidden = hidden.contains(&rule.id);
+        out.push(merge_view(rule, resolved, status, is_hidden));
     }
     Ok(out)
 }
 
-fn merge_view(rule: Rule, resolved: engine::Resolved, status: engine::RuleStatus) -> RuleView {
+fn merge_view(
+    rule: Rule,
+    resolved: engine::Resolved,
+    status: engine::RuleStatus,
+    hidden: bool,
+) -> RuleView {
     RuleView {
         id: rule.id,
         name: rule.name,
@@ -177,6 +197,8 @@ fn merge_view(rule: Rule, resolved: engine::Resolved, status: engine::RuleStatus
         notes: rule.notes,
         excludes: rule.excludes,
         auto_clean_policy: rule.auto_clean_policy,
+        auto_clean_limit_bytes: rule.auto_clean_limit_bytes,
+        hidden,
         badge: status.badge.to_string(),
         label: status.label,
         needs_attention: status.needs_attention,

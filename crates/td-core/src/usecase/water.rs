@@ -9,13 +9,24 @@
 //!
 //! 阈值可用 settings 覆盖：`water_warn_pct` / `water_critical_pct`（数字 0~100）。
 //! 本模块只**告警**不自动删文件 —— 自动清理涉及破坏性决策，须用户显式触发。
+//!
+//! 预授权自动清理有**两条互不依赖的触发路径**，都由 [`water_poll`] 顺带跑：
+//!
+//! * [`run_auto_clean`]：**卷水位**到 critical 时清那些配了 `auto_clean_policy`
+//!   且目标根在这块盘上的规则（"整块盘要满了"的应急处置）；
+//! * [`run_folder_auto_clean`]：规则**自身目录占用**达到 `auto_clean_limit_bytes`
+//!   时按策略清它自己（"某个缓存目录撑着撑着就几 GB"的日常维护，不看卷水位）。
+//!
+//! 两条路径共用同一套授权模型：都要求用户显式配过 `auto_clean_policy`。
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::engine;
 use crate::error::{TdError, TdResult};
 use crate::fsops::clean::CleanPolicy;
 use crate::fsops::mover::volume_space;
+use crate::fsops::verify::measure;
 use crate::i18n::tf;
 use crate::store::Store;
 use crate::util;
@@ -32,7 +43,14 @@ const STATE_KEY: &str = "water_level_state";
 /// settings 里记「上次自动清理时刻」（Unix 秒）—— 冷却去抖用。
 const LAST_AUTO_CLEAN_KEY: &str = "water_last_auto_clean_at";
 /// 自动清理冷却期：期内不重复触发（水位降不下去时不反复删）。
+/// 两条触发路径共用这个时长，但**计时各自独立**（见 [`FOLDER_STATE_KEY`]）。
 const AUTO_CLEAN_COOLDOWN_SECS: i64 = 30 * 60;
+/// settings 里记「上次文件夹级自动清理时刻」（JSON：`{规则id: Unix秒}`）。
+///
+/// 为什么按规则分别计时而不是全局一把：卷水位是**一块盘**的紧急状态，全局冷却
+/// 合理；文件夹级是**每个目录各自**的日常维护，某个目录刚清过不该把别的目录
+/// 也推迟 30 分钟。键里只保留「配了上限」的规则，规则删掉后其残留项会被清掉。
+const FOLDER_STATE_KEY: &str = "folder_auto_clean_state";
 
 /// 校验预授权策略串：`''`（未启用）/ `empty` / `older:<正整数秒>`。
 /// 空串是合法值（未启用），只有「非空但解析不了」才报错。
@@ -41,7 +59,10 @@ pub fn validate_auto_policy(s: &str) -> TdResult<()> {
     if trimmed.is_empty() || parse_auto_policy(trimmed).is_some() {
         Ok(())
     } else {
-        Err(TdError::InvalidPath(tf("water.invalid_policy", &[("s", s)])))
+        Err(TdError::InvalidPath(tf(
+            "water.invalid_policy",
+            &[("s", s)],
+        )))
     }
 }
 
@@ -99,11 +120,21 @@ pub fn water_levels(store: &Store) -> TdResult<Vec<WaterLevel>> {
                     let used = total.saturating_sub(free_b);
                     let pct = used as f64 / total as f64 * 100.0;
                     let lv = classify(pct, warn, crit);
-                    let msg = crate::i18n::tf("water.message.ok", &[
-                        ("pct", &format!("{pct:.1}")),
-                        ("free", &util::human_bytes(free_b)),
-                    ]);
-                    (lv.to_string(), pct, free_b, util::human_bytes(free_b), util::human_bytes(total), msg)
+                    let msg = crate::i18n::tf(
+                        "water.message.ok",
+                        &[
+                            ("pct", &format!("{pct:.1}")),
+                            ("free", &util::human_bytes(free_b)),
+                        ],
+                    );
+                    (
+                        lv.to_string(),
+                        pct,
+                        free_b,
+                        util::human_bytes(free_b),
+                        util::human_bytes(total),
+                        msg,
+                    )
                 }
                 Ok((total, _)) => (
                     "unknown".into(),
@@ -162,30 +193,39 @@ pub fn water_poll(store: &Store) -> TdResult<Vec<WaterLevel>> {
         let (ev_level, msg) = match lv.level.as_str() {
             "critical" => (
                 "error",
-                tf("water.critical", &[
-                    ("label", &lv.label),
-                    ("path", &lv.path),
-                    ("pct", &format!("{:.1}", lv.used_pct)),
-                    ("free", &lv.free_text),
-                ]),
+                tf(
+                    "water.critical",
+                    &[
+                        ("label", &lv.label),
+                        ("path", &lv.path),
+                        ("pct", &format!("{:.1}", lv.used_pct)),
+                        ("free", &lv.free_text),
+                    ],
+                ),
             ),
             "warn" => (
                 "warn",
-                tf("water.warn", &[
-                    ("label", &lv.label),
-                    ("path", &lv.path),
-                    ("pct", &format!("{:.1}", lv.used_pct)),
-                    ("free", &lv.free_text),
-                ]),
+                tf(
+                    "water.warn",
+                    &[
+                        ("label", &lv.label),
+                        ("path", &lv.path),
+                        ("pct", &format!("{:.1}", lv.used_pct)),
+                        ("free", &lv.free_text),
+                    ],
+                ),
             ),
             _ => (
                 "info",
-                tf("water.recovered", &[
-                    ("label", &lv.label),
-                    ("path", &lv.path),
-                    ("pct", &format!("{:.1}", lv.used_pct)),
-                    ("free", &lv.free_text),
-                ]),
+                tf(
+                    "water.recovered",
+                    &[
+                        ("label", &lv.label),
+                        ("path", &lv.path),
+                        ("pct", &format!("{:.1}", lv.used_pct)),
+                        ("free", &lv.free_text),
+                    ],
+                ),
             ),
         };
         store.log_event(None, ev_level, "water", &msg)?;
@@ -196,6 +236,9 @@ pub fn water_poll(store: &Store) -> TdResult<Vec<WaterLevel>> {
     }
 
     run_auto_clean(store, &levels)?;
+    // 文件夹级触发与卷水位无关（不看 levels），所以放在这里独立跑：
+    // 卷还宽裕时，某个缓存目录自己撑到上限也该被清。
+    run_folder_auto_clean(store)?;
     Ok(levels)
 }
 
@@ -243,10 +286,10 @@ fn run_auto_clean(store: &Store, levels: &[WaterLevel]) -> TdResult<()> {
                 Some(rule.id),
                 "warn",
                 "auto_clean",
-                &tf("water.bad_rule_policy", &[
-                    ("name", &rule.name),
-                    ("s", &rule.auto_clean_policy),
-                ]),
+                &tf(
+                    "water.bad_rule_policy",
+                    &[("name", &rule.name), ("s", &rule.auto_clean_policy)],
+                ),
             )?;
             continue;
         };
@@ -254,6 +297,7 @@ fn run_auto_clean(store: &Store, levels: &[WaterLevel]) -> TdResult<()> {
             store,
             &super::view::CleanTarget::Rule { id: rule.id },
             &policy,
+            &[],
             false,
             &mut |_| {},
         ) {
@@ -272,18 +316,143 @@ fn run_auto_clean(store: &Store, levels: &[WaterLevel]) -> TdResult<()> {
             None,
             level,
             "auto_clean",
-            &tf("water.auto_clean_log", &[
-                ("done", &done.to_string()),
-                ("files", &deleted_files.to_string()),
-                ("size", &util::human_bytes(deleted_bytes)),
-                ("failed", &if failed > 0 {
-                    tf("water.failed_suffix", &[("n", &failed.to_string())])
-                } else {
-                    String::new()
-                }),
-            ]),
+            &tf(
+                "water.auto_clean_log",
+                &[
+                    ("done", &done.to_string()),
+                    ("files", &deleted_files.to_string()),
+                    ("size", &util::human_bytes(deleted_bytes)),
+                    (
+                        "failed",
+                        &if failed > 0 {
+                            tf("water.failed_suffix", &[("n", &failed.to_string())])
+                        } else {
+                            String::new()
+                        },
+                    ),
+                ],
+            ),
         )?;
         store.set_setting(LAST_AUTO_CLEAN_KEY, &now.to_string())?;
+    }
+    Ok(())
+}
+
+/// 文件夹级预授权自动清理：规则**自身目录占用**达到 `auto_clean_limit_bytes` 时清它自己。
+///
+/// 与 [`run_auto_clean`] 的区别：
+/// * **不看卷水位** —— 单个缓存目录撑到几 GB 时，整块盘可能还很宽裕，
+///   等卷到 critical 才清就太晚了；这条路径只管"这个目录自己是不是该瘦身了"。
+/// * **逐规则计时**（[`FOLDER_STATE_KEY`]）—— 某个目录刚清过不该推迟别的目录；
+/// * 只处理 `auto_clean_limit_bytes > 0` 且配了合法 `auto_clean_policy` 的规则
+///   （策略决定"删什么"，上限决定"什么时候删"，缺一不可）；
+/// * 仍走 `clean_run` 门面（排除模式生效、事件流水照常落），另落一条汇总事件。
+///
+/// 状态语义：**所有非清理分支都写回旧时间戳**（而不是删掉这一项）——占用在
+/// 上限附近震荡时，若每轮都重置计时就会绕过冷却反复删；只有真清过才刷新为 `now`。
+fn run_folder_auto_clean(store: &Store) -> TdResult<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let prev: BTreeMap<i64, i64> = store
+        .get_setting(FOLDER_STATE_KEY)?
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    let mut next: BTreeMap<i64, i64> = BTreeMap::new();
+    let mut done = 0usize;
+    let mut failed = 0usize;
+    let mut deleted_files = 0u64;
+    let mut deleted_bytes = 0u64;
+
+    for rule in store.list_rules()? {
+        // 没配上限的规则完全不受这条路径影响（旧行为）。
+        if rule.auto_clean_limit_bytes <= 0 {
+            continue;
+        }
+        let last = prev.get(&rule.id).copied().unwrap_or(0);
+        if last > 0 && now - last < AUTO_CLEAN_COOLDOWN_SECS {
+            // 冷却期内：保留计时，不重复删。
+            next.insert(rule.id, last);
+            continue;
+        }
+        let Some(policy) = parse_auto_policy(&rule.auto_clean_policy) else {
+            // 配了上限却没给（或写坏）策略：无从下手，但不拖垮巡检，要能被看到。
+            next.insert(rule.id, last);
+            store.log_event(
+                Some(rule.id),
+                "warn",
+                "auto_clean",
+                &tf(
+                    "water.bad_rule_policy",
+                    &[("name", &rule.name), ("s", &rule.auto_clean_policy)],
+                ),
+            )?;
+            continue;
+        };
+
+        // 量这条规则目录**自身**的占用（不是整块卷）。
+        let used = match engine::clean_dir_for_rule(store, &rule) {
+            Ok(dir) if dir.is_dir() => measure(&dir).map(|s| s.bytes).unwrap_or(0),
+            _ => 0,
+        };
+        if used < rule.auto_clean_limit_bytes as u64 {
+            next.insert(rule.id, last);
+            continue;
+        }
+
+        match super::clean::clean_run(
+            store,
+            &super::view::CleanTarget::Rule { id: rule.id },
+            &policy,
+            &[],
+            false,
+            &mut |_| {},
+        ) {
+            Ok(rep) => {
+                done += 1;
+                deleted_files += rep.deleted_files;
+                deleted_bytes += rep.deleted_bytes;
+                next.insert(rule.id, now);
+            }
+            Err(_) => {
+                failed += 1;
+                // 清了但失败：也记时间戳，免得冷却期内反复重试同一个坏目录。
+                next.insert(rule.id, now);
+            }
+        }
+    }
+
+    if done + failed > 0 {
+        let level = if failed > 0 { "warn" } else { "info" };
+        store.log_event(
+            None,
+            level,
+            "auto_clean",
+            &tf(
+                "water.folder_auto_clean_log",
+                &[
+                    ("done", &done.to_string()),
+                    ("files", &deleted_files.to_string()),
+                    ("size", &util::human_bytes(deleted_bytes)),
+                    (
+                        "failed",
+                        &if failed > 0 {
+                            tf("water.failed_suffix", &[("n", &failed.to_string())])
+                        } else {
+                            String::new()
+                        },
+                    ),
+                ],
+            ),
+        )?;
+    }
+
+    // 只有状态真变了才写库（平稳期零写入，与水位路径同一取舍）。
+    if prev != next {
+        store.set_setting(FOLDER_STATE_KEY, &serde_json::to_string(&next)?)?;
     }
     Ok(())
 }
@@ -308,8 +477,14 @@ mod tests {
     fn parse_auto_policy_forms() {
         assert!(parse_auto_policy("").is_none(), "空 = 未启用");
         assert!(parse_auto_policy("  ").is_none());
-        assert!(matches!(parse_auto_policy("empty"), Some(CleanPolicy::Empty)));
-        assert!(matches!(parse_auto_policy(" older:3600 "), Some(CleanPolicy::Before { .. })));
+        assert!(matches!(
+            parse_auto_policy("empty"),
+            Some(CleanPolicy::Empty)
+        ));
+        assert!(matches!(
+            parse_auto_policy(" older:3600 "),
+            Some(CleanPolicy::Before { .. })
+        ));
         // 非法：前缀不对 / 非数字 / 零 / 负数
         assert!(parse_auto_policy("Empty").is_none(), "大小写敏感");
         assert!(parse_auto_policy("older:abc").is_none());
@@ -321,5 +496,170 @@ mod tests {
         assert!(validate_auto_policy("empty").is_ok());
         assert!(validate_auto_policy("older:60").is_ok());
         assert!(validate_auto_policy("older:x").is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 文件夹级自动清理
+    // ------------------------------------------------------------------
+
+    /// 造一个「源目录含 3 个 10 字节文件」的库与源目录。
+    fn folder_env(tag: &str) -> (Store, std::path::PathBuf, std::path::PathBuf) {
+        let base = std::env::temp_dir().join(format!("td_water_folder_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join("cache");
+        let ram = base.join("ram");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&ram).unwrap();
+        for i in 0..3 {
+            std::fs::write(src.join(format!("f{i}.bin")), vec![1u8; 10]).unwrap();
+        }
+        let store = Store::open_in_memory().unwrap();
+        store
+            .insert_root("RAM", &ram.to_string_lossy(), true, 5000)
+            .unwrap();
+        (store, src, base)
+    }
+
+    fn add_folder_rule(
+        store: &Store,
+        src: &std::path::Path,
+        sub: &str,
+        policy: &str,
+        limit: i64,
+    ) -> i64 {
+        store
+            .insert_rule(&crate::store::NewRule {
+                name: format!("R-{sub}"),
+                category: "other".into(),
+                source_template: src.to_string_lossy().into_owned(),
+                target_root_id: 1,
+                target_subpath: sub.into(),
+                link_type: "junction".into(),
+                want_enabled: true,
+                rebuild_on_boot: true,
+                notes: None,
+                excludes: Vec::new(),
+                auto_clean_policy: policy.into(),
+                auto_clean_limit_bytes: limit,
+            })
+            .unwrap()
+    }
+
+    fn dir_files(dir: &std::path::Path) -> usize {
+        std::fs::read_dir(dir).unwrap().count()
+    }
+
+    fn saved_state(store: &Store) -> BTreeMap<i64, i64> {
+        store
+            .get_setting(FOLDER_STATE_KEY)
+            .unwrap()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn folder_auto_clean_skips_under_limit_and_when_disabled() {
+        let (store, src, base) = folder_env("under");
+        // 上限 100 KB，实际只有 30 字节 → 不动
+        let id = add_folder_rule(&store, &src, "x", "empty", 100 * 1024);
+        run_folder_auto_clean(&store).unwrap();
+        assert_eq!(dir_files(&src), 3, "未到上限不该动文件");
+        assert_eq!(saved_state(&store).get(&id), Some(&0), "未清理只记 0，不是清理时刻");
+
+        // 上限 0 = 不启用：即使目录远超任何阈值也不清。
+        // 换一个源目录（同一源路径只能有一条规则，撞 UNIQUE）。
+        let src0 = base.join("cache0");
+        std::fs::create_dir_all(&src0).unwrap();
+        for i in 0..3 {
+            std::fs::write(src0.join(format!("h{i}.bin")), vec![1u8; 10]).unwrap();
+        }
+        let id0 = add_folder_rule(&store, &src0, "y", "empty", 0);
+        run_folder_auto_clean(&store).unwrap();
+        assert_eq!(dir_files(&src0), 3, "上限 0 的规则完全不受这条路径影响");
+        assert!(
+            !saved_state(&store).contains_key(&id0),
+            "上限 0 的规则不该进状态表"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn folder_auto_clean_triggers_over_limit_then_cools_down() {
+        let (store, src, base) = folder_env("over");
+        // 30 字节 > 25 字节上限 → 立刻清
+        let id = add_folder_rule(&store, &src, "x", "empty", 25);
+        run_folder_auto_clean(&store).unwrap();
+        assert_eq!(dir_files(&src), 0, "超过上限应清空目录（根目录保留）");
+
+        let last = *saved_state(&store).get(&id).expect("清过必须记时间戳");
+        assert!(last > 0, "清理时刻必须是真实的 Unix 秒");
+
+        // 会话级汇总事件（rule_id = None 的就是文件夹级那条）
+        let ev = store.recent_events(20).unwrap();
+        assert!(
+            ev.iter()
+                .any(|e| e.rule_id.is_none() && e.kind == "auto_clean" && e.message.contains('3')),
+            "应落一条文件夹级汇总事件：{ev:?}"
+        );
+
+        // 再灌一批文件：冷却期内不该再删（否则超限线附近会反复删）
+        for i in 0..3 {
+            std::fs::write(src.join(format!("g{i}.bin")), vec![1u8; 10]).unwrap();
+        }
+        run_folder_auto_clean(&store).unwrap();
+        assert_eq!(dir_files(&src), 3, "冷却期内不该重复删");
+        assert_eq!(
+            saved_state(&store).get(&id),
+            Some(&last),
+            "冷却期内必须保留原时间戳"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn folder_auto_clean_warns_on_broken_policy_without_crashing() {
+        let (store, src, base) = folder_env("broken");
+        // 配了上限却没给合法策略：记 warn、不动文件、不拖垮巡检
+        add_folder_rule(&store, &src, "x", "older:abc", 1);
+        run_folder_auto_clean(&store).unwrap();
+        assert_eq!(dir_files(&src), 3, "策略坏了就不该动手");
+        let ev = store.recent_events(10).unwrap();
+        assert!(
+            ev.iter()
+                .any(|e| e.kind == "auto_clean" && e.level == "warn" && e.rule_id.is_some()),
+            "坏策略应落一条带规则 id 的 warn：{ev:?}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn folder_auto_clean_state_entries_drop_when_rule_loses_limit() {
+        let (store, src, base) = folder_env("dropstate");
+        let id = add_folder_rule(&store, &src, "x", "empty", 25);
+        run_folder_auto_clean(&store).unwrap();
+        assert!(saved_state(&store).contains_key(&id));
+
+        // 取消上限后，残留状态项应在下一轮被清掉（表里只留"配了上限"的规则）
+        let nr = crate::store::NewRule {
+            name: "R-x".into(),
+            category: "other".into(),
+            source_template: src.to_string_lossy().into_owned(),
+            target_root_id: 1,
+            target_subpath: "x".into(),
+            link_type: "junction".into(),
+            want_enabled: true,
+            rebuild_on_boot: true,
+            notes: None,
+            excludes: Vec::new(),
+            auto_clean_policy: "empty".into(),
+            auto_clean_limit_bytes: 0,
+        };
+        store.update_rule(id, &nr).unwrap();
+        run_folder_auto_clean(&store).unwrap();
+        assert!(
+            !saved_state(&store).contains_key(&id),
+            "取消上限后状态项应被清掉"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

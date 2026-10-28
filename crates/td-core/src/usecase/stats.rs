@@ -24,7 +24,10 @@ pub fn savings(store: &Store) -> crate::TdResult<SavingsView> {
     for r in store.list_rules()? {
         // 只算"此刻确实在 RAM 盘上"的：期望开启 且 上次检测到链接正常。
         // 期望关闭 / 真实目录 / 断链都不算 —— 宁少算，不虚报。
-        let linked = matches!(r.last_state.as_deref(), Some("link_ok") | Some("link_ok_empty"));
+        let linked = matches!(
+            r.last_state.as_deref(),
+            Some("link_ok") | Some("link_ok_empty")
+        );
         if !r.want_enabled || !linked {
             continue;
         }
@@ -68,6 +71,7 @@ mod tests {
             notes: None,
             excludes: Vec::new(),
             auto_clean_policy: String::new(),
+            auto_clean_limit_bytes: 0,
         }
     }
 
@@ -113,7 +117,8 @@ mod tests {
         let ok = s.op_begin(Some(id), "apply", None, None).unwrap();
         s.op_finish(ok, "done", Some(5), Some(500), None).unwrap();
         let bad = s.op_begin(Some(id), "apply", None, None).unwrap();
-        s.op_finish(bad, "failed", Some(9), Some(900), Some("boom")).unwrap();
+        s.op_finish(bad, "failed", Some(9), Some(900), Some("boom"))
+            .unwrap();
 
         // clean 两条 done → 累计
         for _ in 0..2 {

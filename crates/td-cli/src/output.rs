@@ -69,6 +69,15 @@ pub(crate) fn print_rule_row(rule: &Rule) {
             tf("cli.label_auto_clean", &[("policy", &rule.auto_clean_policy)])
         );
     }
+    if rule.auto_clean_limit_bytes > 0 {
+        println!(
+            "{}",
+            tf("cli.label_auto_clean_limit", &[(
+                "size",
+                &td_core::util::human_bytes(rule.auto_clean_limit_bytes as u64)
+            )])
+        );
+    }
 }
 
 pub(crate) fn yn(v: bool) -> &'static str {

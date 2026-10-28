@@ -91,6 +91,28 @@ pub(crate) fn cmd_rules(store: &Store, p: &Parsed) -> TdResult<()> {
             let auto_clean_policy = p.value("auto-clean").unwrap_or("").trim().to_string();
             td_core::usecase::water::validate_auto_policy(&auto_clean_policy)?;
 
+            // 文件夹级容量上限（MB，0/缺省 = 不启用）。配了上限就必须配策略：
+            // 策略决定删什么，上限决定何时删。
+            let auto_clean_limit_bytes: i64 = match p.value("auto-clean-limit") {
+                Some(v) => {
+                    let mb: i64 = v.trim().parse().map_err(|_| {
+                        TdError::Other("--auto-clean-limit 必须是非负整数（单位 MB）".into())
+                    })?;
+                    if mb < 0 {
+                        return Err(TdError::Other(
+                            "--auto-clean-limit 不能为负数（单位 MB）".into(),
+                        ));
+                    }
+                    mb.saturating_mul(1024 * 1024)
+                }
+                None => 0,
+            };
+            if auto_clean_limit_bytes > 0 && auto_clean_policy.is_empty() {
+                return Err(TdError::Other(
+                    "--auto-clean-limit 需要同时给 --auto-clean（策略决定删什么，上限决定何时删）".into(),
+                ));
+            }
+
             let nr = NewRule {
                 name,
                 category,
@@ -103,6 +125,7 @@ pub(crate) fn cmd_rules(store: &Store, p: &Parsed) -> TdResult<()> {
                 notes: p.value("notes").map(|s| s.to_string()),
                 excludes,
                 auto_clean_policy,
+                auto_clean_limit_bytes,
             };
             let id = store.insert_rule(&nr)?;
             let rule = store.get_rule(id)?;

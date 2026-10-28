@@ -15,8 +15,8 @@ pub mod ops;
 pub mod rules;
 
 pub use model::{
-    category_label, EventRow, NewRule, Operation, Root, Rule, CATEGORIES, RULE_COLUMNS,
-    ROOT_COLUMNS,
+    category_label, EventRow, NewRule, Operation, Root, Rule, CATEGORIES, ROOT_COLUMNS,
+    RULE_COLUMNS,
 };
 
 use std::path::Path;
@@ -27,7 +27,7 @@ use rusqlite::Connection;
 use crate::error::TdResult;
 
 /// 当前 schema 版本。加迁移时递增，并在 `migrate` 里补一段 `if current < N`。
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// 视为"已结束"的操作流水阶段。其余阶段在启动时都算待修复项。
 pub const OP_TERMINAL_PHASES: [&str; 3] = ["done", "failed", "rolled_back"];
@@ -74,7 +74,9 @@ impl Store {
     }
 
     pub fn user_version(&self) -> TdResult<i32> {
-        Ok(self.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?)
+        Ok(self
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))?)
     }
 
     /// 当前本地时间（`YYYY-MM-DD HH:MM:SS`）。用于给人看的"上次做了某事"。
@@ -102,6 +104,13 @@ impl Store {
                     "ALTER TABLE rules ADD COLUMN auto_clean_policy TEXT NOT NULL DEFAULT '';",
                 )?;
             }
+            if current < 4 {
+                // v4：规则加文件夹级容量上限（字节，0 = 不启用）。
+                // 老库默认 0 = 只有「卷水位 critical」一条触发路径，行为与 v3 一致。
+                self.conn.execute_batch(
+                    "ALTER TABLE rules ADD COLUMN auto_clean_limit_bytes INTEGER NOT NULL DEFAULT 0;",
+                )?;
+            }
         }
         self.conn
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -111,9 +120,7 @@ impl Store {
     // ---------------- settings ----------------
 
     pub fn get_setting(&self, key: &str) -> TdResult<Option<String>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT v FROM settings WHERE k = ?1")?;
+        let mut stmt = self.conn.prepare("SELECT v FROM settings WHERE k = ?1")?;
         let mut rows = stmt.query([key])?;
         match rows.next()? {
             Some(row) => Ok(Some(row.get(0)?)),

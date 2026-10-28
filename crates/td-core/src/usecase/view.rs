@@ -55,6 +55,11 @@ pub struct RuleView {
     pub excludes: Vec<String>,
     /// 水位预授权策略：`''` / `empty` / `older:<秒>`（详情展示用）。
     pub auto_clean_policy: String,
+    /// 文件夹级容量上限（字节，`0` = 不启用）：本规则目录自身占用到量即自动清理。
+    pub auto_clean_limit_bytes: i64,
+    /// 是否被用户隐藏（纯展示偏好，见 `usecase::rules::KEY_HIDDEN_RULES`）。
+    /// 隐藏只影响列表显示，规则照样参与开机重建、巡检与所有批量操作。
+    pub hidden: bool,
     pub badge: String,
     pub label: String,
     pub needs_attention: bool,
@@ -140,6 +145,10 @@ pub struct RuleForm {
     /// 仅 water 巡检在 critical 时触发；手动 clean 不读它。
     #[serde(default)]
     pub auto_clean_policy: String,
+    /// 文件夹级容量上限（字节，`0` = 不启用）。`> 0` 时必须配非空策略 ——
+    /// 策略决定删什么，没有策略就无从下手（`validate_form` 把关）。
+    #[serde(default)]
+    pub auto_clean_limit_bytes: i64,
 }
 
 fn yes() -> bool {
@@ -160,6 +169,7 @@ impl RuleForm {
             notes: self.notes.clone(),
             excludes: self.excludes.clone(),
             auto_clean_policy: self.auto_clean_policy.clone(),
+            auto_clean_limit_bytes: self.auto_clean_limit_bytes,
         }
     }
 }

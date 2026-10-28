@@ -37,9 +37,12 @@ CREATE TABLE IF NOT EXISTS rules (
     -- 清理排除模式（JSON 数组，如 ["sessions","logs/old"]）。
     -- 只影响 clean：命中的子树不删不剪；apply/restore 搬运永远是全量。
     excludes          TEXT NOT NULL DEFAULT '[]',
-    -- 水位预授权：空 = 未启用；empty = 水位 critical 时清空（仍受 excludes 保护）；
+-- 水位预授权：空 = 未启用；empty = 水位 critical 时清空（仍受 excludes 保护）；
     -- older:<秒> = 只清该秒之前修改的。仅 water 巡检触发，用户手动 clean 不受影响。
     auto_clean_policy TEXT NOT NULL DEFAULT '',
+    -- 文件夹级容量上限（字节，0 = 不启用）：本规则目录自身占用达到这个量就按
+    -- auto_clean_policy 清理，不看卷水位。与水位 critical 是两条独立的触发路径。
+    auto_clean_limit_bytes INTEGER NOT NULL DEFAULT 0,
 
     -- 以下为状态缓存，真相由实时检测给出（last_* 只用于列表排序与离线展示）
     last_state        TEXT,
