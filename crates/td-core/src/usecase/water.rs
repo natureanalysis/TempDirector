@@ -10,12 +10,19 @@
 //! 阈值可用 settings 覆盖：`water_warn_pct` / `water_critical_pct`（数字 0~100）。
 //! 本模块只**告警**不自动删文件 —— 自动清理涉及破坏性决策，须用户显式触发。
 //!
-//! 预授权自动清理有**两条互不依赖的触发路径**，都由 [`water_poll`] 顺带跑：
+//! 预授权自动清理由 [`water_poll`] 顺带跑，**一套处理、两种触发**：
 //!
 //! * [`run_auto_clean`]：**卷水位**到 critical 时清那些配了 `auto_clean_policy`
 //!   且目标根在这块盘上的规则（"整块盘要满了"的应急处置）；
 //! * [`run_folder_auto_clean`]：规则**自身目录占用**达到 `auto_clean_limit_bytes`
-//!   时按策略清它自己（"某个缓存目录撑着撑着就几 GB"的日常维护，不看卷水位）。
+//!   时清它自己（"某个缓存目录撑着撑着就几 GB"的日常维护，不看卷水位）。
+//!
+//! 「达到文件夹容量上限」不是另一套清理，而是**水位自动清理的另一种触发**：两条
+//! 路径共用 [`clean_rule_once`] 执行内核与 [`log_auto_clean_summary`] 汇总事件
+//! —— 同一策略解析、同一 `clean_run` 门面（排除保护 / 事件流水照常）、同一
+//! `auto_clean` 事件键，只有汇总文案里的触发词不同（「水位触线」/「目录超限」）。
+//! 两条路径的差异只在**何时触发**与**冷却计时口径**（卷水位看整块盘、全局一把；
+//! 容量上限看目录自身、逐规则计时）。
 //!
 //! 两条路径共用同一套授权模型：都要求用户显式配过 `auto_clean_policy`。
 
@@ -28,7 +35,7 @@ use crate::fsops::clean::CleanPolicy;
 use crate::fsops::mover::volume_space;
 use crate::fsops::verify::measure;
 use crate::i18n::tf;
-use crate::store::Store;
+use crate::store::{Rule, Store};
 use crate::util;
 
 use super::view::WaterLevel;
@@ -242,12 +249,84 @@ pub fn water_poll(store: &Store) -> TdResult<Vec<WaterLevel>> {
     Ok(levels)
 }
 
+/// 一次预授权自动清理的累计结果（供两条触发路径共用与汇总落事件）。
+#[derive(Default)]
+struct AutoCleanTally {
+    /// 成功执行清理的规则条数。
+    done: usize,
+    /// 清理失败的规则条数。
+    failed: usize,
+    deleted_files: u64,
+    deleted_bytes: u64,
+}
+
+/// 统一的预授权清理执行内核：走 `clean_run` 门面并把结果记进 `tally`。
+///
+/// [`run_auto_clean`]（**卷水位**触线）与 [`run_folder_auto_clean`]（目录自身达到
+/// **文件夹容量上限**）共用这一段 —— 即「达到文件夹容量上限」执行的就是**水位自动
+/// 清理**本身：同一套策略解析、同一 `clean_run` 门面（预演语义、排除保护、事件流水
+/// 照常），两条路径的清理动作完全一致。
+///
+/// 策略由调用方先解析（坏策略各路径自行落 `water.bad_rule_policy` warn 并决定计时），
+/// 这里只负责「清一遍 + 记账」。
+fn clean_rule_once(
+    store: &Store,
+    rule: &Rule,
+    policy: &CleanPolicy,
+    tally: &mut AutoCleanTally,
+) {
+    match super::clean::clean_run(
+        store,
+        &super::view::CleanTarget::Rule { id: rule.id },
+        policy,
+        &[],
+        false,
+        &mut |_| {},
+    ) {
+        Ok(rep) => {
+            tally.done += 1;
+            tally.deleted_files += rep.deleted_files;
+            tally.deleted_bytes += rep.deleted_bytes;
+        }
+        Err(_) => tally.failed += 1,
+    }
+}
+
+/// 落一条 `auto_clean` 汇总事件。两条触发路径共用同一事件键与文案，只有触发词
+/// 不同（`water.trigger.volume` / `water.trigger.folder`），让人一眼看出这次清理是
+/// 「水位触线」还是「目录超限」触发的。
+fn log_auto_clean_summary(store: &Store, trigger: &str, tally: &AutoCleanTally) -> TdResult<()> {
+    let level = if tally.failed > 0 { "warn" } else { "info" };
+    store.log_event(
+        None,
+        level,
+        "auto_clean",
+        &tf(
+            "water.auto_clean_log",
+            &[
+                ("trigger", trigger),
+                ("done", &tally.done.to_string()),
+                ("files", &tally.deleted_files.to_string()),
+                ("size", &util::human_bytes(tally.deleted_bytes)),
+                (
+                    "failed",
+                    &if tally.failed > 0 {
+                        tf("water.failed_suffix", &[("n", &tally.failed.to_string())])
+                    } else {
+                        String::new()
+                    },
+                ),
+            ],
+        ),
+    )
+}
+
 /// 水位 critical 时的预授权自动清理。
 ///
 /// * 只处理「目标根在 critical 卷上 **且** 配了 `auto_clean_policy`」的规则；
 /// * 冷却期内（30 分钟）不重复触发 —— 水位降不下去（比如文件都被占用）时不反复删；
-/// * 每条规则走 `clean_run` 门面（排除模式照常生效，事件流水照常落），
-///   另落一条 `auto_clean` 汇总事件，让人一眼看出"这次删是水位触发的"。
+/// * 每条规则走 [`clean_rule_once`]（与文件夹容量上限路径同一套处理），
+///   另落一条 `auto_clean` 汇总事件，触发词为「水位触线」。
 fn run_auto_clean(store: &Store, levels: &[WaterLevel]) -> TdResult<()> {
     let critical_roots: Vec<i64> = levels
         .iter()
@@ -270,10 +349,7 @@ fn run_auto_clean(store: &Store, levels: &[WaterLevel]) -> TdResult<()> {
         }
     }
 
-    let mut done = 0usize;
-    let mut failed = 0usize;
-    let mut deleted_files = 0u64;
-    let mut deleted_bytes = 0u64;
+    let mut tally = AutoCleanTally::default();
     for rule in store.list_rules()? {
         if rule.auto_clean_policy.trim().is_empty()
             || !critical_roots.contains(&rule.target_root_id)
@@ -293,60 +369,27 @@ fn run_auto_clean(store: &Store, levels: &[WaterLevel]) -> TdResult<()> {
             )?;
             continue;
         };
-        match super::clean::clean_run(
-            store,
-            &super::view::CleanTarget::Rule { id: rule.id },
-            &policy,
-            &[],
-            false,
-            &mut |_| {},
-        ) {
-            Ok(rep) => {
-                done += 1;
-                deleted_files += rep.deleted_files;
-                deleted_bytes += rep.deleted_bytes;
-            }
-            Err(_) => failed += 1,
-        }
+        clean_rule_once(store, &rule, &policy, &mut tally);
     }
 
-    if done + failed > 0 {
-        let level = if failed > 0 { "warn" } else { "info" };
-        store.log_event(
-            None,
-            level,
-            "auto_clean",
-            &tf(
-                "water.auto_clean_log",
-                &[
-                    ("done", &done.to_string()),
-                    ("files", &deleted_files.to_string()),
-                    ("size", &util::human_bytes(deleted_bytes)),
-                    (
-                        "failed",
-                        &if failed > 0 {
-                            tf("water.failed_suffix", &[("n", &failed.to_string())])
-                        } else {
-                            String::new()
-                        },
-                    ),
-                ],
-            ),
-        )?;
+    if tally.done + tally.failed > 0 {
+        log_auto_clean_summary(store, &tf("water.trigger.volume", &[]), &tally)?;
         store.set_setting(LAST_AUTO_CLEAN_KEY, &now.to_string())?;
     }
     Ok(())
 }
 
-/// 文件夹级预授权自动清理：规则**自身目录占用**达到 `auto_clean_limit_bytes` 时清它自己。
+/// 文件夹级预授权自动清理：规则**自身目录占用**达到 `auto_clean_limit_bytes`（文件夹
+/// 容量上限）时清它自己 —— 这是**水位自动清理的另一种触发**，不是另一套清理。
 ///
-/// 与 [`run_auto_clean`] 的区别：
+/// 与 [`run_auto_clean`] 的差异只在**何时触发**，处理内核与事件口径完全共用：
 /// * **不看卷水位** —— 单个缓存目录撑到几 GB 时，整块盘可能还很宽裕，
 ///   等卷到 critical 才清就太晚了；这条路径只管"这个目录自己是不是该瘦身了"。
-/// * **逐规则计时**（[`FOLDER_STATE_KEY`]）—— 某个目录刚清过不该推迟别的目录；
+/// * **逐规则计时**（[`FOLDER_STATE_KEY`]）—— 某个目录刚清过不该推迟别的目录。
 /// * 只处理 `auto_clean_limit_bytes > 0` 且配了合法 `auto_clean_policy` 的规则
 ///   （策略决定"删什么"，上限决定"什么时候删"，缺一不可）；
-/// * 仍走 `clean_run` 门面（排除模式生效、事件流水照常落），另落一条汇总事件。
+/// * 清理走 [`clean_rule_once`]（与卷水位路径同一套），另落一条汇总事件，触发词为
+///   「目录超限」。
 ///
 /// 状态语义：**所有非清理分支都写回旧时间戳**（而不是删掉这一项）——占用在
 /// 上限附近震荡时，若每轮都重置计时就会绕过冷却反复删；只有真清过才刷新为 `now`。
@@ -362,10 +405,7 @@ fn run_folder_auto_clean(store: &Store) -> TdResult<()> {
         .unwrap_or_default();
 
     let mut next: BTreeMap<i64, i64> = BTreeMap::new();
-    let mut done = 0usize;
-    let mut failed = 0usize;
-    let mut deleted_files = 0u64;
-    let mut deleted_bytes = 0u64;
+    let mut tally = AutoCleanTally::default();
 
     for rule in store.list_rules()? {
         // 没配上限的规则完全不受这条路径影响（旧行为）。
@@ -403,51 +443,14 @@ fn run_folder_auto_clean(store: &Store) -> TdResult<()> {
             continue;
         }
 
-        match super::clean::clean_run(
-            store,
-            &super::view::CleanTarget::Rule { id: rule.id },
-            &policy,
-            &[],
-            false,
-            &mut |_| {},
-        ) {
-            Ok(rep) => {
-                done += 1;
-                deleted_files += rep.deleted_files;
-                deleted_bytes += rep.deleted_bytes;
-                next.insert(rule.id, now);
-            }
-            Err(_) => {
-                failed += 1;
-                // 清了但失败：也记时间戳，免得冷却期内反复重试同一个坏目录。
-                next.insert(rule.id, now);
-            }
-        }
+        // 达到容量上限 = 触发一次水位自动清理（与卷水位路径同一套处理）。
+        clean_rule_once(store, &rule, &policy, &mut tally);
+        // 成功或失败都记时间戳，免得冷却期内反复重试同一个坏目录。
+        next.insert(rule.id, now);
     }
 
-    if done + failed > 0 {
-        let level = if failed > 0 { "warn" } else { "info" };
-        store.log_event(
-            None,
-            level,
-            "auto_clean",
-            &tf(
-                "water.folder_auto_clean_log",
-                &[
-                    ("done", &done.to_string()),
-                    ("files", &deleted_files.to_string()),
-                    ("size", &util::human_bytes(deleted_bytes)),
-                    (
-                        "failed",
-                        &if failed > 0 {
-                            tf("water.failed_suffix", &[("n", &failed.to_string())])
-                        } else {
-                            String::new()
-                        },
-                    ),
-                ],
-            ),
-        )?;
+    if tally.done + tally.failed > 0 {
+        log_auto_clean_summary(store, &tf("water.trigger.folder", &[]), &tally)?;
     }
 
     // 只有状态真变了才写库（平稳期零写入，与水位路径同一取舍）。
@@ -579,6 +582,48 @@ mod tests {
         assert!(
             !saved_state(&store).contains_key(&id0),
             "上限 0 的规则不该进状态表"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 「达到文件夹容量上限」与「水位触线」是同一套处理：同一执行内核、同一事件键，
+    /// 只有汇总文案里的触发词不同。
+    #[test]
+    fn folder_limit_reuses_water_auto_clean_log() {
+        let (store, src, base) = folder_env("reuse");
+        // 30 字节 > 25 字节上限 → 触发一次水位自动清理
+        add_folder_rule(&store, &src, "x", "empty", 25);
+        run_folder_auto_clean(&store).unwrap();
+        assert_eq!(dir_files(&src), 0, "达到上限应按策略清一次");
+
+        let ev = store.recent_events(10).unwrap();
+        let summary = ev
+            .iter()
+            .find(|e| e.rule_id.is_none() && e.kind == "auto_clean")
+            .expect("应落一条统一汇总事件");
+        assert_eq!(summary.level, "info");
+        assert_eq!(
+            summary.message,
+            tf(
+                "water.auto_clean_log",
+                &[
+                    ("trigger", &tf("water.trigger.folder", &[])),
+                    ("done", "1"),
+                    ("files", "3"),
+                    ("size", &util::human_bytes(30)),
+                    ("failed", ""),
+                ],
+            ),
+            "汇总文案应与水位路径共用同一键、只有触发词不同"
+        );
+        // 两种触发词必须区分开，且文件夹专属旧键已并掉。
+        assert_ne!(
+            tf("water.trigger.volume", &[]),
+            tf("water.trigger.folder", &[])
+        );
+        assert!(
+            crate::i18n::t("water.folder_auto_clean_log").is_empty(),
+            "文件夹专属汇总键应已并入 water.auto_clean_log"
         );
         let _ = std::fs::remove_dir_all(&base);
     }

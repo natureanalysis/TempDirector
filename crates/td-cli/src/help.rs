@@ -45,8 +45,8 @@ fn print_help_zh() {
                                                  empty（清空）/ older:<秒>（只清早于该秒修改的），
                                                  如 --auto-clean older:86400；缺省 = 不自动清理
             [--auto-clean-limit MB]               文件夹级容量上限（MB）：该规则目录自身占用达到
-                                                 上限就按上面的策略清理，不看整块盘水位；
-                                                 缺省 = 不启用（必须与 --auto-clean 同时给）
+                                                 上限即触发一次水位自动清理（按上面的策略清），
+                                                 不看整块盘水位；缺省 = 不启用（须与 --auto-clean 同给）
   rules rm <id...>
   rules enable|disable <id...|--all>
 
@@ -135,9 +135,10 @@ Global options:
                                                  empty (clear all) / older:<seconds> (only files modified before that),
                                                  e.g. --auto-clean older:86400; default = no auto-clean
             [--auto-clean-limit MB]                Per-folder capacity limit (MB): when the rule's own
-                                                 directory reaches it, clean by the policy above without
-                                                 waiting for the volume water level; default = off
-                                                 (requires --auto-clean)
+                                                 directory reaches it, that triggers a water-level
+                                                 auto-clean (by the policy above) without waiting for
+                                                 the volume water level; default = off (requires
+                                                 --auto-clean)
   rules rm <id...>
   rules enable|disable <id...|--all>
 

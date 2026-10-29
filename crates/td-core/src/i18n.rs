@@ -398,8 +398,9 @@ fn zh(key: &str) -> &'static str {
         "water.warn" => "RAM 盘水位偏高：{label}（{path}）已用 {pct}%，剩余 {free}",
         "water.recovered" => "水位恢复：{label}（{path}）已用 {pct}%，剩余 {free}",
         "water.bad_rule_policy" => "规则「{name}」的水位自动清理策略不合法：{s}，已跳过（可用：empty / older:<秒>）",
-        "water.auto_clean_log" => "水位触线，自动清理 {done} 条预授权规则：删除 {files} 个文件 / {size}{failed}",
-        "water.folder_auto_clean_log" => "目录超限，自动清理 {done} 条预授权规则：删除 {files} 个文件 / {size}{failed}",
+        "water.auto_clean_log" => "{trigger}，自动清理 {done} 条预授权规则：删除 {files} 个文件 / {size}{failed}",
+        "water.trigger.volume" => "水位触线",
+        "water.trigger.folder" => "目录超限",
         "water.failed_suffix" => "，{n} 条失败",
         "schedule.bad_time" => "定时清理的时刻格式不对：{time}（应为 HH:MM），本次跳过",
         "schedule.bad_rule_policy" => "规则「{name}」的自动清理策略不合法：{s}，已跳过（可用：empty / older:<秒>）",
@@ -428,7 +429,7 @@ fn zh(key: &str) -> &'static str {
         "cli.label_notes" => "       备注：{notes}",
         "cli.label_excludes" => "       清理排除：{list}",
         "cli.label_auto_clean" => "       水位自动清理：{policy}",
-        "cli.label_auto_clean_limit" => "       文件夹容量上限：{size}（自身占用到量即按上述策略清理）",
+        "cli.label_auto_clean_limit" => "       文件夹容量上限：{size}（自身占用到量即触发一次水位自动清理）",
         "cli.tag_dry_run" => "预演",
         "cli.tag_skip" => "跳过",
         "cli.tag_done" => "完成",
@@ -853,8 +854,9 @@ fn en(key: &str) -> &'static str {
         "water.warn" => "RAM disk water level high: {label} ({path}) {pct}% used, {free} free",
         "water.recovered" => "Water level recovered: {label} ({path}) {pct}% used, {free} free",
         "water.bad_rule_policy" => "Rule \"{name}\" has invalid water auto-clean policy: {s}, skipped (valid: empty / older:<seconds>)",
-        "water.auto_clean_log" => "Water triggered, auto-cleaned {done} pre-authorized rules: deleted {files} files / {size}{failed}",
-        "water.folder_auto_clean_log" => "Directory over limit, auto-cleaned {done} pre-authorized rules: deleted {files} files / {size}{failed}",
+        "water.auto_clean_log" => "{trigger}, auto-cleaned {done} pre-authorized rules: deleted {files} files / {size}{failed}",
+        "water.trigger.volume" => "Water triggered",
+        "water.trigger.folder" => "Directory over limit",
         "water.failed_suffix" => ", {n} failed",
         "schedule.bad_time" => "Invalid scheduled clean time: {time} (expected HH:MM), skipped this run",
         "schedule.bad_rule_policy" => "Rule \"{name}\" has invalid auto-clean policy: {s}, skipped (valid: empty / older:<seconds>)",
@@ -883,7 +885,7 @@ fn en(key: &str) -> &'static str {
         "cli.label_notes" => "       Notes: {notes}",
         "cli.label_excludes" => "       Clean excludes: {list}",
         "cli.label_auto_clean" => "       Water auto-clean: {policy}",
-        "cli.label_auto_clean_limit" => "       Folder capacity limit: {size} (cleaned by the policy above on reaching it)",
+        "cli.label_auto_clean_limit" => "       Folder capacity limit: {size} (triggers a water-level auto-clean on reaching it)",
         "cli.tag_dry_run" => "dry-run",
         "cli.tag_skip" => "skip",
         "cli.tag_done" => "done",
@@ -1018,6 +1020,29 @@ mod tests {
         assert_eq!(t("err.busy"), "被占用：{e}");
         set_locale(Locale::En);
         assert_eq!(t("err.busy"), "In use: {e}");
+        set_locale(Locale::Zh);
+    }
+
+    #[test]
+    fn water_trigger_keys_present_in_both_locales() {
+        set_locale(Locale::Zh);
+        for key in [
+            "water.auto_clean_log",
+            "water.trigger.volume",
+            "water.trigger.folder",
+        ] {
+            assert!(!t(key).is_empty(), "zh 缺键：{key}");
+        }
+        // 文件夹专属汇总键已并入统一键，不再单独存在。
+        assert!(t("water.folder_auto_clean_log").is_empty());
+        set_locale(Locale::En);
+        for key in [
+            "water.auto_clean_log",
+            "water.trigger.volume",
+            "water.trigger.folder",
+        ] {
+            assert!(!t(key).is_empty(), "en 缺键：{key}");
+        }
         set_locale(Locale::Zh);
     }
 

@@ -1963,7 +1963,8 @@ async function openRuleForm(id) {
   exWrap.field.appendChild(exHint);
   body.appendChild(exWrap.field);
 
-  // 水位自动清理：RAM 盘到严重线（默认 95%）时的预授权，30 分钟冷却防反复删
+  // 水位自动清理：RAM 盘到严重线（默认 95%）或规则目录达到下面的容量上限时的预授权，
+  // 30 分钟冷却防反复删
   const autoSelect = document.createElement('select');
   autoSelect.className = 'select';
   [['', t('rule.auto.none')],
@@ -2004,8 +2005,9 @@ async function openRuleForm(id) {
   syncAutoHours();
   body.appendChild(autoField);
 
-  // 文件夹级容量上限：这条规则**自己的目录**占用到量即按上面的策略清理。
-  // 与「水位」那条路径互不依赖 —— 单个缓存目录撑到几 GB 时整块盘可能还很宽裕。
+  // 文件夹级容量上限：这条规则**自己的目录**占用到量即**触发一次水位自动清理**
+  // （与卷水位路径同一套处理，只是触发条件不看整块盘 —— 单个缓存目录撑到几 GB 时
+  // 整块盘可能还很宽裕）。
   const limitNum = mkInput(t('rule.auto.limit_ph'));
   limitNum.type = 'number';
   limitNum.min = '0';
