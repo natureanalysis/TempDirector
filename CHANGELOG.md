@@ -2,6 +2,14 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-10-29（预设：修正「WPS 缓存」的源目录）
+
+### 预设 —— 「WPS 缓存」此前指向的是程序组件，不是缓存
+
+* 原条目源模板为 `%LOCALAPPDATA%\\Kingsoft\\WPS Office`，真机上该目录只有 `qingnse64.dll` / `kwpsshellext64.dll` / `addons\\kdesktopshellext` 等**用户级组件与外壳扩展**（55 MB）：属于程序的一部分，重定向后开机重建完成前会影响云文档组件与右键壳扩展加载，也不符合预设的收录标准（纯缓存/临时数据，丢弃后软件自重建）。
+* 改为 `%APPDATA%\\Kingsoft\\office6\\cache`（本机 97 MB，`*.keys` / `*.values` 与 `*cache.merge` 合并缓存），目标子路径同步改为 `office\\wps-cache`，并在备注里写清真正的组件目录，避免又被当成缓存来迁。
+* 未纳入**未保存文档自动备份** `%APPDATA%\\Kingsoft\\office6\\backup`（28 MB 用户数据）与插件池 `%APPDATA%\\Kingsoft\\wps\\addons`（1.7 GB，迁走会让 WPS 重新下载插件）—— 前者不宜迁，后者如需再单独加预设。
+
 ## 2026-10-29（界面：列表新增「占用(M)」列 + 行右键菜单）
 
 ### 界面 —— 规则列表新增「占用(M)」列

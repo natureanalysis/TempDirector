@@ -163,9 +163,9 @@
   {
     "name": "WPS 缓存",
     "category": "office",
-    "source_template": "%LOCALAPPDATA%\\Kingsoft\\WPS Office",
-    "target_subpath": "office\\wps",
-    "note": "内层按版本号分目录（如 12.1.0.29161），WPS 升级后会换新目录"
+    "source_template": "%APPDATA%\\Kingsoft\\office6\\cache",
+    "target_subpath": "office\\wps-cache",
+    "note": "只迁 WPS 的资源缓存（*.keys/.values 与 *cache.merge 一类合并缓存）；程序组件与外壳扩展在 %LOCALAPPDATA%\\Kingsoft\\WPS Office，切勿迁移"
   },
   {
     "name": "飞书缓存",
