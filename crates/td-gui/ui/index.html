@@ -65,27 +65,38 @@
     <span class="muted" id="filter-summary"></span>
   </section>
 
-  <main class="table-wrap">
-    <table class="rules">
-      <thead>
-        <tr>
-          <th class="col-check"><input type="checkbox" id="sel-all-head" data-i18n-title="filter.select_all_tip" title="全选 / 取消全选当前结果"></th>
-          <th class="col-badge" data-sort="badge" data-i18n="table.status">状态</th>
-          <th class="col-name" data-sort="name" data-i18n="table.name">名称</th>
-          <th class="col-cat" data-sort="category" data-i18n="table.category">分类</th>
-          <th class="col-source" data-sort="source" data-i18n="table.source">源路径</th>
-          <th class="col-target" data-sort="target" data-i18n="table.target">目标（RAM 盘）</th>
-          <th class="col-usage" data-sort="usage" data-i18n="table.usage" data-i18n-title="table.usage_tip" title="规则缓存目录当前占用（点「空间统计」后更新）">占用(M)</th>
-          <th class="col-flag" data-sort="flag" data-i18n="table.flag" data-i18n-title="table.flag_tip" title="左：期望开启（● 开 / ○ 关）；右：开机自动重建（⟳ 参与）">旗标</th>
-          <th class="col-actions"></th>
-        </tr>
-      </thead>
-      <tbody id="rows"></tbody>
-    </table>
-    <div id="empty" class="empty hidden"></div>
-  </main>
+  <div class="workspace">
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-head">
+        <span class="sidebar-title" data-i18n="sidebar.title">分类</span>
+        <button id="btn-sidebar" class="icon-btn sidebar-toggle" type="button" aria-expanded="true" data-i18n-title="sidebar.toggle_tip" title="收起 / 展开分类侧栏">«</button>
+      </div>
+      <nav id="tree" class="tree"></nav>
+    </aside>
+    <div class="workspace-main">
+      <main class="table-wrap">
+        <table class="rules">
+          <thead>
+            <tr>
+              <th class="col-check"><input type="checkbox" id="sel-all-head" data-i18n-title="filter.select_all_tip" title="全选 / 取消全选当前结果"></th>
+              <th class="col-badge" data-sort="badge" data-i18n="table.status">状态</th>
+              <th class="col-name" data-sort="name" data-i18n="table.name">名称</th>
+              <th class="col-cat" data-sort="category" data-i18n="table.category">分类</th>
+              <th class="col-source" data-sort="source" data-i18n="table.source">源路径</th>
+              <th class="col-target" data-sort="target" data-i18n="table.target">目标（RAM 盘）</th>
+              <th class="col-usage" data-sort="usage" data-i18n="table.usage" data-i18n-title="table.usage_tip" title="规则缓存目录当前占用（点「空间统计」后更新）">占用(M)</th>
+              <th class="col-flag" data-sort="flag" data-i18n="table.flag" data-i18n-title="table.flag_tip" title="左：期望开启（● 开 / ○ 关）；右：开机自动重建（⟳ 参与）">旗标</th>
+              <th class="col-actions"></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div id="empty" class="empty hidden"></div>
+      </main>
 
-  <section id="detail" class="detail hidden"></section>
+      <section id="detail" class="detail hidden"></section>
+    </div>
+  </div>
 
   <div id="progress" class="progress hidden">
     <div class="progress-inner">

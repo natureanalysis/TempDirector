@@ -24,6 +24,12 @@ const DICT = {
     'nav.lang_zh': '中文',
     'nav.lang_en': 'English',
 
+    // 分类树侧栏
+    'sidebar.title': '分类',
+    'sidebar.all': '全部规则',
+    'sidebar.toggle_tip': '收起 / 展开分类侧栏',
+    'sidebar.attention_tip': '含需处理的条目',
+
     // 工具栏
     'toolbar.add': '＋ 添加规则',
     'toolbar.apply': '应用选中',
@@ -388,6 +394,7 @@ const DICT = {
     'rule.auto.keep': '按空间：只清到水位下限（保留时间最近的）',
     'rule.auto.keep_label': '水位下限',
     'rule.auto.keep_ph': '数值，例如 100',
+    'rule.auto.floor_unit': '下限单位',
     'rule.auto.keep_hint': '按空间清理：从最旧的文件开始删，直到这条规则自己目录的占用不高于这个水位下限（例如下限 100 MB，则清理后保留时间最近的 100 MB 文件）；始终至少保留时间最新的 1 个文件。触发仍由下面的文件夹容量上限或整块盘水位决定。',
     'rule.auto.label': '水位自动清理（预授权）',
     'rule.auto.before': '早于（小时）',
@@ -399,6 +406,7 @@ const DICT = {
     'rule.auto.limit_needs_policy': '填了文件夹容量上限就必须选一种自动清理策略（策略决定删什么，上限决定何时删）',
     'rule.auto.unit_gb': 'GB',
     'rule.auto.unit_mb': 'MB',
+    'rule.auto.rec_hint': '建议默认值：按空间清理，文件夹上限 2 GB、清理到 1 GB 下限（新增规则时预填）；可按需调整或改成「未启用」。',
     'rule.src.expanded': '展开后：{path}',
     'rule.src.exists': '（存在）',
     'rule.src.not_exist': '（当前不存在）',
@@ -419,9 +427,11 @@ const DICT = {
     'clean.warn': '清理会永久删除文件（不进回收站）。占用中的文件会自动跳过，删不掉的会如实汇报。',
     'clean.mode.empty': '清空全部文件',
     'clean.mode.day': '昨天及更早修改的',
-    'clean.mode.hour': '1 小时前修改的（不含最近 1 小时）',
+    'clean.mode.hour': 'N 小时前修改的（不含最近 N 小时）',
     'clean.mode.between': '指定时间段内修改的',
     'clean.mode.space': '按空间：只保留最近修改的若干容量',
+    'clean.hours_label': '小时数（1 = 不含最近 1 小时）',
+    'clean.hours_ph': '例如 6',
     'clean.keep_floor': '水位下限（保留最近）',
     'clean.keep_floor_ph': '数值，例如 100',
     'clean.keep_floor_hint': '从最旧的文件开始删，直到该目录占用不高于此下限；始终至少保留时间最新的 1 个文件。',
@@ -503,6 +513,12 @@ const DICT = {
     'nav.refresh': 'Refresh',
     'nav.lang_zh': '中文',
     'nav.lang_en': 'English',
+
+    // Category tree sidebar
+    'sidebar.title': 'Categories',
+    'sidebar.all': 'All rules',
+    'sidebar.toggle_tip': 'Collapse / expand the category sidebar',
+    'sidebar.attention_tip': 'Contains entries that need action',
 
     // 工具栏
     'toolbar.add': '＋ Add rule',
@@ -867,6 +883,7 @@ const DICT = {
     'rule.auto.keep': 'By space: only trim down to the floor (keep the newest)',
     'rule.auto.keep_label': 'Floor (keep newest)',
     'rule.auto.keep_ph': 'Value, e.g. 100',
+    'rule.auto.floor_unit': 'Floor unit',
     'rule.auto.keep_hint': 'By-space clean: delete oldest first until this rule’s own folder usage is at or below the floor (e.g. floor 100 MB → keep the most recent 100 MB); always keeps at least the newest file. Triggering is still decided by the folder capacity limit below or the volume water level.',
     'rule.auto.label': 'Water-level auto-clean (pre-authorized)',
     'rule.auto.before': 'Older than (hours)',
@@ -878,6 +895,7 @@ const DICT = {
     'rule.auto.limit_needs_policy': 'A folder capacity limit requires an auto-clean policy (the policy decides what to delete, the limit decides when)',
     'rule.auto.unit_gb': 'GB',
     'rule.auto.unit_mb': 'MB',
+    'rule.auto.rec_hint': 'Suggested defaults: by-space clean, folder limit 2 GB, clean down to a 1 GB floor (prefilled for new rules); adjust as needed or switch to “Disabled”.',
     'rule.src.expanded': 'Expanded: {path}',
     'rule.src.exists': ' (exists)',
     'rule.src.not_exist': ' (does not exist)',
@@ -898,9 +916,11 @@ const DICT = {
     'clean.warn': 'Cleaning permanently deletes files (not to the Recycle Bin). Locked files are skipped automatically; anything that can’t be deleted is reported honestly.',
     'clean.mode.empty': 'Delete all files',
     'clean.mode.day': 'Modified yesterday or earlier',
-    'clean.mode.hour': 'Modified before the last hour (excludes the most recent hour)',
+    'clean.mode.hour': 'Modified more than N hours ago (excludes the most recent N hours)',
     'clean.mode.between': 'Modified within a time range',
     'clean.mode.space': 'By space: keep only the most recent amount',
+    'clean.hours_label': 'Hours (1 = excludes the most recent hour)',
+    'clean.hours_ph': 'e.g. 6',
     'clean.keep_floor': 'Floor (keep newest)',
     'clean.keep_floor_ph': 'Value, e.g. 100',
     'clean.keep_floor_hint': 'Delete oldest first until the folder usage is at or below this floor; always keeps at least the newest file.',

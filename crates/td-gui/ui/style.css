@@ -301,11 +301,77 @@ table.rules tbody tr.row-hidden .cell-name { color: var(--muted); }
   border: 1px dashed var(--line-strong);
 }
 
+/* ---------------- 分类树侧栏 ----------------
+   条目多起来以后，分类下拉不够用：左侧常驻一棵「全部 → 分类 → 规则」两层树。
+   收起时只留一条 40px 的窄栏（按钮在栏头），窄窗口下不抢表格的横向空间。 */
+
+.workspace { display: flex; flex: 1 1 auto; min-height: 0; }
+.workspace-main { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+
+.sidebar {
+  width: 232px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: #fbfdff;
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+  transition: width .15s;
+}
+.sidebar.collapsed { width: 40px; }
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 7px 4px 7px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.sidebar-title { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.sidebar.collapsed .sidebar-title { display: none; }
+.sidebar.collapsed .sidebar-head { padding: 7px 4px; justify-content: center; }
+.tree { flex: 1 1 auto; overflow: auto; padding: 6px 0 12px; }
+.sidebar.collapsed .tree { display: none; }
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  padding: 5px 10px 5px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tree-row:hover { background: #eef4ff; color: var(--ink); }
+.tree-row.active {
+  background: #e8f0ff;
+  color: var(--brand);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+.tree-row.child { font-size: 12px; color: var(--ink-2); }
+.tree-row.child.active { color: var(--brand); }
+.tree-caret { width: 12px; flex: none; color: var(--muted); font-size: 10px; text-align: center; }
+.tree-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.tree-count { flex: none; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tree-row.active .tree-count { color: var(--brand); }
+.tree-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: none; }
+
+@media (max-width: 760px) { .sidebar { width: 190px; } }
+
 /* ---------------- 表格 ---------------- */
 
 .table-wrap { flex: 1 1 auto; overflow: auto; background: var(--card); }
 
-table.rules { width: 100%; border-collapse: separate; border-spacing: 0; }
+/* 表格保底宽度：侧栏展开 / 窄窗口下宁可横向滚动，也不把路径挤成逐字换行。 */
+table.rules { width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 0; }
 
 table.rules thead th {
   position: sticky;
@@ -343,10 +409,10 @@ table.rules tbody tr.tpl-row .cell-name { color: var(--ink-2); }
 .col-check { width: 34px; }
 .col-badge { width: 82px; }
 .col-cat { width: 76px; }
-.col-usage { width: 96px; }
+.col-usage { width: 80px; }
 .col-flag { width: 78px; }
-.col-actions { width: 196px; }
-.col-name { width: 168px; }
+.col-actions { width: 172px; }
+.col-name { width: 150px; }
 
 .col-check input { accent-color: var(--brand); cursor: pointer; vertical-align: middle; }
 

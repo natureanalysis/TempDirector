@@ -68,6 +68,9 @@ const state = {
   // 「空间统计」的扫描结果：rule_id -> DiskUsageEntry（bytes / files / bytes_text）。
   // 只有点过「空间统计」才有值；为 null 时表格该列显示占位符。
   diskUsage: null,
+  // 分类树侧栏：展开的分类名集合；treeSeeded 保证首屏只自动展开一次当前条目所在分类。
+  treeOpen: new Set(),
+  treeSeeded: false,
 };
 
 // 分类标签走 i18n（键 cat.<category>）；未收录的分类回退原始值。
@@ -169,6 +172,7 @@ function render() {
   renderBanners();
   renderHeader();
   renderFilterOptions();
+  renderSidebar();
   renderRows();
   renderDetail();
   renderSortIndicators();
@@ -236,6 +240,190 @@ function renderFilterOptions() {
   }
   sel.value = state.filters.category;
 }
+
+// ---------------------------------------------------------------------------
+// 分类树侧栏
+//
+// 条目多起来以后分类下拉不够用：侧栏画成「全部规则 → 分类 → 规则名」两层树，
+// 点分类等于套用分类筛选（与下拉框同一份 state.filters.category），
+// 点规则名则切到该分类并把对应行滚到视野中间。
+// ---------------------------------------------------------------------------
+
+const SIDEBAR_KEY = 'tempdirector.sidebar';
+
+/** 树里的一行（按钮）：根 / 分类（可展开，带计数与需处理圆点）/ 规则名。 */
+function treeRow(opts) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'tree-row' + (opts.depth ? ' child' : '') + (opts.active ? ' active' : '');
+  // CSP 只允许 CSSOM 改样式，内联 style 属性会被拦；层级缩进走这里。
+  btn.style.paddingLeft = (8 + opts.depth * 14) + 'px';
+  btn.dataset.act = opts.act;
+  if (opts.cat !== undefined) btn.dataset.cat = opts.cat;
+  if (opts.id !== undefined) btn.dataset.id = String(opts.id);
+
+  const caret = document.createElement('span');
+  caret.className = 'tree-caret';
+  caret.textContent = opts.children ? (opts.open ? '▾' : '▸') : '';
+  btn.appendChild(caret);
+
+  const label = document.createElement('span');
+  label.className = 'tree-label';
+  label.textContent = opts.label;
+  btn.appendChild(label);
+
+  if (opts.attention) {
+    const dot = document.createElement('span');
+    dot.className = 'tree-dot';
+    dot.title = t('sidebar.attention_tip');
+    btn.appendChild(dot);
+  }
+
+  const count = document.createElement('span');
+  count.className = 'tree-count';
+  if (opts.count) count.textContent = String(opts.count);
+  btn.appendChild(count);
+  return btn;
+}
+
+function renderSidebar() {
+  const host = $('tree');
+  if (!host || !state.snap) return;
+  const all = state.snap.rules || [];
+  // 隐藏条目按当前的「显示已隐藏」开关决定是否出现在树里，计数跟着一致。
+  const shown = all.filter(function (r) { return !r.hidden || state.filters.showHidden; });
+
+  if (!state.treeSeeded) {
+    state.treeSeeded = true;
+    const focused = shown.find(function (r) { return r.id === state.focusId; });
+    if (focused) state.treeOpen.add(focused.category);
+  }
+
+  const byCat = {};
+  shown.forEach(function (r) { (byCat[r.category] = byCat[r.category] || []).push(r); });
+
+  host.textContent = '';
+  host.appendChild(treeRow({
+    depth: 0,
+    label: t('sidebar.all'),
+    count: shown.length,
+    act: 'all',
+    active: !state.filters.category,
+  }));
+
+  (state.snap.categories || []).forEach(function (c) {
+    const items = byCat[c] || [];
+    // 空分类不占位置；但当前筛选的分类要留着，否则选中态在树里会消失。
+    if (!items.length && state.filters.category !== c) return;
+    const open = state.treeOpen.has(c);
+    host.appendChild(treeRow({
+      depth: 0,
+      label: categoryLabel(c),
+      count: items.length,
+      act: 'cat',
+      cat: c,
+      children: items.length > 0,
+      open: open,
+      active: state.filters.category === c,
+      attention: items.some(function (r) { return r.needs_attention; }),
+    }));
+    if (!open) return;
+    items.forEach(function (r) {
+      host.appendChild(treeRow({
+        depth: 1,
+        label: r.name,
+        count: 0,
+        act: 'rule',
+        id: r.id,
+        active: r.id === state.focusId,
+        attention: r.needs_attention,
+      }));
+    });
+  });
+}
+
+/** 套用分类筛选（侧栏与下拉框共用）。 */
+function applyCategory(c) {
+  state.filters.category = c;
+  const sel = $('filter-category');
+  if (sel) sel.value = c;
+  renderSidebar();
+  renderRows();
+}
+
+function onTreeClick(ev) {
+  const btn = ev.target.closest ? ev.target.closest('.tree-row') : null;
+  if (!btn) return;
+  const act = btn.dataset.act;
+  if (act === 'all') {
+    applyCategory('');
+    return;
+  }
+  if (act === 'cat') {
+    const c = btn.dataset.cat || '';
+    if (state.filters.category === c) {
+      // 已选中的分类：再点一次只折叠 / 展开，不改变筛选。
+      if (state.treeOpen.has(c)) state.treeOpen.delete(c); else state.treeOpen.add(c);
+      renderSidebar();
+    } else {
+      state.treeOpen.add(c);
+      applyCategory(c);
+    }
+    return;
+  }
+  if (act === 'rule') {
+    const id = Number(btn.dataset.id);
+    const r = (state.snap.rules || []).find(function (x) { return x.id === id; });
+    if (!r) return;
+    state.focusId = id;
+    if (state.filters.category !== r.category) {
+      state.treeOpen.add(r.category);
+      applyCategory(r.category);
+    } else {
+      renderSidebar();
+      renderRows();
+    }
+    renderDetail();
+    const tr = document.querySelector('#rows tr[data-id="' + id + '"]');
+    if (tr) tr.scrollIntoView({ block: 'center' });
+  }
+}
+
+function syncSidebarToggle() {
+  const sb = $('sidebar');
+  const btn = $('btn-sidebar');
+  if (!sb || !btn) return;
+  const collapsed = sb.classList.contains('collapsed');
+  btn.textContent = collapsed ? '»' : '«';
+  btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+}
+
+/** 侧栏收起 / 展开：窄窗口下让出横向空间，状态记在 localStorage。 */
+function toggleSidebar() {
+  const sb = $('sidebar');
+  if (!sb) return;
+  sb.classList.toggle('collapsed');
+  try { localStorage.setItem(SIDEBAR_KEY, sb.classList.contains('collapsed') ? '1' : '0'); } catch (e) { /* 忽略 */ }
+  syncSidebarToggle();
+}
+
+(function initSidebar() {
+  const sb = $('sidebar');
+  if (!sb) return;
+  // 没有历史偏好时，窄窗口默认收起成窄栏，把横向空间让给表格。
+  let collapsed = null;
+  try {
+    const stored = localStorage.getItem(SIDEBAR_KEY);
+    if (stored !== null) collapsed = stored === '1';
+  } catch (e) { /* 忽略 */ }
+  if (collapsed === null) collapsed = window.innerWidth < 820;
+  if (collapsed) sb.classList.add('collapsed');
+  syncSidebarToggle();
+  sb.addEventListener('click', function (ev) {
+    if (ev.target.closest('#btn-sidebar')) { toggleSidebar(); return; }
+    onTreeClick(ev);
+  });
+})();
 
 /** 分类 / 状态 / 搜索三项筛选（**不含隐藏态**）。
  *  单独抽出来是为了把"被隐藏的"和"被真筛掉的"分开统计：列表空的时候，
@@ -1966,7 +2154,10 @@ async function openRuleForm(id) {
   body.appendChild(exWrap.field);
 
   // 水位自动清理：RAM 盘到严重线（默认 95%）或规则目录达到下面的容量上限时的预授权，
-  // 30 分钟冷却防反复删
+  // 30 分钟冷却防反复删。新增规则预填一套建议值：按空间清理，上限 2 GB、删到 1 GB
+  // 下限 —— 单个缓存目录留在 GB 量级，既撑不爆 RAM 盘，也不会把最近在用的缓存删光。
+  const RECOMMEND_FLOOR_MB = 1024;
+  const RECOMMEND_LIMIT_MB = 2048;
   const autoSelect = document.createElement('select');
   autoSelect.className = 'select';
   [['', t('rule.auto.none')],
@@ -1997,7 +2188,8 @@ async function openRuleForm(id) {
   keepFloorNum.value = '100';
   const keepFloorUnit = document.createElement('select');
   keepFloorUnit.className = 'select';
-  [['gb', t('rule.auto.unit_gb')], ['mb', t('rule.auto.unit_mb')]].forEach(function (u) {
+  // MB 在前：没有历史值时下拉默认选中的就是 MB（容量单位默认 MB）。
+  [['mb', t('rule.auto.unit_mb')], ['gb', t('rule.auto.unit_gb')]].forEach(function (u) {
     const o = document.createElement('option');
     o.value = u[0];
     o.textContent = u[1];
@@ -2012,11 +2204,16 @@ async function openRuleForm(id) {
       keepFloorUnit.value = 'mb';
       keepFloorNum.value = String(Math.max(1, Math.round(kb / 1048576)));
     }
+  } else if (!rule) {
+    // 建议默认值只给新增规则：编辑已有条目时不静默塞策略，没配就是没配。
+    autoSelect.value = 'keep';
+    keepFloorUnit.value = 'mb';
+    keepFloorNum.value = String(RECOMMEND_FLOOR_MB);
   }
   const autoWrap = mk(t('rule.auto.label'), autoSelect);
   const hoursWrap = mk(t('rule.auto.before'), autoHours);
   const keepFloorWrap = mk(t('rule.auto.keep_label'), keepFloorNum);
-  const keepFloorUnitWrap = mk(t('rule.auto.limit_unit'), keepFloorUnit);
+  const keepFloorUnitWrap = mk(t('rule.auto.floor_unit'), keepFloorUnit);
   // 两个控件并排。提示文案**不能**塞进 .field-row：flex 行里它会把两个输入框
   // 挤到近乎 0 宽（输入框 flex-basis 为 0，抢不过带内容的提示）。挂到外层
   // .field 的下方，走 .field .hint 样式，输入框自然各占约一半宽度。
@@ -2033,6 +2230,12 @@ async function openRuleForm(id) {
   autoHint.className = 'hint';
   autoHint.textContent = t('rule.auto.hint');
   autoField.appendChild(autoHint);
+  if (!rule) {
+    const recHint = document.createElement('div');
+    recHint.className = 'hint';
+    recHint.textContent = t('rule.auto.rec_hint');
+    autoField.appendChild(recHint);
+  }
   function syncAutoMode() {
     const isOlder = autoSelect.value === 'older';
     const isKeep = autoSelect.value === 'keep';
@@ -2053,7 +2256,7 @@ async function openRuleForm(id) {
   limitNum.step = '1';
   const limitUnit = document.createElement('select');
   limitUnit.className = 'select';
-  [['gb', t('rule.auto.unit_gb')], ['mb', t('rule.auto.unit_mb')]].forEach(function (u) {
+  [['mb', t('rule.auto.unit_mb')], ['gb', t('rule.auto.unit_gb')]].forEach(function (u) {
     const o = document.createElement('option');
     o.value = u[0];
     o.textContent = u[1];
@@ -2066,6 +2269,9 @@ async function openRuleForm(id) {
   } else if (initLimit > 0) {
     limitUnit.value = 'mb';
     limitNum.value = String(Math.max(1, Math.round(initLimit / 1048576)));
+  } else if (!rule) {
+    limitUnit.value = 'mb';
+    limitNum.value = String(RECOMMEND_LIMIT_MB);
   }
   const limitWrap = mk(t('rule.auto.limit_label'), limitNum);
   const unitWrap = mk(t('rule.auto.limit_unit'), limitUnit);
@@ -2263,6 +2469,23 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
     radios.push(r);
   });
 
+  // 任意小时数（仅 before_hour 时显示）：默认 1 小时，留空按 1 小时算。
+  const hourWrap = document.createElement('div');
+  hourWrap.className = 'field';
+  const hourLabel = document.createElement('label');
+  hourLabel.textContent = t('clean.hours_label');
+  const hourInput = document.createElement('input');
+  hourInput.type = 'number';
+  hourInput.className = 'input';
+  hourInput.min = '1';
+  hourInput.step = '1';
+  hourInput.value = '1';
+  hourInput.placeholder = t('clean.hours_ph');
+  hourInput.style.maxWidth = '180px';
+  hourWrap.appendChild(hourLabel);
+  hourWrap.appendChild(hourInput);
+  body.appendChild(hourWrap);
+
   // 时间段输入（仅 between 时显示）
   const rangeWrap = document.createElement('div');
   rangeWrap.className = 'field';
@@ -2303,7 +2526,8 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
   spaceNum.placeholder = t('clean.keep_floor_ph');
   const spaceUnit = document.createElement('select');
   spaceUnit.className = 'select';
-  [['gb', t('rule.auto.unit_gb')], ['mb', t('rule.auto.unit_mb')]].forEach(function (u) {
+  // MB 在前：容量单位默认 MB。
+  [['mb', t('rule.auto.unit_mb')], ['gb', t('rule.auto.unit_gb')]].forEach(function (u) {
     const o = document.createElement('option');
     o.value = u[0];
     o.textContent = u[1];
@@ -2341,10 +2565,13 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
     return 'empty';
   }
   function syncRange() {
-    if (selectedMode() === 'between') rangeWrap.classList.remove('hidden');
+    const mode = selectedMode();
+    if (mode === 'between') rangeWrap.classList.remove('hidden');
     else rangeWrap.classList.add('hidden');
-    if (selectedMode() === 'space') spaceWrap.classList.remove('hidden');
+    if (mode === 'space') spaceWrap.classList.remove('hidden');
     else spaceWrap.classList.add('hidden');
+    if (mode === 'before_hour') hourWrap.classList.remove('hidden');
+    else hourWrap.classList.add('hidden');
   }
   radios.forEach(function (r) { r.addEventListener('change', syncRange); });
   syncRange();
@@ -2353,7 +2580,10 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
     const mode = selectedMode();
     if (mode === 'empty') return { mode: 'empty' };
     if (mode === 'before_day') return { mode: 'before', cutoff: todayMidnightSecs() };
-    if (mode === 'before_hour') return { mode: 'before', cutoff: nowSecs() - 3600 };
+    if (mode === 'before_hour') {
+      const h = Math.max(1, Math.floor(Number(hourInput.value)) || 1);
+      return { mode: 'before', cutoff: nowSecs() - h * 3600 };
+    }
     if (mode === 'space') {
       const n = Math.max(1, Math.floor(Number(spaceNum.value)) || 1);
       return { mode: 'keep_within', keep_bytes: spaceUnit.value === 'mb' ? n * 1048576 : n * 1073741824 };
@@ -2399,6 +2629,7 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
   keepInput.addEventListener('input', invalidatePreview);
   spaceNum.addEventListener('input', invalidatePreview);
   spaceUnit.addEventListener('change', invalidatePreview);
+  hourInput.addEventListener('input', invalidatePreview);
   radios.forEach(function (r) { r.addEventListener('change', invalidatePreview); });
 
   function ruleName(t) {
@@ -2895,6 +3126,12 @@ document.addEventListener('click', async function (ev) {
       state.focusId = id;
       renderRows();
       renderDetail();
+      // 侧栏同步高亮到这条规则；所在分类没展开时顺手展开，省得还要再点一次。
+      const r = (state.snap.rules || []).find(function (x) { return x.id === id; });
+      if (r) {
+        if (!state.treeOpen.has(r.category)) state.treeOpen.add(r.category);
+        renderSidebar();
+      }
       return;
     }
     if (act === 'apply') { await runApply([id], false); return; }
@@ -3002,10 +3239,10 @@ document.addEventListener('change', function (ev) {
     renderRows();
     return;
   }
-  if (el.id === 'filter-category') { state.filters.category = el.value; renderRows(); }
+  if (el.id === 'filter-category') { applyCategory(el.value); }
   else if (el.id === 'only-enabled') { state.filters.onlyEnabled = el.checked; renderRows(); }
   else if (el.id === 'only-attention') { state.filters.onlyAttention = el.checked; renderRows(); }
-  else if (el.id === 'show-hidden') { state.filters.showHidden = el.checked; renderRows(); }
+  else if (el.id === 'show-hidden') { state.filters.showHidden = el.checked; renderSidebar(); renderRows(); }
   else if (el.id === 'sel-all' || el.id === 'sel-all-head') {
     const rows = filteredRules();
     if (el.checked) rows.forEach(function (r) { state.picked.add(r.id); });
