@@ -2170,6 +2170,8 @@ async function openRuleForm(id) {
   };
   // 已测到的源目录占用（null = 还没量到 / 量不到，此时用分类典型值）。
   let measuredBytes = null;
+  // 用户手动改过上限 / 下限之后，测量回来的建议值不再覆盖他的手改。
+  let recTouched = false;
   let recHintEl = null;
   let measureSeq = 0;
   const autoSelect = document.createElement('select');
@@ -2309,6 +2311,13 @@ async function openRuleForm(id) {
   keepFloorUnit.addEventListener('change', syncLimitHint);
   autoSelect.addEventListener('change', syncLimitHint);
   syncLimitHint();
+  // 记录"用户动过建议值"：之后测量完成 / 切分类都不再自动改写。
+  [keepFloorNum, limitNum].forEach(function (el) {
+    el.addEventListener('input', function () { recTouched = true; });
+  });
+  [keepFloorUnit, limitUnit].forEach(function (el) {
+    el.addEventListener('change', function () { recTouched = true; });
+  });
 
   function sizeValueText(mb) {
     return mb >= 2048 && mb % 1024 === 0 ? (mb / 1024) + ' GB' : mb + ' MB';
@@ -2322,8 +2331,10 @@ async function openRuleForm(id) {
       num.value = String(mb);
     }
   }
-  /** 按源目录实际占用（`bytes`）或分类典型值，填一套「容量上限 + 水位下限」建议值。 */
-  function applyRecommendation(bytes) {
+  /** 按源目录实际占用（`bytes`）或分类典型值，填一套「容量上限 + 水位下限」建议值。
+   *  `force` 只在表单初始化时用：之后用户手改过的值不覆盖。 */
+  function applyRecommendation(bytes, force) {
+    if (recTouched && !force) return;
     measuredBytes = bytes && bytes > 0 ? bytes : null;
     let limitMb, floorMb;
     if (measuredBytes) {
@@ -2357,6 +2368,7 @@ async function openRuleForm(id) {
 
   /** 量源目录当前占用，把建议值落到「这个目录」的量级；量不到就退回分类典型值。 */
   async function measureSource(path) {
+    if (recTouched) return;
     const seq = ++measureSeq;
     if (recHintEl) {
       recHintEl.textContent = t('rule.auto.rec_measuring');
