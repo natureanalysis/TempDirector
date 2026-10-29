@@ -2,6 +2,18 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-10-29（预设：修正「百度网盘缓存」「飞书缓存」的源目录）
+
+### 预设 —— 这两条此前指向的是程序本体 / 用户配置目录，不是缓存
+
+* 「百度网盘缓存」原源模板为 `%APPDATA%\\baidu\\BaiduNetdisk`（本机 1.6 GB）。该目录是**程序本体**：含 `BaiduNetdisk.exe` / `BaiduNetdiskRender.exe`、`libcef.dll` / `kernel.dll` 等 exe/dll 与 `Microsoft.*.Appx` 运行时，光 `module\\` 就 1.3 GB；`users\\` 下还是登录态（`BaiduNetdiskData.dat` / `logonbd.dll` 等）。整目录重定向会把程序与登录态一起搬走，也不符合预设收录标准。改为 `%APPDATA%\\baidu\\BaiduYunKernel\\.accelerate`（本机 53 MB，`video_preload_dir\\` 下的 `data_cache` / `m3u8_cache` 视频预加载缓存），目标子路径同步改为 `office\\baidu-accelerate`。
+* 「飞书缓存」原源模板为 `%APPDATA%\\LarkShell`（本机 390 MB）。该目录是 **Chromium 用户配置目录**：含 `Default\\`、`Local State`，以及登录态（`logout_token` / `persistent_passport_info_v2` / `passport_storage\\`）和 `sdk_storage\\`（163 MB 业务数据），不可整体迁移。改为 `%APPDATA%\\LarkShell\\CodeCache`（本机 8.7 MB，V8 代码缓存），目标子路径同步改为 `office\\lark-code-cache`。
+* 两条都按「WPS 缓存」那条的做法，在备注里写明被排除的组件 / 登录态目录及原因，避免又被当成缓存来迁。
+
+### 验证
+
+* `scripts\\cargo.cmd test --workspace` 全绿（`builtin_presets_parse` 覆盖条数、分类合法、`%VAR%` 前缀、源模板与子路径唯一性）。
+
 ## 2026-10-29（预设：修正「WPS 缓存」的源目录）
 
 ### 预设 —— 「WPS 缓存」此前指向的是程序组件，不是缓存

@@ -156,9 +156,9 @@
   {
     "name": "百度网盘缓存",
     "category": "office",
-    "source_template": "%APPDATA%\\baidu\\BaiduNetdisk",
-    "target_subpath": "office\\baidu-netdisk",
-    "note": null
+    "source_template": "%APPDATA%\\baidu\\BaiduYunKernel\\.accelerate",
+    "target_subpath": "office\\baidu-accelerate",
+    "note": "只迁视频预加载缓存；%APPDATA%\\baidu\\BaiduNetdisk 是程序本体（含 exe/dll/Appx 运行时），其 users 下存登录态，切勿迁移"
   },
   {
     "name": "WPS 缓存",
@@ -170,8 +170,8 @@
   {
     "name": "飞书缓存",
     "category": "office",
-    "source_template": "%APPDATA%\\LarkShell",
-    "target_subpath": "office\\lark",
-    "note": null
+    "source_template": "%APPDATA%\\LarkShell\\CodeCache",
+    "target_subpath": "office\\lark-code-cache",
+    "note": "只迁 V8 代码缓存；%APPDATA%\\LarkShell 是 Chromium 用户配置目录（含 Default、登录态、Local State），不可整体迁移"
   }
 ]
