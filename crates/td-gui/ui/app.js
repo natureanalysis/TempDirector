@@ -3370,6 +3370,16 @@ backend.listen('td-tray-boot', function (ev) {
   refresh(true);
 });
 
+/** 关闭窗口 → 驻留托盘：后端拦下关闭事件，先让这里把提示露出来，再把窗口收起。
+ *  Windows 通知可能被专注助手 / 权限关掉，界面内的这条提示才是可靠的那一条。 */
+function onCloseToTray() {
+  toast(t('toast.tray_hide'), t('toast.tray_hide_sub'), 'ok');
+  setTimeout(function () {
+    invoke('hide_main_window').catch(function () { /* 旧后端没有该命令，后端兜底会收窗口 */ });
+  }, 1500);
+}
+backend.listen('td-close-to-tray', onCloseToTray);
+
 // ---------------------------------------------------------------------------
 // Mock 后端（仅用于本地静态预览 / 无头截图核验，不参与打包逻辑）
 // ---------------------------------------------------------------------------

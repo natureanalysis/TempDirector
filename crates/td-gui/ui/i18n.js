@@ -501,6 +501,8 @@ const DICT = {
     'toast.op_failed': '操作失败',
     'toast.reorder_failed': '调整顺序失败',
     'toast.tray_boot': '托盘：开机重建',
+    'toast.tray_hide': '已隐藏到托盘',
+    'toast.tray_hide_sub': '程序仍在后台运行：水位巡检与预授权自动清理继续生效，双击托盘图标可重新打开。',
     'err.no_bridge': '未检测到 Tauri IPC 桥',
   },
 
@@ -990,6 +992,8 @@ const DICT = {
     'toast.op_failed': 'Operation failed',
     'toast.reorder_failed': 'Reorder failed',
     'toast.tray_boot': 'Tray: boot rebuild',
+    'toast.tray_hide': 'Hidden to the tray',
+    'toast.tray_hide_sub': 'The app keeps running in the background: water-level patrol and pre-authorized cleaning stay active. Double-click the tray icon to reopen.',
     'err.no_bridge': 'Tauri IPC bridge not detected',
   },
 };

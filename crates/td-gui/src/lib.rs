@@ -15,7 +15,7 @@ pub mod notify;
 pub mod submode;
 pub mod tray;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use td_core::store::Store;
 
@@ -73,8 +73,18 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if commands::close_to_tray(window.app_handle()) {
                     api.prevent_close();
-                    let _ = window.hide();
+                    // 不在这里直接 hide：先让界面把「已隐藏到托盘」提示露出来，再由前端
+                    // 收起窗口。系统通知可能被专注助手 / 权限关掉，界面内的提示一定看得见。
+                    let _ = window.emit("td-close-to-tray", ());
                     commands::hint_tray_once(window.app_handle());
+                    // 前端没接住（脚本异常 / 内嵌资源是旧版）也要保证窗口会被收起。
+                    let w = window.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(2000));
+                        if w.is_visible().unwrap_or(false) {
+                            let _ = w.hide();
+                        }
+                    });
                 }
             }
         })
@@ -117,6 +127,7 @@ pub fn run() {
             commands::pick_open_file,
             commands::reveal_in_explorer,
             commands::show_main_window,
+            commands::hide_main_window,
             commands::quit_app,
             commands::ui_settings,
             commands::set_close_to_tray,

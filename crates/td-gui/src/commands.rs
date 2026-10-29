@@ -575,6 +575,15 @@ pub fn show_main_window(app: AppHandle) -> R<()> {
     Ok(())
 }
 
+/// 收起主窗口（关闭 → 驻留托盘时由前端在提示露出之后调用）。
+#[tauri::command]
+pub fn hide_main_window(app: AppHandle) -> R<()> {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn quit_app(app: AppHandle) -> R<()> {
     app.exit(0);
