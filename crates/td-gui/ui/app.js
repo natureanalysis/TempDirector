@@ -2154,10 +2154,24 @@ async function openRuleForm(id) {
   body.appendChild(exWrap.field);
 
   // 水位自动清理：RAM 盘到严重线（默认 95%）或规则目录达到下面的容量上限时的预授权，
-  // 30 分钟冷却防反复删。新增规则预填一套建议值：按空间清理，上限 2 GB、删到 1 GB
-  // 下限 —— 单个缓存目录留在 GB 量级，既撑不爆 RAM 盘，也不会把最近在用的缓存删光。
-  const RECOMMEND_FLOOR_MB = 1024;
-  const RECOMMEND_LIMIT_MB = 2048;
+  // 30 分钟冷却防反复删。建议值**按源目录自己的内容定**：量到实际占用后，上限取
+  // 「当前占用 × 1.3」、下限取上限的一半；目录只有几十/一两百 MB 时不会配出 1 GB
+  // 下限（那等于永远删不到东西）。量不到（空目录 / 路径不存在）才退回分类典型值，
+  // 量级也都按 MB 给。
+  const AUTO_REC_MB = {
+    browser: [512, 256],
+    media: [1024, 512],
+    dev: [2048, 1024],
+    design: [2048, 1024],
+    office: [1024, 512],
+    system: [256, 128],
+    game: [4096, 2048],
+    other: [512, 256],
+  };
+  // 已测到的源目录占用（null = 还没量到 / 量不到，此时用分类典型值）。
+  let measuredBytes = null;
+  let recHintEl = null;
+  let measureSeq = 0;
   const autoSelect = document.createElement('select');
   autoSelect.className = 'select';
   [['', t('rule.auto.none')],
@@ -2204,11 +2218,6 @@ async function openRuleForm(id) {
       keepFloorUnit.value = 'mb';
       keepFloorNum.value = String(Math.max(1, Math.round(kb / 1048576)));
     }
-  } else if (!rule) {
-    // 建议默认值只给新增规则：编辑已有条目时不静默塞策略，没配就是没配。
-    autoSelect.value = 'keep';
-    keepFloorUnit.value = 'mb';
-    keepFloorNum.value = String(RECOMMEND_FLOOR_MB);
   }
   const autoWrap = mk(t('rule.auto.label'), autoSelect);
   const hoursWrap = mk(t('rule.auto.before'), autoHours);
@@ -2231,10 +2240,10 @@ async function openRuleForm(id) {
   autoHint.textContent = t('rule.auto.hint');
   autoField.appendChild(autoHint);
   if (!rule) {
-    const recHint = document.createElement('div');
-    recHint.className = 'hint';
-    recHint.textContent = t('rule.auto.rec_hint');
-    autoField.appendChild(recHint);
+    recHintEl = document.createElement('div');
+    recHintEl.className = 'hint';
+    recHintEl.textContent = t('rule.auto.rec_hint');
+    autoField.appendChild(recHintEl);
   }
   function syncAutoMode() {
     const isOlder = autoSelect.value === 'older';
@@ -2269,9 +2278,6 @@ async function openRuleForm(id) {
   } else if (initLimit > 0) {
     limitUnit.value = 'mb';
     limitNum.value = String(Math.max(1, Math.round(initLimit / 1048576)));
-  } else if (!rule) {
-    limitUnit.value = 'mb';
-    limitNum.value = String(RECOMMEND_LIMIT_MB);
   }
   const limitWrap = mk(t('rule.auto.limit_label'), limitNum);
   const unitWrap = mk(t('rule.auto.limit_unit'), limitUnit);
@@ -2304,6 +2310,83 @@ async function openRuleForm(id) {
   autoSelect.addEventListener('change', syncLimitHint);
   syncLimitHint();
 
+  function sizeValueText(mb) {
+    return mb >= 2048 && mb % 1024 === 0 ? (mb / 1024) + ' GB' : mb + ' MB';
+  }
+  function setSizeValue(num, unit, mb) {
+    if (mb >= 2048 && mb % 1024 === 0) {
+      unit.value = 'gb';
+      num.value = String(mb / 1024);
+    } else {
+      unit.value = 'mb';
+      num.value = String(mb);
+    }
+  }
+  /** 按源目录实际占用（`bytes`）或分类典型值，填一套「容量上限 + 水位下限」建议值。 */
+  function applyRecommendation(bytes) {
+    measuredBytes = bytes && bytes > 0 ? bytes : null;
+    let limitMb, floorMb;
+    if (measuredBytes) {
+      const cur = measuredBytes / 1048576;
+      // 步长跟量级走：小目录 32 MB 一档，几百 MB 64 MB 一档，GB 级 256 MB 一档，
+      // 建议值看起来才是整数而不是「1372 MB」。
+      const step = cur >= 2048 ? 256 : cur >= 512 ? 64 : 32;
+      limitMb = Math.max(step, Math.ceil((cur * 1.3) / step) * step);
+      floorMb = Math.max(step, Math.floor((limitMb * 0.5) / step) * step);
+    } else {
+      const rec = AUTO_REC_MB[catSelect.value] || AUTO_REC_MB.other;
+      limitMb = rec[0];
+      floorMb = rec[1];
+    }
+    setSizeValue(keepFloorNum, keepFloorUnit, floorMb);
+    setSizeValue(limitNum, limitUnit, limitMb);
+    syncLimitHint();
+    if (!recHintEl) return;
+    if (measuredBytes) {
+      recHintEl.textContent = tf('rule.auto.rec_measured', {
+        size: humanBytes(measuredBytes),
+        limit: sizeValueText(limitMb),
+        floor: sizeValueText(floorMb),
+      });
+      recHintEl.className = 'hint ok';
+    } else {
+      recHintEl.textContent = t('rule.auto.rec_hint');
+      recHintEl.className = 'hint';
+    }
+  }
+
+  /** 量源目录当前占用，把建议值落到「这个目录」的量级；量不到就退回分类典型值。 */
+  async function measureSource(path) {
+    const seq = ++measureSeq;
+    if (recHintEl) {
+      recHintEl.textContent = t('rule.auto.rec_measuring');
+      recHintEl.className = 'hint';
+    }
+    try {
+      const pv = await invoke('clean_preview', {
+        target: { kind: 'folder', path: path },
+        policy: { mode: 'empty' },
+        typeExcludes: [],
+      });
+      if (seq !== measureSeq) return;
+      applyRecommendation(Number(pv.bytes) || 0);
+    } catch (e) {
+      if (seq !== measureSeq) return;
+      applyRecommendation(null);
+    }
+  }
+
+  catSelect.addEventListener('change', function () {
+    // 量到了实际占用就按目录本身走；只有量不到时，分类才决定建议值。
+    if (!rule && !measuredBytes) applyRecommendation(null);
+  });
+
+  if (!rule) {
+    // 建议默认值只给新增规则：编辑已有条目时不静默塞策略，没配就是没配。
+    autoSelect.value = 'keep';
+    applyRecommendation(null);
+  }
+
   function autoPolicyValue() {
     if (autoSelect.value === 'empty') return 'empty';
     if (autoSelect.value === 'older') {
@@ -2330,9 +2413,14 @@ async function openRuleForm(id) {
       srcHint.className = info.blocking.length ? 'hint err'
         : (info.requires_elevation || info.unknown_vars.length) ? 'hint warn' : 'hint ok';
       if (info.blocking.length) srcHint.textContent = '⛔ ' + info.blocking.join(t('list.sep'));
+      if (!rule) {
+        if (info.exists && !info.blocking.length) measureSource(info.expanded);
+        else { measureSeq++; applyRecommendation(null); }
+      }
     } catch (e) {
       srcHint.textContent = e.message;
       srcHint.className = 'hint err';
+      if (!rule) { measureSeq++; applyRecommendation(null); }
     }
   }
 
