@@ -307,7 +307,7 @@ Windows 服务(SYSTEM) ──WTS_SESSION_LOGON──▶ 取用户令牌 ──�
 | C18 | 失败要告警而不是静默 | ✅ 报告落库 + 界面横幅 + `logs/boot-rebuild.log` + 系统通知（Toast，打包前提见 §11.9） |
 | C19 | "链接正常但目标为空"必须独立呈现 | ✅ |
 | C20 | 软件更新把链接覆盖成真实目录 → 需要巡检发现 | ⚠️ 已能检测并在重建时告警；主动巡检待 M4 |
-| C21 | RAM 盘写满 = 软件写缓存直接失败 → 水位分级（85%/95%，settings 可覆盖），warn/critical 横幅 + 级别变化落事件；**按规则级预授权自动清理**（`auto_clean_policy`：空=未启用 / `empty` / `older:<秒>`）——`auto_clean` 有**两种触发**：卷水位 critical（全局 30 分钟冷却）与规则目录自身达到 `auto_clean_limit_bytes`（逐规则 30 分钟冷却）；两者**同一套处理**（同一 `clean_run` 门面：预演语义、排除保护、事件流水；汇总事件同一键 `water.auto_clean_log`，仅触发词不同） | ✅ |
+| C21 | RAM 盘写满 = 软件写缓存直接失败 → 水位分级（85%/95%，settings 可覆盖），warn/critical 横幅 + 级别变化落事件；**按规则级预授权自动清理**（`auto_clean_policy`：空=未启用 / `empty` / `older:<秒>`（按时间）/ `keep:<字节>`（按空间：删到不高于该水位下限、保留时间最近的，至少留最新 1 个））——`auto_clean` 有**两种触发**：卷水位 critical（全局 30 分钟冷却）与规则目录自身达到 `auto_clean_limit_bytes`（逐规则 30 分钟冷却）；两者**同一套处理**（同一 `clean_run` 门面：预演语义、排除保护、事件流水；汇总事件同一键 `water.auto_clean_log`，仅触发词不同） | ✅ |
 | C22 | 窗口关闭后后台能力要**继续生效**（水位巡检 / 预授权自动清理）→ 关闭窗口默认**隐藏到托盘**、进程常驻，退出走托盘菜单；可在设置改为"直接退出"（settings `close_to_tray`，默认开） | ✅ |
 
 ### D. 权限

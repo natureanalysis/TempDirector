@@ -786,6 +786,8 @@ function describeAutoPolicy(p) {
     if (secs % 3600 === 0) return tf('detail.auto.hours', { n: secs / 3600 });
     return tf('detail.auto.secs', { n: secs });
   }
+  const mkeep = /keep:(\d+)/.exec(p);
+  if (mkeep) return tf('detail.auto.keep', { size: humanBytes(Number(mkeep[1])) });
   return p;
 }
 
@@ -1969,7 +1971,8 @@ async function openRuleForm(id) {
   autoSelect.className = 'select';
   [['', t('rule.auto.none')],
    ['empty', t('rule.auto.empty')],
-   ['older', t('rule.auto.older')]].forEach(function (p) {
+   ['older', t('rule.auto.older')],
+   ['keep', t('rule.auto.keep')]].forEach(function (p) {
     const o = document.createElement('option');
     o.value = p[0];
     o.textContent = p[1];
@@ -1982,10 +1985,38 @@ async function openRuleForm(id) {
   autoHours.value = '24';
   const initPolicy = rule ? (rule.auto_clean_policy || '') : '';
   const initHours = /older:(\d+)/.exec(initPolicy);
+  const initKeep = /keep:(\d+)/.exec(initPolicy);
   if (initPolicy === 'empty') autoSelect.value = 'empty';
   else if (initHours) { autoSelect.value = 'older'; autoHours.value = String(Math.max(1, Math.round(Number(initHours[1]) / 3600))); }
+  else if (initKeep) autoSelect.value = 'keep';
+  // 水位下限（按空间清理）：保留时间最近的若干容量，从最旧的文件删起。
+  const keepFloorNum = mkInput(t('rule.auto.keep_ph'));
+  keepFloorNum.type = 'number';
+  keepFloorNum.min = '1';
+  keepFloorNum.step = '1';
+  keepFloorNum.value = '100';
+  const keepFloorUnit = document.createElement('select');
+  keepFloorUnit.className = 'select';
+  [['gb', t('rule.auto.unit_gb')], ['mb', t('rule.auto.unit_mb')]].forEach(function (u) {
+    const o = document.createElement('option');
+    o.value = u[0];
+    o.textContent = u[1];
+    keepFloorUnit.appendChild(o);
+  });
+  if (initKeep) {
+    const kb = Number(initKeep[1]);
+    if (kb >= 1073741824 && kb % 1073741824 === 0) {
+      keepFloorUnit.value = 'gb';
+      keepFloorNum.value = String(kb / 1073741824);
+    } else {
+      keepFloorUnit.value = 'mb';
+      keepFloorNum.value = String(Math.max(1, Math.round(kb / 1048576)));
+    }
+  }
   const autoWrap = mk(t('rule.auto.label'), autoSelect);
   const hoursWrap = mk(t('rule.auto.before'), autoHours);
+  const keepFloorWrap = mk(t('rule.auto.keep_label'), keepFloorNum);
+  const keepFloorUnitWrap = mk(t('rule.auto.limit_unit'), keepFloorUnit);
   // 两个控件并排。提示文案**不能**塞进 .field-row：flex 行里它会把两个输入框
   // 挤到近乎 0 宽（输入框 flex-basis 为 0，抢不过带内容的提示）。挂到外层
   // .field 的下方，走 .field .hint 样式，输入框自然各占约一半宽度。
@@ -1993,6 +2024,8 @@ async function openRuleForm(id) {
   autoRow.className = 'field-row';
   autoRow.appendChild(autoWrap.field);
   autoRow.appendChild(hoursWrap.field);
+  autoRow.appendChild(keepFloorWrap.field);
+  autoRow.appendChild(keepFloorUnitWrap.field);
   const autoField = document.createElement('div');
   autoField.className = 'field';
   autoField.appendChild(autoRow);
@@ -2000,9 +2033,15 @@ async function openRuleForm(id) {
   autoHint.className = 'hint';
   autoHint.textContent = t('rule.auto.hint');
   autoField.appendChild(autoHint);
-  function syncAutoHours() { hoursWrap.field.style.display = autoSelect.value === 'older' ? '' : 'none'; }
-  autoSelect.addEventListener('change', syncAutoHours);
-  syncAutoHours();
+  function syncAutoMode() {
+    const isOlder = autoSelect.value === 'older';
+    const isKeep = autoSelect.value === 'keep';
+    hoursWrap.field.style.display = isOlder ? '' : 'none';
+    keepFloorWrap.field.style.display = isKeep ? '' : 'none';
+    keepFloorUnitWrap.field.style.display = isKeep ? '' : 'none';
+  }
+  autoSelect.addEventListener('change', syncAutoMode);
+  syncAutoMode();
   body.appendChild(autoField);
 
   // 文件夹级容量上限：这条规则**自己的目录**占用到量即**触发一次水位自动清理**
@@ -2054,6 +2093,8 @@ async function openRuleForm(id) {
   }
   limitNum.addEventListener('input', syncLimitHint);
   limitUnit.addEventListener('change', syncLimitHint);
+  keepFloorNum.addEventListener('input', syncLimitHint);
+  keepFloorUnit.addEventListener('change', syncLimitHint);
   autoSelect.addEventListener('change', syncLimitHint);
   syncLimitHint();
 
@@ -2062,6 +2103,11 @@ async function openRuleForm(id) {
     if (autoSelect.value === 'older') {
       const h = Math.floor(Number(autoHours.value));
       return h > 0 ? 'older:' + (h * 3600) : '';
+    }
+    if (autoSelect.value === 'keep') {
+      const n = Math.floor(Number(keepFloorNum.value));
+      if (!(n > 0)) return '';
+      return 'keep:' + (keepFloorUnit.value === 'mb' ? n * 1048576 : n * 1073741824);
     }
     return '';
   }
@@ -2198,6 +2244,7 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
     ['before_day', t('clean.mode.day')],
     ['before_hour', t('clean.mode.hour')],
     ['between', t('clean.mode.between')],
+    ['space', t('clean.mode.space')],
   ];
   const radios = [];
   modes.forEach(function (m, i) {
@@ -2240,6 +2287,38 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
   rangeWrap.appendChild(row);
   body.appendChild(rangeWrap);
 
+  // 水位下限输入（仅 space 时显示）：保留时间最近的若干容量，从最旧删起。
+  const spaceWrap = document.createElement('div');
+  spaceWrap.className = 'field';
+  const spaceLabel = document.createElement('label');
+  spaceLabel.textContent = t('clean.keep_floor');
+  const spaceRow = document.createElement('div');
+  spaceRow.className = 'field-row';
+  const spaceNum = document.createElement('input');
+  spaceNum.type = 'number';
+  spaceNum.className = 'input';
+  spaceNum.min = '1';
+  spaceNum.step = '1';
+  spaceNum.value = '100';
+  spaceNum.placeholder = t('clean.keep_floor_ph');
+  const spaceUnit = document.createElement('select');
+  spaceUnit.className = 'select';
+  [['gb', t('rule.auto.unit_gb')], ['mb', t('rule.auto.unit_mb')]].forEach(function (u) {
+    const o = document.createElement('option');
+    o.value = u[0];
+    o.textContent = u[1];
+    spaceUnit.appendChild(o);
+  });
+  spaceRow.appendChild(spaceNum);
+  spaceRow.appendChild(spaceUnit);
+  const spaceHint = document.createElement('div');
+  spaceHint.className = 'hint';
+  spaceHint.textContent = t('clean.keep_floor_hint');
+  spaceWrap.appendChild(spaceLabel);
+  spaceWrap.appendChild(spaceRow);
+  spaceWrap.appendChild(spaceHint);
+  body.appendChild(spaceWrap);
+
   // 保留类型：这些扩展名的文件一律不删（对所有目标生效，见 fsops::exclude::Excludes）
   const keepWrap = document.createElement('div');
   keepWrap.className = 'field';
@@ -2264,6 +2343,8 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
   function syncRange() {
     if (selectedMode() === 'between') rangeWrap.classList.remove('hidden');
     else rangeWrap.classList.add('hidden');
+    if (selectedMode() === 'space') spaceWrap.classList.remove('hidden');
+    else spaceWrap.classList.add('hidden');
   }
   radios.forEach(function (r) { r.addEventListener('change', syncRange); });
   syncRange();
@@ -2273,6 +2354,10 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
     if (mode === 'empty') return { mode: 'empty' };
     if (mode === 'before_day') return { mode: 'before', cutoff: todayMidnightSecs() };
     if (mode === 'before_hour') return { mode: 'before', cutoff: nowSecs() - 3600 };
+    if (mode === 'space') {
+      const n = Math.max(1, Math.floor(Number(spaceNum.value)) || 1);
+      return { mode: 'keep_within', keep_bytes: spaceUnit.value === 'mb' ? n * 1048576 : n * 1073741824 };
+    }
     const from = Math.floor(new Date(fromInput.value).getTime() / 1000);
     const to = Math.floor(new Date(toInput.value).getTime() / 1000);
     return { mode: 'between', from: from, to: to };
@@ -2312,6 +2397,8 @@ async function openCleanDialog(targets, headingText, dialogTitle) {
     delBtn.textContent = t('clean.confirm_del');
   }
   keepInput.addEventListener('input', invalidatePreview);
+  spaceNum.addEventListener('input', invalidatePreview);
+  spaceUnit.addEventListener('change', invalidatePreview);
   radios.forEach(function (r) { r.addEventListener('change', invalidatePreview); });
 
   function ruleName(t) {

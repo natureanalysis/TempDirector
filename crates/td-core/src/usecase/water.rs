@@ -59,7 +59,7 @@ const AUTO_CLEAN_COOLDOWN_SECS: i64 = 30 * 60;
 /// 也推迟 30 分钟。键里只保留「配了上限」的规则，规则删掉后其残留项会被清掉。
 const FOLDER_STATE_KEY: &str = "folder_auto_clean_state";
 
-/// 校验预授权策略串：`''`（未启用）/ `empty` / `older:<正整数秒>`。
+/// 校验预授权策略串：`''`（未启用）/ `empty` / `older:<正整数秒>` / `keep:<正字节数>`。
 /// 空串是合法值（未启用），只有「非空但解析不了」才报错。
 pub fn validate_auto_policy(s: &str) -> TdResult<()> {
     let trimmed = s.trim();
@@ -75,22 +75,36 @@ pub fn validate_auto_policy(s: &str) -> TdResult<()> {
 
 /// 解析预授权策略串 → CleanPolicy（`now` 为当前 Unix 秒）。
 /// `None` = 未启用或格式非法。
+///
+/// 形式：`''` / `empty` / `older:<正整数秒>` / `keep:<正字节数>`。
 pub fn parse_auto_policy(s: &str) -> Option<CleanPolicy> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    match s.trim() {
-        "" => None,
-        "empty" => Some(CleanPolicy::Empty),
-        other => {
-            let secs: i64 = other.strip_prefix("older:")?.trim().parse().ok()?;
-            if secs <= 0 {
-                return None;
-            }
-            Some(CleanPolicy::Before { cutoff: now - secs })
-        }
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
     }
+    if s == "empty" {
+        return Some(CleanPolicy::Empty);
+    }
+    if let Some(rest) = s.strip_prefix("older:") {
+        let secs: i64 = rest.parse().ok()?;
+        if secs <= 0 {
+            return None;
+        }
+        return Some(CleanPolicy::Before { cutoff: now - secs });
+    }
+    // 空间模式：keep:<字节> —— 保留最近修改的这么多字节（水位下限）。
+    if let Some(rest) = s.strip_prefix("keep:") {
+        let bytes: u64 = rest.parse().ok()?;
+        if bytes == 0 {
+            return None;
+        }
+        return Some(CleanPolicy::KeepWithin { keep_bytes: bytes });
+    }
+    None
 }
 
 fn threshold(store: &Store, key: &str, default: f64) -> f64 {
@@ -488,17 +502,33 @@ mod tests {
             parse_auto_policy(" older:3600 "),
             Some(CleanPolicy::Before { .. })
         ));
+        assert_eq!(
+            parse_auto_policy("keep:104857600"),
+            Some(CleanPolicy::KeepWithin { keep_bytes: 104_857_600 }),
+            "空间模式：keep:<字节>"
+        );
+        assert!(matches!(
+            parse_auto_policy(" keep:1 "),
+            Some(CleanPolicy::KeepWithin { .. })
+        ));
         // 非法：前缀不对 / 非数字 / 零 / 负数
         assert!(parse_auto_policy("Empty").is_none(), "大小写敏感");
         assert!(parse_auto_policy("older:abc").is_none());
         assert!(parse_auto_policy("older:0").is_none());
         assert!(parse_auto_policy("older:-5").is_none());
         assert!(parse_auto_policy("older:").is_none());
+        assert!(parse_auto_policy("keep:abc").is_none());
+        assert!(parse_auto_policy("keep:0").is_none(), "下限必须为正");
+        assert!(parse_auto_policy("keep:").is_none());
+        assert!(parse_auto_policy("keep:-1").is_none());
         // 校验函数与解析一致
         assert!(validate_auto_policy("").is_ok());
         assert!(validate_auto_policy("empty").is_ok());
         assert!(validate_auto_policy("older:60").is_ok());
+        assert!(validate_auto_policy("keep:104857600").is_ok());
         assert!(validate_auto_policy("older:x").is_err());
+        assert!(validate_auto_policy("keep:0").is_err());
+        assert!(validate_auto_policy("keep:x").is_err());
     }
 
     // ------------------------------------------------------------------

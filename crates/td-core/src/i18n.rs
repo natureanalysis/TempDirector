@@ -350,6 +350,7 @@ fn zh(key: &str) -> &'static str {
         "resolve.unresolved_vars_err" => "源路径里的环境变量无法解析：{vars}。请以目标用户的身份运行，或改用绝对路径。",
         "clean.invalid_cutoff" => "清理时间点非法",
         "clean.invalid_range" => "时间段非法：起点须为正、且早于终点",
+        "clean.invalid_keep" => "空间清理的水位下限非法：须为正字节数",
         "clean.dir_is_link" => "该目录本身是链接（联接/符号链接），请清理它指向的真实目录：{path}",
         "clean.not_dir" => "不是目录：{path}",
         "lifecycle.write_failed" => "写入 {path} 失败：{err}",
@@ -393,17 +394,17 @@ fn zh(key: &str) -> &'static str {
         "boot.source_and_parent_missing" => "源目录及其父目录都不存在（软件可能未安装）",
         "boot.source_became_plain" => "源路径已变回真实目录（可能被软件更新覆盖），未自动处理，请在界面上重新应用",
         "boot.foreign_reparse" => "源路径是外来重解析点（tag {tag}）",
-        "water.invalid_policy" => "水位自动清理策略不合法：{s}（可用：空 / empty / older:<秒>）",
+        "water.invalid_policy" => "水位自动清理策略不合法：{s}（可用：空 / empty / older:<秒> / keep:<字节>）",
         "water.critical" => "RAM 盘即将写满：{label}（{path}）已用 {pct}%，仅剩 {free}，写满会导致软件写缓存失败",
         "water.warn" => "RAM 盘水位偏高：{label}（{path}）已用 {pct}%，剩余 {free}",
         "water.recovered" => "水位恢复：{label}（{path}）已用 {pct}%，剩余 {free}",
-        "water.bad_rule_policy" => "规则「{name}」的水位自动清理策略不合法：{s}，已跳过（可用：empty / older:<秒>）",
+        "water.bad_rule_policy" => "规则「{name}」的水位自动清理策略不合法：{s}，已跳过（可用：empty / older:<秒> / keep:<字节>）",
         "water.auto_clean_log" => "{trigger}，自动清理 {done} 条预授权规则：删除 {files} 个文件 / {size}{failed}",
         "water.trigger.volume" => "水位触线",
         "water.trigger.folder" => "目录超限",
         "water.failed_suffix" => "，{n} 条失败",
         "schedule.bad_time" => "定时清理的时刻格式不对：{time}（应为 HH:MM），本次跳过",
-        "schedule.bad_rule_policy" => "规则「{name}」的自动清理策略不合法：{s}，已跳过（可用：empty / older:<秒>）",
+        "schedule.bad_rule_policy" => "规则「{name}」的自动清理策略不合法：{s}，已跳过（可用：empty / older:<秒> / keep:<字节>）",
         "schedule.log" => "定时清理：{n} 条预授权规则，删除 {files} 个文件 / {size}{failed}",
         "schedule.failed_suffix" => "，{n} 条失败",
         "cli.elevated_usage" => "用法：tempdirector elevated <job.json>",
@@ -490,6 +491,7 @@ fn zh(key: &str) -> &'static str {
         "cli.clean.policy_empty" => "清空全部文件",
         "cli.clean.policy_before" => "删除 {dur} 之前修改的文件",
         "cli.clean.policy_between" => "删除 {from} ~ {to} 之间修改的文件（左闭右开）",
+        "cli.clean.policy_keep" => "保留最近修改的 {size}，删除更旧的文件",
         "cli.version.data_root_hint" => "数据根可用环境变量 TEMPDIRECTOR_DATA_DIR 覆盖",
         "cli.doctor.env_title" => "== 环境 ==",
         "cli.doctor.data_dir" => "数据目录        {path}",
@@ -806,6 +808,7 @@ fn en(key: &str) -> &'static str {
         "resolve.unresolved_vars_err" => "Cannot resolve environment variables in source path: {vars}. Run as the target user, or use an absolute path.",
         "clean.invalid_cutoff" => "Invalid clean cutoff time",
         "clean.invalid_range" => "Invalid time range: start must be positive and earlier than end",
+        "clean.invalid_keep" => "Invalid keep-within threshold: must be a positive byte count",
         "clean.dir_is_link" => "The directory itself is a link (junction/symlink); clean the real directory it points to: {path}",
         "clean.not_dir" => "Not a directory: {path}",
         "lifecycle.write_failed" => "Failed to write {path}: {err}",
@@ -849,17 +852,17 @@ fn en(key: &str) -> &'static str {
         "boot.source_and_parent_missing" => "Source directory and its parent do not exist (the software may not be installed)",
         "boot.source_became_plain" => "Source path has reverted to a real directory (possibly overwritten by a software update); not auto-handled, please re-apply from the UI",
         "boot.foreign_reparse" => "Source path is a foreign reparse point (tag {tag})",
-        "water.invalid_policy" => "Invalid water auto-clean policy: {s} (valid: empty / empty / older:<seconds>)",
+        "water.invalid_policy" => "Invalid water auto-clean policy: {s} (valid: empty / older:<seconds> / keep:<bytes>)",
         "water.critical" => "RAM disk almost full: {label} ({path}) {pct}% used, only {free} free; full disk will cause cache write failures",
         "water.warn" => "RAM disk water level high: {label} ({path}) {pct}% used, {free} free",
         "water.recovered" => "Water level recovered: {label} ({path}) {pct}% used, {free} free",
-        "water.bad_rule_policy" => "Rule \"{name}\" has invalid water auto-clean policy: {s}, skipped (valid: empty / older:<seconds>)",
+        "water.bad_rule_policy" => "Rule \"{name}\" has invalid water auto-clean policy: {s}, skipped (valid: empty / older:<seconds> / keep:<bytes>)",
         "water.auto_clean_log" => "{trigger}, auto-cleaned {done} pre-authorized rules: deleted {files} files / {size}{failed}",
         "water.trigger.volume" => "Water triggered",
         "water.trigger.folder" => "Directory over limit",
         "water.failed_suffix" => ", {n} failed",
         "schedule.bad_time" => "Invalid scheduled clean time: {time} (expected HH:MM), skipped this run",
-        "schedule.bad_rule_policy" => "Rule \"{name}\" has invalid auto-clean policy: {s}, skipped (valid: empty / older:<seconds>)",
+        "schedule.bad_rule_policy" => "Rule \"{name}\" has invalid auto-clean policy: {s}, skipped (valid: empty / older:<seconds> / keep:<bytes>)",
         "schedule.log" => "Scheduled clean: {n} pre-authorized rules, deleted {files} files / {size}{failed}",
         "schedule.failed_suffix" => ", {n} failed",
         "cli.elevated_usage" => "Usage: tempdirector elevated <job.json>",
@@ -946,6 +949,7 @@ fn en(key: &str) -> &'static str {
         "cli.clean.policy_empty" => "Empty all files",
         "cli.clean.policy_before" => "Delete files modified before {dur}",
         "cli.clean.policy_between" => "Delete files modified between {from} ~ {to} (left-closed, right-open)",
+        "cli.clean.policy_keep" => "Keep the most recently modified {size}; delete older files",
         "cli.version.data_root_hint" => "Data root can be overridden via TEMPDIRECTOR_DATA_DIR env var",
         "cli.doctor.env_title" => "== Environment ==",
         "cli.doctor.data_dir" => "Data dir         {path}",
@@ -1043,6 +1047,26 @@ mod tests {
         ] {
             assert!(!t(key).is_empty(), "en 缺键：{key}");
         }
+        set_locale(Locale::Zh);
+    }
+
+    #[test]
+    fn space_mode_keys_present_in_both_locales() {
+        for key in ["clean.invalid_keep", "cli.clean.policy_keep"] {
+            set_locale(Locale::Zh);
+            assert!(!t(key).is_empty(), "zh 缺键：{key}");
+            set_locale(Locale::En);
+            assert!(!t(key).is_empty(), "en 缺键：{key}");
+        }
+        // 三处有效值列表都应把空间模式列出来。
+        set_locale(Locale::Zh);
+        assert!(t("water.invalid_policy").contains("keep:<字节>"));
+        assert!(t("water.bad_rule_policy").contains("keep:<字节>"));
+        assert!(t("schedule.bad_rule_policy").contains("keep:<字节>"));
+        set_locale(Locale::En);
+        assert!(t("water.invalid_policy").contains("keep:<bytes>"));
+        assert!(t("water.bad_rule_policy").contains("keep:<bytes>"));
+        assert!(t("schedule.bad_rule_policy").contains("keep:<bytes>"));
         set_locale(Locale::Zh);
     }
 

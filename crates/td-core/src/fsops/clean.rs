@@ -1,4 +1,4 @@
-//! 文件夹清理：清空 / 按修改时间批量删除。给缓存目录瘦身的工具。
+//! 文件夹清理：清空 / 按修改时间批量删除 / 按空间保留最近若干字节。给缓存目录瘦身的工具。
 //!
 //! ## 与 `mover::delete_tree` 的三点不同（都是刻意的）
 //!
@@ -53,6 +53,13 @@ pub enum CleanPolicy {
     Before { cutoff: i64 },
     /// 删除修改时间落在 [`from`, `to`) 内的文件（"指定时间段"，左闭右开）。
     Between { from: i64, to: i64 },
+    /// 按空间清理：只保留**最近修改**的若干字节（"水位下限"），从最旧的文件开始删，
+    /// 直到目录占用不高于 `keep_bytes`。
+    ///
+    /// 与时间策略的区别：它不看绝对时间，只看"留多少"，因此**不是逐文件的判断**
+    /// —— 删谁要看全集，由 [`select_keep_within`] 决定，[`CleanPolicy::matches`]
+    /// 对它恒不命中。
+    KeepWithin { keep_bytes: u64 },
 }
 
 impl CleanPolicy {
@@ -72,6 +79,12 @@ impl CleanPolicy {
                 }
                 Ok(())
             }
+            CleanPolicy::KeepWithin { keep_bytes } => {
+                if *keep_bytes == 0 {
+                    return Err(TdError::InvalidPath(t("clean.invalid_keep").into()));
+                }
+                Ok(())
+            }
         }
     }
 
@@ -80,6 +93,10 @@ impl CleanPolicy {
             CleanPolicy::Empty => true,
             CleanPolicy::Before { cutoff } => mtime < *cutoff,
             CleanPolicy::Between { from, to } => mtime >= *from && mtime < *to,
+            // 空间策略不是逐文件判断（删谁取决于全集），**恒返回 false**：
+            // 任何按逐文件过滤的路径都删不掉东西，避免被误当成"全删"。
+            // 真正挑选见 [`select`] / [`select_keep_within`]。
+            CleanPolicy::KeepWithin { .. } => false,
         }
     }
 }
@@ -270,13 +287,58 @@ fn rel_path(root: &Path, child: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// 统一挑选要删的文件：预演与执行共用一份，保证"看到的"与"删掉的"绝不两套口径。
+///
+/// 清空 / 按时间是逐文件判断（[`CleanPolicy::matches`]）；按空间必须看全集，
+/// 走 [`select_keep_within`]。
+fn select<'a>(files: &'a [Candidate], policy: &CleanPolicy) -> Vec<&'a Candidate> {
+    match policy {
+        CleanPolicy::KeepWithin { keep_bytes } => select_keep_within(files, *keep_bytes),
+        other => files.iter().filter(|f| other.matches(f.mtime)).collect(),
+    }
+}
+
+/// 按空间清理：保留最近修改的文件，使目录占用降到 `keep_bytes`（水位下限）以内。
+///
+/// * 总占用本就 ≤ `keep_bytes`：一个都不删；
+/// * 否则按 mtime **降序**（最新在前，mtime 并列时按路径排序以保证结果稳定），
+///   从最旧的开始删，直到剩余 ≤ `keep_bytes`；
+/// * **至少保留时间最新的那个文件**：哪怕它一个就超过下限，也不把目录清空 ——
+///   空间策略的语义是"瘦身"，清空是 [`CleanPolicy::Empty`] 的事。
+///
+/// 拿不到 mtime 的文件被 [`walk_files`] 视作最新（`i64::MAX`），因此总排在最前、
+/// 优先被留下。
+fn select_keep_within<'a>(files: &'a [Candidate], keep_bytes: u64) -> Vec<&'a Candidate> {
+    let total: u64 = files.iter().map(|f| f.bytes).sum();
+    if total <= keep_bytes {
+        return Vec::new();
+    }
+    let mut ordered: Vec<&Candidate> = files.iter().collect();
+    ordered.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.path.cmp(&b.path)));
+
+    let mut remaining = total;
+    let mut victims: Vec<&Candidate> = Vec::new();
+    for f in ordered.iter().rev() {
+        if remaining <= keep_bytes {
+            break;
+        }
+        // 保留时间最新那个（它排在 `ordered[0]`，即 rev() 的最后一项）。
+        if victims.len() + 1 >= ordered.len() {
+            break;
+        }
+        remaining -= f.bytes;
+        victims.push(f);
+    }
+    victims
+}
+
 /// 预演：只算不删。
 pub fn plan(dir: &Path, policy: &CleanPolicy, excludes: &Excludes) -> TdResult<CleanPlan> {
     policy.validate()?;
     let mut links = 0u64;
     let mut excluded = 0u64;
     let files = walk_files(dir, excludes, &mut links, &mut excluded)?;
-    let picked: Vec<&Candidate> = files.iter().filter(|f| policy.matches(f.mtime)).collect();
+    let picked = select(&files, policy);
     Ok(CleanPlan {
         files: picked.len() as u64,
         bytes: picked.iter().map(|f| f.bytes).sum(),
@@ -306,7 +368,7 @@ pub fn run(
     let mut links = 0u64;
     let mut excluded = 0u64;
     let files = walk_files(dir, excludes, &mut links, &mut excluded)?;
-    let picked: Vec<&Candidate> = files.iter().filter(|f| policy.matches(f.mtime)).collect();
+    let picked = select(&files, policy);
     let planned_bytes: u64 = picked.iter().map(|f| f.bytes).sum();
     sink(Progress::Enumerated {
         files: picked.len() as u64,
@@ -524,6 +586,114 @@ mod tests {
     }
 
     #[test]
+    fn keep_within_policy_keeps_newest_and_trims_to_floor() {
+        let base = fixture("keep");
+        let t = axis();
+        // 三个 3 字节文件；下限 4 字节 —— 只留最新的那个也仍超标，故从最旧删到 ≤4。
+        put(&base, "old.bin", b"aaa", t.two_days_ago);
+        put(&base, "mid.bin", b"bbb", t.two_hours_ago);
+        put(&base, "new.bin", b"ccc", t.one_minute_ago);
+
+        let p = CleanPolicy::KeepWithin { keep_bytes: 4 };
+        let planr = plan(&base, &p, &Excludes::default()).unwrap();
+        assert_eq!(planr.files, 2, "总 9 字节要降到 ≤4 至少要删 2 个");
+        assert_eq!(planr.bytes, 6);
+
+        let mut sink = |_| {};
+        let rep = run(&base, &p, &Excludes::default(), false, &mut sink).unwrap();
+        assert_eq!(rep.deleted_files, 2);
+        assert!(base.join("new.bin").exists(), "时间最新的必须保留");
+        assert!(!base.join("mid.bin").exists(), "较旧的先删");
+        assert!(!base.join("old.bin").exists(), "最旧的先删");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn keep_within_does_nothing_when_under_floor() {
+        let base = fixture("keep_under");
+        let t = axis();
+        put(&base, "a.bin", b"aa", t.two_days_ago);
+        put(&base, "b.bin", b"bbb", t.one_minute_ago);
+
+        let p = CleanPolicy::KeepWithin { keep_bytes: 100 };
+        assert_eq!(plan(&base, &p, &Excludes::default()).unwrap().files, 0);
+        let mut sink = |_| {};
+        let rep = run(&base, &p, &Excludes::default(), false, &mut sink).unwrap();
+        assert_eq!(rep.deleted_files, 0, "未到下限不该动文件");
+        assert!(base.join("a.bin").exists());
+        assert!(base.join("b.bin").exists());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn keep_within_always_keeps_the_newest_even_if_oversized() {
+        let base = fixture("keep_single");
+        let t = axis();
+        // 两个 10 字节文件、下限 1 字节：只删到剩最新那个为止，绝不把目录清空。
+        put(&base, "only.bin", b"1234567890", t.one_minute_ago);
+        put(&base, "older.bin", b"1234567890", t.two_days_ago);
+
+        let p = CleanPolicy::KeepWithin { keep_bytes: 1 };
+        let mut sink = |_| {};
+        let rep = run(&base, &p, &Excludes::default(), false, &mut sink).unwrap();
+        assert_eq!(rep.deleted_files, 1, "只删到剩最新那个");
+        assert!(base.join("only.bin").exists(), "时间最新的即便超标也保留");
+        assert!(!base.join("older.bin").exists());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn keep_within_dry_run_deletes_nothing() {
+        let base = fixture("keep_dry");
+        let t = axis();
+        put(&base, "a.bin", b"11111", t.two_days_ago);
+        put(&base, "b.bin", b"22222", t.two_hours_ago);
+        put(&base, "c.bin", b"33333", t.one_minute_ago);
+
+        let p = CleanPolicy::KeepWithin { keep_bytes: 6 };
+        let mut sink = |_| {};
+        let rep = run(&base, &p, &Excludes::default(), true, &mut sink).unwrap();
+        assert_eq!(rep.deleted_files, 2, "预演也要报出将要删的量");
+        assert!(base.join("a.bin").exists(), "预演不得动磁盘");
+        assert!(base.join("b.bin").exists());
+        assert!(base.join("c.bin").exists());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn keep_within_coexists_with_time_policy() {
+        let base = fixture("keep_coexist");
+        let t = axis();
+        put(&base, "old.bin", b"aaa", t.two_days_ago);
+        put(&base, "mid.bin", b"bbb", t.two_hours_ago);
+        put(&base, "new.bin", b"ccc", t.one_minute_ago);
+
+        // 时间策略照旧只动"更早于某点"的；空间策略不吃它选剩的。
+        let cutoff = t.now - 86400;
+        let mut sink = |_| {};
+        let rep = run(&base, &CleanPolicy::Before { cutoff }, &Excludes::default(), false, &mut sink)
+            .unwrap();
+        assert_eq!(rep.deleted_files, 1, "时间模式行为不受空间模式影响");
+        assert!(!base.join("old.bin").exists());
+        assert!(base.join("mid.bin").exists());
+        assert!(base.join("new.bin").exists());
+
+        // 接着按空间清：剩 mid+new 共 6 字节，下限 4 → 删 1 个（mid），留 new。
+        let rep = run(
+            &base,
+            &CleanPolicy::KeepWithin { keep_bytes: 4 },
+            &Excludes::default(),
+            false,
+            &mut sink,
+        )
+        .unwrap();
+        assert_eq!(rep.deleted_files, 1);
+        assert!(base.join("new.bin").exists());
+        assert!(!base.join("mid.bin").exists());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn dry_run_changes_nothing() {
         let base = fixture("dry");
         let t = axis();
@@ -623,6 +793,8 @@ mod tests {
         );
         assert!(CleanPolicy::Between { from: 200, to: 200 }.validate().is_err());
         assert!(CleanPolicy::Between { from: 300, to: 200 }.validate().is_err());
+        assert!(CleanPolicy::KeepWithin { keep_bytes: 104_857_600 }.validate().is_ok());
+        assert!(CleanPolicy::KeepWithin { keep_bytes: 0 }.validate().is_err(), "下限必须为正");
         // 非法策略在 plan/run 入口就该被挡下
         assert!(plan(Path::new("."), &CleanPolicy::Before { cutoff: 0 }, &Excludes::default()).is_err());
     }

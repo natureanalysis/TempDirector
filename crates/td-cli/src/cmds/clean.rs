@@ -11,27 +11,28 @@ use td_core::{TdError, TdResult};
 use crate::parse::Parsed;
 use crate::timefmt::{ago_text, human_duration, local_time_of_day_secs, now_utc_secs, parse_when};
 
-/// 从参数装配四策略之一（互斥）。`water sweep` 复用同一套策略参数。
+/// 从参数装配五策略之一（互斥）。`water sweep` 复用同一套策略参数。
 pub(crate) fn build_clean_policy(p: &Parsed, now_utc: i64, tod_secs: i64) -> TdResult<CleanPolicy> {
     let empty = p.has("empty");
     let yesterday = p.has("yesterday");
     let older = p.value("older-than");
     let from = p.value("from");
     let to = p.value("to");
+    let keep = p.value("keep");
     let range = from.is_some() || to.is_some();
 
-    let chosen = [empty, yesterday, older.is_some(), range]
+    let chosen = [empty, yesterday, older.is_some(), range, keep.is_some()]
         .iter()
         .filter(|b| **b)
         .count();
     if chosen == 0 {
         return Err(TdError::Other(
-            "请指定清理策略：--empty / --yesterday / --older-than <时长> / --from <起> --to <止>"
+            "请指定清理策略：--empty / --yesterday / --older-than <时长> / --from <起> --to <止> / --keep <MB>"
                 .into(),
         ));
     }
     if chosen > 1 {
-        return Err(TdError::Other("清理策略四选一，不能同时指定多个".into()));
+        return Err(TdError::Other("清理策略五选一，不能同时指定多个".into()));
     }
     if empty {
         return Ok(CleanPolicy::Empty);
@@ -44,6 +45,18 @@ pub(crate) fn build_clean_policy(p: &Parsed, now_utc: i64, tod_secs: i64) -> TdR
     if let Some(v) = older {
         return Ok(CleanPolicy::Before {
             cutoff: parse_when(v, now_utc, tod_secs)?,
+        });
+    }
+    if let Some(v) = keep {
+        let mb: u64 = v
+            .trim()
+            .parse()
+            .map_err(|_| TdError::Other("--keep 必须是正整数（单位 MB，水位下限）".into()))?;
+        if mb == 0 {
+            return Err(TdError::Other("--keep 不能为 0（单位 MB）".into()));
+        }
+        return Ok(CleanPolicy::KeepWithin {
+            keep_bytes: mb.saturating_mul(1024 * 1024),
         });
     }
     let f = from.ok_or_else(|| TdError::Other("--from 与 --to 需成对给出".into()))?;
@@ -69,6 +82,10 @@ pub(crate) fn describe_policy(policy: &CleanPolicy, now_utc: i64) -> String {
                 "cli.clean.policy_between",
                 &[("from", from_s.as_str()), ("to", to_s.as_str())],
             )
+        }
+        CleanPolicy::KeepWithin { keep_bytes } => {
+            let size = td_core::util::human_bytes(*keep_bytes);
+            tf("cli.clean.policy_keep", &[("size", size.as_str())])
         }
     }
 }
@@ -194,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn build_policy_four_modes() {
+    fn build_policy_five_modes() {
         assert_eq!(
             build_clean_policy(&parsed(&["--empty"]), NOW, TOD).unwrap(),
             CleanPolicy::Empty
@@ -214,6 +231,12 @@ mod tests {
                 to: NOW - 3600
             }
         );
+        assert_eq!(
+            build_clean_policy(&parsed(&["--keep", "100"]), NOW, TOD).unwrap(),
+            CleanPolicy::KeepWithin {
+                keep_bytes: 100 * 1024 * 1024
+            }
+        );
     }
 
     #[test]
@@ -226,6 +249,18 @@ mod tests {
         assert!(
             build_clean_policy(&parsed(&["--from", "2d"]), NOW, TOD).is_err(),
             "--from 缺 --to 应报错"
+        );
+        assert!(
+            build_clean_policy(&parsed(&["--keep", "0"]), NOW, TOD).is_err(),
+            "--keep 0 应报错"
+        );
+        assert!(
+            build_clean_policy(&parsed(&["--keep", "x"]), NOW, TOD).is_err(),
+            "--keep 非整数应报错"
+        );
+        assert!(
+            build_clean_policy(&parsed(&["--keep", "100", "--empty"]), NOW, TOD).is_err(),
+            "--keep 与其他策略同用应报错"
         );
     }
 }

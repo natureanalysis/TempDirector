@@ -41,12 +41,14 @@ fn print_help_zh() {
             [--link-type junction|symlink_dir] [--enable] [--no-boot] [--notes 备注]
             [--exclude 模式]                     清理时跳过的子目录/文件，可重复多条
                                                  如 --exclude sessions --exclude "logs\\old"
-            [--auto-clean 策略]                  水位到严重线（默认95%）时的预授权清理：
+            [--auto-clean 策略]                  水位到严重线（默认95%）时的预授权清理，两种口径：
                                                  empty（清空）/ older:<秒>（只清早于该秒修改的），
-                                                 如 --auto-clean older:86400；缺省 = 不自动清理
+                                                 或 keep:<字节>（按空间：删到不高于该下限、保留时间最近的），
+                                                 如 --auto-clean older:86400 或 keep:104857600（100MB）；缺省 = 不自动清理
             [--auto-clean-limit MB]               文件夹级容量上限（MB）：该规则目录自身占用达到
                                                  上限即触发一次水位自动清理（按上面的策略清），
-                                                 不看整块盘水位；缺省 = 不启用（须与 --auto-clean 同给）
+                                                 不看整块盘水位；策略用 keep 时它只管何时触发、
+                                                 保留量由 keep 决定；缺省 = 不启用（须与 --auto-clean 同给）
   rules rm <id...>
   rules enable|disable <id...|--all>
 
@@ -55,11 +57,13 @@ fn print_help_zh() {
   locks <规则id|目录路径> [--json]          检测占用并指出是哪个进程占着
   clean <规则id|目录路径> <策略> [--yes] [--json]
         清理文件夹（永久删除，默认只预演，加 --yes 才执行）
-        策略四选一：
+        策略五选一：
           --empty                        清空全部文件
           --yesterday                    昨天及更早修改的（本地零点前）
           --older-than <时长>            早于某时刻，如 1h / 30m / 7d / today / Unix秒
           --from <时> --to <时>          指定时间段 [from,to)，如 --from 7d --to 1d
+          --keep <MB>                    按空间：从最旧删起，直到目录占用不高于该水位下限（MB），
+                                         保留时间最近的 <MB>；始终至少保留最新 1 个文件
   apply <id...|--all> [--dry-run] [--merge] [--sha256] [--skip-lock-check]
   restore <id...|--all> [--dry-run] [--sha256]
   relink <id>                                只重建链接（不动数据）
@@ -131,13 +135,15 @@ Global options:
             [--link-type junction|symlink_dir] [--enable] [--no-boot] [--notes note]
             [--exclude pattern]                     Subdirs/files to skip during clean; can repeat
                                                  e.g. --exclude sessions --exclude "logs\\old"
-            [--auto-clean policy]                  Pre-authorized cleanup when water hits critical (default 95%):
+            [--auto-clean policy]                  Pre-authorized cleanup when water hits critical (default 95%), two flavors:
                                                  empty (clear all) / older:<seconds> (only files modified before that),
-                                                 e.g. --auto-clean older:86400; default = no auto-clean
+                                                 or keep:<bytes> (by space: delete until usage is at or below the floor, keeping the newest),
+                                                 e.g. --auto-clean older:86400 or keep:104857600 (100MB); default = no auto-clean
             [--auto-clean-limit MB]                Per-folder capacity limit (MB): when the rule's own
                                                  directory reaches it, that triggers a water-level
                                                  auto-clean (by the policy above) without waiting for
-                                                 the volume water level; default = off (requires
+                                                 the volume water level; with the keep policy it only decides when to trigger,
+                                                 the floor decides how much to keep; default = off (requires
                                                  --auto-clean)
   rules rm <id...>
   rules enable|disable <id...|--all>
@@ -152,6 +158,8 @@ Global options:
           --yesterday                    Modified yesterday or earlier (before local midnight)
           --older-than <duration>        Older than a moment, e.g. 1h / 30m / 7d / today / Unix-seconds
           --from <time> --to <time>      Time range [from,to), e.g. --from 7d --to 1d
+          --keep <MB>                    By space: delete oldest first until the folder usage is at or
+                                         below this floor (MB); always keeps at least the newest file
   apply <id...|--all> [--dry-run] [--merge] [--sha256] [--skip-lock-check]
   restore <id...|--all> [--dry-run] [--sha256]
   relink <id>                                Rebuild link only (no data movement)
