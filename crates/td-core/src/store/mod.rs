@@ -12,6 +12,7 @@
 
 pub mod model;
 pub mod ops;
+mod repair;
 pub mod rules;
 
 pub use model::{
@@ -55,9 +56,25 @@ impl Store {
     }
 
     /// 打开默认位置（`%PROGRAMDATA%\TempDirector\tempdirector.db`）。
+    ///
+    /// 只读错误先尝试一次自愈：管理员实例被强杀会留下普通用户写不进的
+    /// `-wal`/`-shm`，合并回主库后就能正常打开（见 [`repair`]）。
     pub fn open_default() -> TdResult<Self> {
         crate::paths::ensure_dirs()?;
-        Self::open(&crate::paths::db_path())
+        let db = crate::paths::db_path();
+        match Self::open(&db) {
+            Ok(s) => Ok(s),
+            Err(e) if e.to_string().contains("readonly") => {
+                match repair::repair_readonly_db(&db, &crate::paths::data_dir()) {
+                    Ok(()) => Self::open(&db),
+                    Err(reason) => {
+                        eprintln!("只读规则库自愈未生效：{reason}");
+                        Err(e)
+                    }
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// 内存库，供单元测试使用。
