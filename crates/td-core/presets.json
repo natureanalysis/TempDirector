@@ -42,6 +42,27 @@
     "note": null
   },
   {
+    "name": "Chrome 着色器缓存",
+    "category": "browser",
+    "source_template": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\GrShaderCache",
+    "target_subpath": "browsers\\chrome-grshader-cache",
+    "note": null
+  },
+  {
+    "name": "Edge 着色器缓存",
+    "category": "browser",
+    "source_template": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\GrShaderCache",
+    "target_subpath": "browsers\\edge-grshader-cache",
+    "note": null
+  },
+  {
+    "name": "Edge Graphite 缓存",
+    "category": "browser",
+    "source_template": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\GraphiteDawnCache",
+    "target_subpath": "browsers\\edge-graphite-dawn-cache",
+    "note": null
+  },
+  {
     "name": "npm 缓存",
     "category": "dev",
     "source_template": "%LOCALAPPDATA%\\npm-cache",
@@ -98,6 +119,55 @@
     "note": "含项目索引缓存，首次启动会重建索引（扫描大项目需要几分钟）"
   },
   {
+    "name": "影刀缓存",
+    "category": "dev",
+    "source_template": "%LOCALAPPDATA%\\ShadowBot\\cache",
+    "target_subpath": "dev\\shadowbot-cache",
+    "note": null
+  },
+  {
+    "name": "影刀日志",
+    "category": "dev",
+    "source_template": "%LOCALAPPDATA%\\ShadowBot\\log",
+    "target_subpath": "dev\\shadowbot-log",
+    "note": null
+  },
+  {
+    "name": "用户 .cache 目录",
+    "category": "dev",
+    "source_template": "%USERPROFILE%\\.cache",
+    "target_subpath": "dev\\dot-cache",
+    "note": "pip / uv / huggingface 等各类工具的缓存汇集处，丢弃后按需重建"
+  },
+  {
+    "name": "NuGet 缓存",
+    "category": "dev",
+    "source_template": "%LOCALAPPDATA%\\NuGet",
+    "target_subpath": "dev\\nuget-cache",
+    "note": "HTTP 缓存与插件缓存，丢弃后按需重新下载"
+  },
+  {
+    "name": "NuGet 全局包",
+    "category": "dev",
+    "source_template": "%USERPROFILE%\\.nuget\\packages",
+    "target_subpath": "dev\\nuget-packages",
+    "note": "全局包缓存，丢弃后构建时重新还原（需联网）；离线环境慎用"
+  },
+  {
+    "name": "VS Roslyn 缓存",
+    "category": "dev",
+    "source_template": "%LOCALAPPDATA%\\Microsoft\\VisualStudio\\Roslyn\\Cache",
+    "target_subpath": "dev\\vs-roslyn-cache",
+    "note": null
+  },
+  {
+    "name": "VS 设置日志",
+    "category": "dev",
+    "source_template": "%LOCALAPPDATA%\\Microsoft\\VisualStudio\\SettingsLogs",
+    "target_subpath": "dev\\vs-settings-logs",
+    "note": null
+  },
+  {
     "name": "用户 TEMP",
     "category": "system",
     "source_template": "%LOCALAPPDATA%\\Temp",
@@ -147,6 +217,41 @@
     "note": null
   },
   {
+    "name": "Windows 日志",
+    "category": "system",
+    "source_template": "%WINDIR%\\Logs",
+    "target_subpath": "system\\windows-logs",
+    "note": "CBS / DISM / 安装等日志，丢弃后自重建；需管理员权限"
+  },
+  {
+    "name": "Windows 服务临时目录",
+    "category": "system",
+    "source_template": "%WINDIR%\\SystemTemp",
+    "target_subpath": "system\\windows-system-temp",
+    "note": "系统服务与更新使用的临时目录；需管理员权限"
+  },
+  {
+    "name": "Windows 更新下载缓存",
+    "category": "system",
+    "source_template": "%WINDIR%\\SoftwareDistribution\\Download",
+    "target_subpath": "system\\windows-update-download",
+    "note": "已下载的更新包，Windows 会按需重新下载；需管理员权限，建议先停止 wuauserv"
+  },
+  {
+    "name": "Windows 调试日志",
+    "category": "system",
+    "source_template": "%WINDIR%\\debug",
+    "target_subpath": "system\\windows-debug",
+    "note": "NetSetup / WIA 等调试日志；需管理员权限"
+  },
+  {
+    "name": "低权限临时目录",
+    "category": "system",
+    "source_template": "%USERPROFILE%\\AppData\\LocalLow\\Temp",
+    "target_subpath": "system\\locallow-temp",
+    "note": null
+  },
+  {
     "name": "微信网页缓存",
     "category": "office",
     "source_template": "%APPDATA%\\Tencent\\xwechat\\radium\\web",
@@ -173,5 +278,54 @@
     "source_template": "%APPDATA%\\LarkShell\\CodeCache",
     "target_subpath": "office\\lark-code-cache",
     "note": "只迁 V8 代码缓存；%APPDATA%\\LarkShell 是 Chromium 用户配置目录（含 Default、登录态、Local State），不可整体迁移"
+  },
+  {
+    "name": "企业微信日志",
+    "category": "office",
+    "source_template": "%APPDATA%\\Tencent\\WXWork\\Log",
+    "target_subpath": "office\\wxwork-log",
+    "note": "只迁日志；企业微信的聊天与账号数据在别处，切勿整体迁移 Tencent 目录"
+  },
+  {
+    "name": "腾讯邮箱缓存",
+    "category": "office",
+    "source_template": "%APPDATA%\\Tencent\\WeMail\\cache",
+    "target_subpath": "office\\wemail-cache",
+    "note": null
+  },
+  {
+    "name": "腾讯会议日志",
+    "category": "office",
+    "source_template": "%APPDATA%\\Tencent\\WeMeet\\Global\\Logs",
+    "target_subpath": "office\\wemeet-log",
+    "note": null
+  },
+  {
+    "name": "腾讯会议资源包缓存",
+    "category": "office",
+    "source_template": "%APPDATA%\\Tencent\\WeMeet\\Global\\Data\\DynamicResourcePackage",
+    "target_subpath": "office\\wemeet-resource-package",
+    "note": "下载的资源包；迁走后首次使用需重新下载"
+  },
+  {
+    "name": "腾讯会议资源缓存",
+    "category": "office",
+    "source_template": "%APPDATA%\\Tencent\\WeMeet\\Global\\Data\\DynamicResource",
+    "target_subpath": "office\\wemeet-resource",
+    "note": "解压落地的动态资源；迁走后需重新下载 / 解压"
+  },
+  {
+    "name": "微信日志",
+    "category": "office",
+    "source_template": "%APPDATA%\\Tencent\\xwechat\\log",
+    "target_subpath": "office\\wechat-log",
+    "note": "只迁日志目录；xwechat 下有聊天记录，切勿整体迁移"
+  },
+  {
+    "name": "百度网盘临时目录",
+    "category": "office",
+    "source_template": "%USERPROFILE%\\Documents\\BaiduNetdiskTmp",
+    "target_subpath": "office\\baidu-netdisk-tmp",
+    "note": "下载 / 合并的中转临时文件；传输进行中清理会影响进度"
   }
 ]

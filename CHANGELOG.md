@@ -2,6 +2,33 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-10-29（预设：批量增补 22 条 —— 日志 / 缓存 / 临时目录）
+
+### 预设 —— 从一批候选目录中筛出 22 条可迁移项
+
+收录口径沿用现有标准：内容是纯缓存 / 临时 / 日志，丢弃后软件能自重建，且不含程序本体、登录态与用户数据。新增条目按既有分组插入（browser 3 / dev 7 / system 5 / office 7），清单由 25 条增至 47 条。
+
+* **浏览器着色器缓存**（browser）：`Chrome 着色器缓存`、`Edge 着色器缓存`、`Edge Graphite 缓存` —— Chromium 的 `GrShaderCache` / `GraphiteDawnCache`，纯缓存。Chrome 侧 `GraphiteDawnCache` 未单列（仅 548 KB）。
+* **开发工具**（dev）：`影刀缓存` / `影刀日志`（ShadowBot）、`用户 .cache 目录`、`NuGet 缓存`、`NuGet 全局包`、`VS Roslyn 缓存`、`VS 设置日志`。
+* **Windows 系统**（system）：`Windows 日志`（`C:\\Windows\\Logs`）、`Windows 服务临时目录`、`Windows 更新下载缓存`、`Windows 调试日志`（`C:\\Windows\\debug`）、`低权限临时目录`。需管理员权限的四条都在备注里写明。
+* **腾讯系与百度**（office）：`企业微信日志`、`腾讯邮箱缓存`、`腾讯会议日志`、`腾讯会议资源包缓存`、`腾讯会议资源缓存`、`微信日志`、`百度网盘临时目录`。微信 / 企业微信两条只收窄到 `Log` 子目录（`Tencent` 下有聊天记录，备注里写明）；腾讯会议两条动态资源注明「迁走后首次使用需重新下载」。
+
+### 未收录（13 条，及原因）
+
+* **已存在同名条目**：`%APPDATA%\\kingsoft\\office6\\cache`（即「WPS 缓存」，仅大小写不同）、`%LOCALAPPDATA%\\Temp`（「用户 TEMP」）、`%WINDIR%\\Temp`（「系统 TEMP」）。
+* **组件存储 / 系统关键，丢弃不会重建**：`C:\\Windows\\WinSxS\\Temp`（组件服务事务暂存）、`WinSxS\\Catalogs`、`WinSxS\\Backup`。
+* **卸载 / 修复时必需**：`C:\\ProgramData\\Package Cache`（VC++ / VS 安装缓存，删了会无法修复卸载）。
+* **用户数据**：`%LOCALAPPDATA%\\Microsoft\\VisualStudio\\BackupFiles`（VS 自动恢复备份，与 WPS backup 同处理）。
+* **下载型可执行组件而非缓存**：`%APPDATA%\\Tencent\\WeChat\\XPlugin\\Plugins\\RadiumWMPF`（微信小程序框架插件，迁走后需重新下载；与暂缓收录的 WPS 插件池同类）。
+* **迁到易失盘会失去意义**：`C:\\Windows\\Prefetch` —— 它是跨重启累积的启动加速缓存，放 RAM 盘每次重启清零反而无效，且体积小。
+* **位置在受保护的 System32 下、风险高于收益**：`C:\\Windows\\System32\\LogFiles`。
+* **归属无法确认**：`%APPDATA%\\PLogs`（只见到 `PASS*.log`，判不出属于哪个软件）、`%APPDATA%\\Logs`（本机不存在且路径过于泛化）。
+
+### 验证
+
+* 清单 47 条：`source_template` / `target_subpath` 均唯一，分类合法，全部以 `%VAR%` 开头，仍含 `%LOCALAPPDATA%\\Temp`。
+* `scripts\\cargo.cmd test --workspace` 全绿。
+
 ## 2026-10-29（预设：修正「百度网盘缓存」「飞书缓存」的源目录）
 
 ### 预设 —— 这两条此前指向的是程序本体 / 用户配置目录，不是缓存
