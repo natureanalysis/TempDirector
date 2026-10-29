@@ -30,15 +30,18 @@ set "DO_CLEAN=0"
 if /i "%~1"=="clean"   set "DO_CLEAN=1"
 if /i "%~1"=="--clean" set "DO_CLEAN=1"
 
-rem --- refuse a full clean while the GUI is running --------------------------
-rem cargo clean cannot remove target\release while tempdirector-gui.exe holds
-rem it (the process image / CWD lock): os error 32 plus a half-cleaned target
-rem tree. Fail fast with an actionable message instead. (No NSIS installer
-rem exists yet, so any running tempdirector-gui.exe is the dev build.)
-if "%DO_CLEAN%"=="0" goto :lock_check_done
+rem --- a running GUI locks target\release\tempdirector-gui.exe ---------------
+rem Both modes need the exe closed: cargo clean cannot remove target\release
+rem while the process image holds it, and an incremental rebuild cannot
+rem overwrite the running exe at link time (os error 32 / access denied).
+rem Close it here instead of failing halfway. (No NSIS installer exists yet, so
+rem any running tempdirector-gui.exe is the dev build.)
 tasklist /fi "imagename eq tempdirector-gui.exe" 2>nul | findstr /i /c:"tempdirector-gui.exe" >nul
-if not errorlevel 1 (
-  echo [rebuild] ERROR: tempdirector-gui.exe is running and locks target\release.
+if errorlevel 1 goto :lock_check_done
+echo [rebuild] closing running tempdirector-gui.exe ...
+taskkill /im tempdirector-gui.exe /f >nul 2>&1
+if errorlevel 1 (
+  echo [rebuild] ERROR: tempdirector-gui.exe is running and could not be closed.
   echo [rebuild]        Quit it from the tray first, then rerun rebuild.bat.
   goto :failed
 )
