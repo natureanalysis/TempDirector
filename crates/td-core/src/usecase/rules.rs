@@ -96,52 +96,28 @@ pub fn set_enabled(store: &Store, ids: &[i64], enabled: bool) -> TdResult<usize>
 
 /// settings 键：界面上被隐藏的规则 id（JSON 数组）。
 ///
-/// 隐藏是**展示偏好**，不是规则属性：它不进 `rules` 表，所以
-/// 不参与开机重建 / 水位巡检 / 批量操作，也不随配置导出导入
-/// （导出的是"规则"本身，不是某人当前的界面视图）。
-pub const KEY_HIDDEN_RULES: &str = "hidden_rule_ids";
-
-/// 当前被隐藏的规则 id。手工改库写坏 JSON 时按"没有隐藏"处理。
+/// 隐藏是**展示偏好**，不是规则属性：它不进 `rules` 表，所以不参与开机重建 /
+/// 水位巡检 / 批量操作。但它**随配置导出导入**：导出时逐条挂在规则上
+/// （`portable::BundleRule.hidden`），导入时按来源路径重新绑定到本机规则 ——
+/// 规则 id 跨机器没有意义。
 ///
-/// 返回值按 id 升序，便于落库稳定、也便于测试断言。
+/// 读写原语在 `store` 层（`portable` 位于 `usecase` 之下，不能反向依赖本模块），
+/// 这里只保留同名门面，避免调用方四处改。
+pub use crate::store::KEY_HIDDEN_RULES;
+
+/// 当前被隐藏的规则 id（转发 [`Store::hidden_rule_ids`]）。
+///
+/// 手工改库写坏 JSON 时按"没有隐藏"处理；返回值按 id 升序，便于落库稳定、也便于测试断言。
 pub fn hidden_rule_ids(store: &Store) -> TdResult<Vec<i64>> {
-    let ids = store
-        .get_setting(KEY_HIDDEN_RULES)?
-        .and_then(|s| serde_json::from_str::<Vec<i64>>(&s).ok())
-        .unwrap_or_default();
-    let mut set: std::collections::BTreeSet<i64> = ids.into_iter().collect();
-    // 规则已被删除时，残留的 id 没有意义，顺手清掉（只读不写，写由 set_hidden 负责）。
-    let alive: std::collections::HashSet<i64> = store.list_rules()?.iter().map(|r| r.id).collect();
-    set.retain(|id| alive.contains(id));
-    Ok(set.into_iter().collect())
+    store.hidden_rule_ids()
 }
 
-/// 设置一批规则的隐藏态（`hidden=true` 隐藏 / `false` 恢复显示）。
+/// 设置一批规则的隐藏态（转发 [`Store::set_rules_hidden`]）。
 ///
-/// 为什么整批重写而不是逐条改：状态就是一个 JSON 数组，重写最省事、最不容易
-/// 出现"同一 id 出现两次"这类脏数据。写入前会剔除已删除规则的残留 id ——
-/// 否则残留 id 会一直躺在 settings 里，将来新建出同号的规则会被莫名隐藏。
-///
+/// `hidden=true` 隐藏 / `false` 恢复显示；不存在的 id 静默忽略（可能刚被别处删掉）。
 /// 返回写入后的隐藏总数。
 pub fn set_hidden(store: &Store, ids: &[i64], hidden: bool) -> TdResult<usize> {
-    let alive: std::collections::HashSet<i64> = store.list_rules()?.iter().map(|r| r.id).collect();
-    let mut set: std::collections::BTreeSet<i64> = hidden_rule_ids(store)?.into_iter().collect();
-    for id in ids {
-        if !alive.contains(id) {
-            continue; // 不存在的 id 静默忽略：它可能刚被别处删掉
-        }
-        if hidden {
-            set.insert(*id);
-        } else {
-            set.remove(id);
-        }
-    }
-    let list: Vec<i64> = set.into_iter().collect();
-    store.set_setting(
-        KEY_HIDDEN_RULES,
-        &serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()),
-    )?;
-    Ok(list.len())
+    store.set_rules_hidden(ids, hidden)
 }
 
 /// 同一分类内调整规则顺序（GUI 拖拽排序）。

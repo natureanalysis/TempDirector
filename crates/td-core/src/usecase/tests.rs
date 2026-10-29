@@ -255,6 +255,47 @@ fn export_import_roundtrip_through_api() {
 }
 
 #[test]
+fn hidden_state_survives_config_file_round_trip() {
+    let env = setup("portable_hidden");
+    let src = |d: &str| env.base.join(d).to_string_lossy().into_owned();
+    let a = add_rule(
+        &env.store,
+        &form_at(&env, "藏起来", &src("hide"), "dev\\hide"),
+    )
+    .unwrap();
+    add_rule(
+        &env.store,
+        &form_at(&env, "留着", &src("keep"), "dev\\keep"),
+    )
+    .unwrap();
+    set_hidden(&env.store, &[a], true).unwrap();
+    let file = env.base.join("cfg.json");
+
+    let (_, rules) = export_config(&env.store, &file).unwrap();
+    assert_eq!(rules, 2);
+    // 导出的文件里确实带了隐藏标记（不是只在本机 settings 里）。
+    let text = fs::read_to_string(&file).unwrap();
+    let bundle: crate::portable::Bundle = serde_json::from_str(&text).unwrap();
+    assert_eq!(bundle.rules.iter().filter(|r| r.hidden).count(), 1);
+
+    let other = Store::open_in_memory().unwrap();
+    let rep = import_config(&other, &file, None, false).unwrap();
+    assert_eq!(rep.rules_created, 2);
+    assert_eq!(rep.rules_hidden, 1);
+
+    // 界面用的读视图：导入后隐藏态与导出时一致（同名那条被隐藏，另一条可见）。
+    let hidden: Vec<String> = rule_views(&other)
+        .unwrap()
+        .into_iter()
+        .filter(|v| v.hidden)
+        .map(|v| v.name)
+        .collect();
+    assert_eq!(hidden, vec!["藏起来".to_string()]);
+    assert_eq!(other.hidden_rule_ids().unwrap().len(), 1);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
 fn inspect_source_flags_system_dirs_and_elevation() {
     let ins = inspect_source(r"C:\Windows\System32").unwrap();
     assert!(!ins.blocking.is_empty());
@@ -673,7 +714,10 @@ fn clean_keeps_requested_file_types_end_to_end() {
 
     let r = clean_run(&env.store, &t, &empty_policy(), &types, false, &mut |_| {}).unwrap();
     assert_eq!(r.deleted_files, 2);
-    assert!(env.source.join("script.py").exists(), "声明保留的类型必须活着");
+    assert!(
+        env.source.join("script.py").exists(),
+        "声明保留的类型必须活着"
+    );
     assert!(!env.source.join("junk.bin").exists(), "其余文件照常清理");
     let _ = fs::remove_dir_all(&env.base);
 }

@@ -1742,6 +1742,7 @@ async function doImport() {
     if (!path) return;
     const rep = await invoke('import_config', { path: path, ramRoot: null, dryRun: false });
     const msg = tf('io.import_msg', { roots: rep.roots_created, rules: rep.rules_created, skipped: rep.rules_skipped }) +
+      (rep.rules_hidden ? tf('io.import_hidden', { n: rep.rules_hidden }) : '') +
       (rep.errors.length ? tf('io.import_errors', { n: rep.errors.length }) : '');
     toast(t('io.imported'), msg, rep.errors.length ? 'warn' : 'ok');
     if (rep.errors.length) {
@@ -3384,7 +3385,7 @@ function createMockBackend() {
           return Promise.resolve(out);
         }
         case 'export_config': return Promise.resolve([1, rules.length]);
-        case 'import_config': return Promise.resolve({ roots_reused: 1, roots_created: 0, rules_created: 5, rules_skipped: 2, errors: ['第 3 条规则「Photoshop 暂存盘」未导入：已存在指向同一路径的规则'], dry_run: false });
+        case 'import_config': return Promise.resolve({ roots_reused: 1, roots_created: 0, rules_created: 5, rules_skipped: 2, rules_hidden: 2, errors: ['第 3 条规则「Photoshop 暂存盘」未导入：已存在指向同一路径的规则'], dry_run: false });
         case 'pick_folder': return Promise.resolve(null);
         case 'pick_save_file': return Promise.resolve(null);
         case 'pick_open_file': return Promise.resolve(null);

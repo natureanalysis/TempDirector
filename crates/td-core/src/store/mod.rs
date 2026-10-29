@@ -32,6 +32,14 @@ pub const SCHEMA_VERSION: i32 = 4;
 /// 视为"已结束"的操作流水阶段。其余阶段在启动时都算待修复项。
 pub const OP_TERMINAL_PHASES: [&str; 3] = ["done", "failed", "rolled_back"];
 
+/// settings 键：界面上被隐藏的规则 id（JSON 数组）。
+///
+/// 隐藏是**展示偏好**，不是规则属性：它不进 `rules` 表，所以不参与开机重建 /
+/// 水位巡检 / 批量操作。但它**随配置导出导入**（见 `crate::portable`）：导出时
+/// 逐条挂在规则上（`BundleRule::hidden`），导入时按来源路径重新绑定到本机规则 ——
+/// 规则 id 跨机器没有意义，只有来源路径能对上。
+pub const KEY_HIDDEN_RULES: &str = "hidden_rule_ids";
+
 pub struct Store {
     conn: Connection,
 }
@@ -135,6 +143,51 @@ impl Store {
             rusqlite::params![key, value],
         )?;
         Ok(())
+    }
+
+    // ---------------- 隐藏态（存在 settings，不是规则属性） ----------------
+
+    /// 当前被隐藏的规则 id（升序）。手工改库写坏 JSON 时按"没有隐藏"处理。
+    ///
+    /// 已删除规则的残留 id 会被顺手剔除（只读不写；落库由 [`Store::set_rules_hidden`]
+    /// 负责），否则残留 id 会一直躺在 settings 里，将来新建出同号规则会被莫名隐藏。
+    pub fn hidden_rule_ids(&self) -> TdResult<Vec<i64>> {
+        let ids = self
+            .get_setting(KEY_HIDDEN_RULES)?
+            .and_then(|s| serde_json::from_str::<Vec<i64>>(&s).ok())
+            .unwrap_or_default();
+        let mut set: std::collections::BTreeSet<i64> = ids.into_iter().collect();
+        let alive: std::collections::HashSet<i64> =
+            self.list_rules()?.iter().map(|r| r.id).collect();
+        set.retain(|id| alive.contains(id));
+        Ok(set.into_iter().collect())
+    }
+
+    /// 整批设置隐藏态（`hidden=true` 隐藏 / `false` 恢复显示），返回写入后的隐藏总数。
+    ///
+    /// 为什么整批重写而不是逐条改：状态就是一个 JSON 数组，重写最省事、也最不容易
+    /// 出现"同一 id 出现两次"这类脏数据。不存在的 id 静默忽略（可能刚被别处删掉）。
+    pub fn set_rules_hidden(&self, ids: &[i64], hidden: bool) -> TdResult<usize> {
+        let alive: std::collections::HashSet<i64> =
+            self.list_rules()?.iter().map(|r| r.id).collect();
+        let mut set: std::collections::BTreeSet<i64> =
+            self.hidden_rule_ids()?.into_iter().collect();
+        for id in ids {
+            if !alive.contains(id) {
+                continue;
+            }
+            if hidden {
+                set.insert(*id);
+            } else {
+                set.remove(id);
+            }
+        }
+        let list: Vec<i64> = set.into_iter().collect();
+        self.set_setting(
+            KEY_HIDDEN_RULES,
+            &serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()),
+        )?;
+        Ok(list.len())
     }
 
     pub fn all_settings(&self) -> TdResult<Vec<(String, String)>> {
