@@ -45,6 +45,7 @@ launch defaults to English, and the choice is remembered.
   linked rule prompts you to re-apply. Clicking a built-in template’s name pre-fills the draft row
   instead; ticking it still creates and applies in one step. Clicking another cell while editing
   saves the old cell and opens the new one, and scroll position / focus survive the refresh.
+  Low-frequency columns can be hidden under “More → Columns”; the choice is remembered locally.
 * **Also**: batch progress overlay, activity log, settings (autostart / scheduled cleaning /
   target roots), and a tray menu.
 

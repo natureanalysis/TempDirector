@@ -48,6 +48,11 @@ function invoke(name, args) {
 // 状态
 // ---------------------------------------------------------------------------
 
+// 列显示偏好：只允许隐藏低频列，键名同时用于 table.rules 的 class 和 localStorage。
+const HIDDEN_COLS_KEY = 'tempdirector.hiddenCols';
+const COL_KEYS = ['link', 'auto', 'limit', 'excludes', 'notes'];
+const COL_WIDTHS = { link: 76, auto: 150, limit: 112, excludes: 80, notes: 110 };
+
 const state = {
   snap: null,
   picked: new Set(),
@@ -74,6 +79,8 @@ const state = {
   // 列表顶部的新规则草稿（null = 没有草稿行）。新增规则不再弹表单，直接在
   // 列表行里填；保存后才写入后端，取消就丢掉这一行。
   draft: null,
+  // 被隐藏的表格列（localStorage 持久化）。只影响展示，不影响任何后端行为。
+  hiddenCols: loadHiddenCols(),
 };
 
 // 分类标签走 i18n（键 cat.<category>）；未收录的分类回退原始值。
@@ -81,6 +88,44 @@ function categoryLabel(c) {
   if (!c) return c;
   const label = t('cat.' + c);
   return label === 'cat.' + c ? c : label;
+}
+
+// ---------------------------------------------------------------------------
+// 列显示偏好（localStorage；只影响前端展示）
+// ---------------------------------------------------------------------------
+
+function loadHiddenCols() {
+  try {
+    const raw = localStorage.getItem(HIDDEN_COLS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.filter(function (k) { return COL_KEYS.indexOf(k) >= 0; }));
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveHiddenCols() {
+  try {
+    localStorage.setItem(HIDDEN_COLS_KEY, JSON.stringify(Array.from(state.hiddenCols)));
+  } catch (e) { /* 隐私模式 / 配额满：退化为本次会话生效 */ }
+}
+
+/** 同步 table.rules 的 class、最小宽度和「更多」菜单里的勾选态。 */
+function applyColumnVisibility() {
+  const table = document.querySelector('table.rules');
+  if (!table) return;
+  let min = 1560;
+  COL_KEYS.forEach(function (key) {
+    const hidden = state.hiddenCols.has(key);
+    table.classList.toggle('hide-col-' + key, hidden);
+    if (hidden) min -= COL_WIDTHS[key];
+  });
+  table.style.minWidth = Math.max(900, min) + 'px';
+  document.querySelectorAll('#more-menu input[data-col]').forEach(function (cb) {
+    cb.checked = !state.hiddenCols.has(cb.dataset.col);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +222,7 @@ function render() {
   renderFilterOptions();
   renderSidebar();
   renderRows();
+  applyColumnVisibility();
   renderDetail();
   renderSortIndicators();
 }
@@ -2689,7 +2735,7 @@ function renderDraftRow() {
 
   fieldTd('name', 'cell-name-wrap');
   fieldTd('category');
-  fieldTd('link_type');
+  fieldTd('link_type', 'cell-link');
   fieldTd('source', 'cell-source');
   fieldTd('target', 'cell-target');
 
@@ -3637,7 +3683,8 @@ document.addEventListener('click', async function (ev) {
   // 「更多」菜单：点菜单外任意处收起；点「更多」切换；点菜单项后收起再走下面的分支。
   if (!closest('.more-wrap')) hideMoreMenu();
   if (el.id === 'btn-more') { toggleMoreMenu(); return; }
-  if (closest('#more-menu')) hideMoreMenu();
+  // 列显示开关要能连续勾选，点它时不要收起菜单；其它菜单项照旧收起。
+  if (closest('#more-menu') && !closest('.menu-check')) hideMoreMenu();
   if (el.id === 'btn-refresh') await refresh(true);
   else if (el.id === 'btn-add') startDraftRule();
   else if (el.id === 'btn-apply') { if (requireAnyPick(t('pick.apply'))) await applyPickedAll(); }
@@ -3689,6 +3736,15 @@ document.addEventListener('change', function (ev) {
     const key = tplKey(el.dataset.tpl);
     if (el.checked) state.pickedTpl.add(key); else state.pickedTpl.delete(key);
     renderRows();
+    return;
+  }
+  // 「更多」菜单里的列显示开关：只改前端展示，存 localStorage。
+  if (el.dataset && el.dataset.col && el.type === 'checkbox') {
+    const key = el.dataset.col;
+    if (COL_KEYS.indexOf(key) < 0) return;
+    if (el.checked) state.hiddenCols.delete(key); else state.hiddenCols.add(key);
+    saveHiddenCols();
+    applyColumnVisibility();
     return;
   }
   if (el.id === 'filter-category') { applyCategory(el.value); }

@@ -239,6 +239,21 @@ input, select { font-family: inherit; font-size: 13px; }
 .menu-item.danger { color: var(--danger); }
 .menu-item.danger:hover { background: var(--danger-bg); color: var(--danger); }
 .menu-sep { height: 1px; background: var(--line); margin: 5px 4px; }
+.menu-head { font-size: 11px; color: var(--muted); padding: 6px 10px 3px; }
+.menu-check { display: flex; align-items: center; gap: 8px; }
+.menu-check input { accent-color: var(--brand); cursor: pointer; }
+
+/* 列显示偏好（「更多」菜单里勾选）。隐藏时连同表头、正式行、模板行、草稿行一起收起。 */
+table.rules.hide-col-link th.col-link,
+table.rules.hide-col-link td.cell-link,
+table.rules.hide-col-auto th.col-auto,
+table.rules.hide-col-auto td.cell-auto,
+table.rules.hide-col-limit th.col-limit,
+table.rules.hide-col-limit td.cell-limit,
+table.rules.hide-col-excludes th.col-excludes,
+table.rules.hide-col-excludes td.cell-excludes,
+table.rules.hide-col-notes th.col-notes,
+table.rules.hide-col-notes td.cell-notes { display: none; }
 
 /* 行右键菜单（上下文菜单）：对所选条目执行特定操作。定位走 CSSOM
    （position:fixed + 光标坐标），z-index 40 —— 高于「更多」下拉(30)、

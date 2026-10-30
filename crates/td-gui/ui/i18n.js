@@ -47,6 +47,12 @@ const DICT = {
     'menu.relink': '仅重建链接',
     'menu.boot': '执行开机重建',
     'menu.restore_all': '恢复全部规则…',
+    'menu.columns': '显示列',
+    'menu.col_link': '链接',
+    'menu.col_auto': '自动清理',
+    'menu.col_limit': '容量上限',
+    'menu.col_excludes': '排除',
+    'menu.col_notes': '备注',
 
     // 筛选
     'filter.search': '搜索名称 / 源路径 / 目标子目录…',
@@ -573,6 +579,12 @@ const DICT = {
     'menu.relink': 'Relink only',
     'menu.boot': 'Run boot rebuild',
     'menu.restore_all': 'Restore all rules…',
+    'menu.columns': 'Columns',
+    'menu.col_link': 'Link',
+    'menu.col_auto': 'Auto-clean',
+    'menu.col_limit': 'Limit',
+    'menu.col_excludes': 'Excludes',
+    'menu.col_notes': 'Notes',
 
     // 筛选
     'filter.search': 'Search name / source path / target subpath…',
