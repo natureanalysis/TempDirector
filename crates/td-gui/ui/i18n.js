@@ -162,6 +162,8 @@ const DICT = {
     'tpl.hint': '内置模板 —— 勾选后点「应用选中」自动建规则并重定向',
     'tpl.add_apply': '添加并应用',
     'tpl.add_failed': '添加模板失败：{name}',
+    'tpl.draft_tip': '点击载入顶部草稿行，可修改后再保存',
+    'tpl.draft_loaded': '已用模板填好草稿行',
 
     // 行右键菜单
     'ctx.title_rules': '{n} 条规则',
@@ -686,6 +688,8 @@ const DICT = {
     'tpl.hint': 'Built-in template — tick it and “Apply selected” creates the rule and redirects',
     'tpl.add_apply': 'Add & apply',
     'tpl.add_failed': 'Failed to add template: {name}',
+    'tpl.draft_tip': 'Click to load into the draft row at the top, then edit and save',
+    'tpl.draft_loaded': 'Template loaded into the draft row',
 
     // row context menu
     'ctx.title_rules': '{n} rules',

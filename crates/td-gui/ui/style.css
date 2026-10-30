@@ -406,6 +406,9 @@ table.rules tbody tr.tpl-row { background: #fbfdff; }
 table.rules tbody tr.tpl-row:hover { background: #f2f8ff; }
 table.rules tbody tr.tpl-row.picked { background: #eef4ff; box-shadow: inset 3px 0 0 var(--brand); }
 table.rules tbody tr.tpl-row .cell-name { color: var(--ink-2); }
+/* 模板行名称：点击载入草稿行（可改后再存），悬停给出可点击提示。 */
+.tpl-pick { cursor: pointer; }
+.tpl-pick:hover .cell-name { color: var(--brand); text-decoration: underline dotted; }
 
 .col-check { width: 34px; }
 .col-badge { width: 82px; }
@@ -431,6 +434,7 @@ table.rules tbody tr.tpl-row .cell-name { color: var(--ink-2); }
   transition: background .12s, box-shadow .12s;
 }
 .cell-edit:hover { background: #f4f9ff; box-shadow: inset 0 0 0 1px #dbeafe; }
+.cell-edit:focus { outline: 2px solid #bfdbfe; outline-offset: -2px; }
 .cell-edit.editing { background: #f8fbff; box-shadow: inset 0 0 0 1px #93c5fd; padding: 4px 6px; }
 .cell-edit.none { color: var(--muted); }
 td.cell-flags { cursor: default; }

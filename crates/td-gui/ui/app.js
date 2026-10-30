@@ -613,6 +613,10 @@ function syncSelectAll(rows) {
 function renderRows() {
   // 重画会销毁正在编辑的单元格：放弃旧编辑器的引用，避免之后误提交已脱离 DOM 的输入。
   activeCellEditor = null;
+  // 保存 / 刷新后保持横向与纵向滚动位置，连续编辑时列表不跳回顶部。
+  const wrap = document.querySelector('.table-wrap');
+  const keepTop = wrap ? wrap.scrollTop : 0;
+  const keepLeft = wrap ? wrap.scrollLeft : 0;
   // 重画行会丢掉 .ctx-target 高亮，菜单留着也没意义 —— 直接收起。
   if (ctxTarget) closeRowMenu();
   const rows = filteredRules();
@@ -663,6 +667,8 @@ function renderRows() {
       td.dataset.id = String(r.id);
       td.dataset.field = field;
       td.title = t('table.edit_tip');
+      // 保存后可以把焦点还给这一格（Enter / F2 再次进入编辑）。
+      td.tabIndex = -1;
       tr.appendChild(td);
       return td;
     };
@@ -836,6 +842,10 @@ function renderRows() {
   // 「未添加」徽标），与库里已有规则视觉上分开。
   tpls.forEach(function (p) { frag.appendChild(templateRow(p)); });
   tbody.appendChild(frag);
+  if (wrap) {
+    wrap.scrollTop = keepTop;
+    wrap.scrollLeft = keepLeft;
+  }
 }
 
 /** 单条内置模板行。勾选后随「应用选中」一并建规则 + 建链，全程不开表单。 */
@@ -866,6 +876,10 @@ function templateRow(p) {
 
   // 名称 + 提示（有 note 用 note，没有就给默认的"勾选即应用"说明）
   const tdName = document.createElement('td');
+  tdName.className = 'tpl-pick';
+  tdName.dataset.act = 'tpl-draft';
+  tdName.dataset.tpl = p.source_template;
+  tdName.title = t('tpl.draft_tip');
   const nm = document.createElement('div');
   nm.className = 'cell-name';
   nm.textContent = p.name;
@@ -2021,6 +2035,10 @@ async function doImport() {
 
 /** 当前正在编辑的单元格（同一时刻只允许一个）。 */
 let activeCellEditor = null;
+/** 编辑另一格时，先把当前格提交，成功/取消后自动打开这一格。 */
+let pendingCell = null;
+/** 当前格提交后要载入的模板（点模板行时先把正在编辑的单元格保存掉）。 */
+let pendingTemplate = null;
 /** 行内保存进行中：此时刷新/重画会吞掉焦点，先拒绝新的编辑动作。 */
 let inlineSaving = false;
 
@@ -2384,6 +2402,7 @@ function beginCellEdit(td, rule, field) {
   td.appendChild(editor.node);
 
   let done = false;
+  let busy = false;
   let timer = null;
 
   function cleanup() {
@@ -2397,10 +2416,10 @@ function beginCellEdit(td, rule, field) {
     done = true;
     cleanup();
     renderRows();
+    runPending(rule.id, field);
   }
 
-  async function commit() {
-    if (done) return;
+  async function doCommit() {
     let patch = editor.read();
     if (!patch) {
       cancel();
@@ -2412,17 +2431,23 @@ function beginCellEdit(td, rule, field) {
       const limitProblem = form.auto_clean_limit_bytes > 0 && !form.auto_clean_policy;
       if (limitProblem && field === 'clean_limit') {
         toast(t('common.save_failed'), t('inline.limit_needs_policy_hint'), 'error');
+        pendingCell = null;
+        pendingTemplate = null;
         cancel();
         openCellEditor(rule.id, 'clean_policy', true);
         return true;
       }
       if (limitProblem && field === 'clean_policy') {
         toast(t('common.save_failed'), t('inline.policy_needs_limit_hint'), 'error');
+        pendingCell = null;
+        pendingTemplate = null;
         cancel();
         openCellEditor(rule.id, 'clean_limit', true);
         return true;
       }
-      // 其它校验不过就留在编辑态，别把用户刚输入的内容清掉。
+      // 其它校验不过就留在编辑态，别把用户刚输入的内容清掉；这一次点击不再跳格。
+      pendingCell = null;
+      pendingTemplate = null;
       toast(t('common.save_failed'), e.message, 'error');
       editor.focus.focus();
       return true;
@@ -2436,7 +2461,11 @@ function beginCellEdit(td, rule, field) {
 
     if (editor.check) {
       const problem = await editor.check();
+      // 校验是异步的：等待期间用户可能按了 Esc / 点了别处，已经关闭这一格。
+      if (done) return;
       if (problem) {
+        pendingCell = null;
+        pendingTemplate = null;
         toast(t('common.save_failed'), problem, 'error');
         editor.focus.focus();
         return;
@@ -2462,6 +2491,13 @@ function beginCellEdit(td, rule, field) {
     done = true;
     cleanup();
     await saveRulePatch(rule, patch);
+    runPending(rule.id, field);
+  }
+
+  function commit() {
+    if (done || busy) return Promise.resolve();
+    busy = true;
+    return doCommit().finally(function () { busy = false; });
   }
 
   activeCellEditor = { commit: commit, cancel: cancel };
@@ -2528,39 +2564,68 @@ function openCellEditor(id, field, flash) {
   beginCellEdit(td, rule, field);
 }
 
+/** 上一格提交完后的收尾：打开刚点的新格 / 载入刚点的模板 / 把焦点还给原格。 */
+function runPending(ownId, ownField) {
+  if (pendingCell) {
+    const next = pendingCell;
+    pendingCell = null;
+    openCellEditor(next.id, next.field);
+    return;
+  }
+  if (pendingTemplate) {
+    const preset = pendingTemplate;
+    pendingTemplate = null;
+    startDraftRule(preset);
+    return;
+  }
+  if (ownId !== undefined) refocusCell(ownId, ownField);
+}
+
+/** 保存后把焦点还给同一格，键盘用户可以继续按 Enter / F2 编辑。 */
+function refocusCell(id, field) {
+  const td = document.querySelector('#rows tr[data-id="' + id + '"] td[data-field="' + field + '"]');
+  if (td) td.focus({ preventScroll: true });
+}
+
 /** 详情面板 / 右键菜单的「编辑」：滚到该行并直接打开名称单元格。 */
 function focusInlineEdit(id) {
   openCellEditor(id, 'name');
 }
 
 /** 列表顶部插入一条空白草稿行，所有字段直接在行内填。 */
-function startDraftRule() {
+/** 列表顶部插入草稿行；传入 preset 时用内置模板预填（仍然只填草稿，不直接建规则）。 */
+function startDraftRule(preset) {
   if (!state.snap) return;
   if (!(state.snap.roots || []).length) {
     toast(t('rule.no_root_title'), t('rule.no_root_hint'), 'warn');
     return;
   }
-  if (state.draft) {
+  // 再点一次「添加规则」只是把焦点带回草稿；点模板才用模板覆盖草稿。
+  if (!preset && state.draft) {
     focusDraft('name');
     return;
   }
   const cats = state.snap.categories || ['other'];
+  const category = preset && cats.indexOf(preset.category) >= 0
+    ? preset.category
+    : (cats.indexOf('other') >= 0 ? 'other' : cats[0]);
   state.draft = {
-    name: '',
-    category: cats.indexOf('other') >= 0 ? 'other' : cats[0],
-    source_template: '',
+    name: preset ? (preset.name || '') : '',
+    category: category,
+    source_template: preset ? (preset.source_template || '') : '',
     target_root_id: state.snap.roots[0].id,
-    target_subpath: '',
+    target_subpath: preset ? (preset.target_subpath || '') : '',
     link_type: 'junction',
     want_enabled: true,
     rebuild_on_boot: true,
-    notes: null,
+    notes: preset ? (preset.note || null) : null,
     excludes: [],
     auto_clean_policy: '',
     auto_clean_limit_bytes: 0,
   };
   renderRows();
   focusDraft('name');
+  if (preset) toast(t('tpl.draft_loaded'), preset.name, 'ok');
 }
 
 function focusDraft(field) {
@@ -3505,7 +3570,20 @@ document.addEventListener('click', async function (ev) {
       catch (e) { toast(t('toast.reveal_failed'), e.message, 'error'); }
       return;
     }
-    // 内置模板行：「添加并应用」= 建规则 + 立刻建链（等价于勾选后按「应用选中」）
+    // 内置模板行：点名称把模板载入顶部草稿行，先改再存；「添加并应用」仍是一步到位。
+    if (act === 'tpl-draft') {
+      if (inlineSaving) return;
+      const p = (state.presets || []).find(function (x) { return tplKey(x.source_template) === tplKey(target.dataset.tpl); });
+      if (!p) return;
+      if (activeCellEditor) {
+        // 当前格还在编辑：先提交，提交完再载入模板到草稿行。
+        pendingTemplate = p;
+        activeCellEditor.commit();
+        return;
+      }
+      startDraftRule(p);
+      return;
+    }
     if (act === 'tpl-apply') {
       const p = (state.presets || []).find(function (x) { return tplKey(x.source_template) === tplKey(target.dataset.tpl); });
       if (!p) return;
@@ -3519,9 +3597,16 @@ document.addEventListener('click', async function (ev) {
   // 先切到该条规则，再由 beginCellEdit 原地换成输入控件（不弹任何对话框）。
   const cell = ev.target.closest ? ev.target.closest('td[data-field]') : null;
   if (cell && !(ev.target.closest && ev.target.closest('.cell-editor'))) {
+    if (cell.classList.contains('editing') || inlineSaving) return;
     const id = Number(cell.dataset.id);
     const rule = (state.snap.rules || []).find(function (r) { return r.id === id; });
     if (rule) {
+      if (activeCellEditor) {
+        // 当前格还在编辑：先提交它，成功/取消后自动落到刚点的这一格。
+        pendingCell = { id: id, field: cell.dataset.field };
+        activeCellEditor.commit();
+        return;
+      }
       state.focusId = id;
       document.querySelectorAll('#rows tr.selected').forEach(function (tr) { tr.classList.remove('selected'); });
       const tr = cell.closest('tr');
@@ -3626,6 +3711,17 @@ document.addEventListener('input', function (ev) {
 });
 
 document.addEventListener('keydown', function (ev) {
+  // 保存后焦点留在单元格上：Enter / F2 直接再次进入编辑，方便键盘连续修改。
+  const editCell = ev.target && ev.target.closest ? ev.target.closest('td[data-field]') : null;
+  if (editCell && !(ev.target.closest && ev.target.closest('.cell-editor')) &&
+      (ev.key === 'Enter' || ev.key === 'F2')) {
+    ev.preventDefault();
+    if (inlineSaving) return;
+    const id = Number(editCell.dataset.id);
+    const rule = (state.snap.rules || []).find(function (r) { return r.id === id; });
+    if (rule) beginCellEdit(editCell, rule, editCell.dataset.field);
+    return;
+  }
   if (ev.key === 'Escape') {
     // 行右键菜单最轻，最先关（再按一次才轮到弹窗 / 详情）。
     if (ctxTarget) { closeRowMenu(); return; }

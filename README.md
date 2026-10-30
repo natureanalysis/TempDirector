@@ -42,7 +42,9 @@ launch defaults to English, and the choice is remembered.
   link type, source, target root + subpath, flags, auto-clean policy, capacity limit,
   excludes and notes. Enter or blur saves, Esc reverts. Source paths are expanded and validated
   inline; protected paths are marked and blocked. Changing source / target / link type on a
-  linked rule prompts you to re-apply.
+  linked rule prompts you to re-apply. Clicking a built-in template’s name pre-fills the draft row
+  instead; ticking it still creates and applies in one step. Clicking another cell while editing
+  saves the old cell and opens the new one, and scroll position / focus survive the refresh.
 * **Also**: batch progress overlay, activity log, settings (autostart / scheduled cleaning /
   target roots), and a tray menu.
 
