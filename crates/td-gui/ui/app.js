@@ -2138,6 +2138,8 @@ function buildFieldEditor(field, src) {
   box.className = 'cell-editor';
   let focus = null;
   let read = function () { return null; };
+  /** 可选的异步校验：返回错误文案，null 表示可以保存。 */
+  let check = null;
 
   if (field === 'name' || field === 'notes') {
     const inp = cellInput(
@@ -2153,9 +2155,69 @@ function buildFieldEditor(field, src) {
   } else if (field === 'source') {
     const inp = cellInput(src.source_template, t('inline.source_ph'));
     inp.spellcheck = false;
+    const hint = document.createElement('div');
+    hint.className = 'cell-hint';
     box.appendChild(inp);
+    box.appendChild(hint);
     focus = inp;
+    let seq = 0;
+    let wait = null;
+
+    /** 行内提示源路径展开结果；阻断路径返回错误文案（保存会被拦下）。 */
+    async function runCheck() {
+      if (wait) {
+        clearTimeout(wait);
+        wait = null;
+      }
+      const value = inp.value.trim();
+      const my = ++seq;
+      if (!value) {
+        hint.textContent = '';
+        hint.className = 'cell-hint';
+        hint.title = '';
+        return null;
+      }
+      try {
+        const info = await invoke('inspect_source', { template: value });
+        if (my !== seq) return null;
+        if (info.blocking && info.blocking.length) {
+          hint.textContent = '⛔ ' + info.blocking.join('；');
+          hint.className = 'cell-hint err';
+          hint.title = hint.textContent;
+          return info.blocking.join('；');
+        }
+        const parts = [
+          tf('rule.src.expanded', { path: info.expanded }) +
+            (info.exists ? t('rule.src.exists') : t('rule.src.not_exist')),
+        ];
+        if (info.unknown_vars && info.unknown_vars.length) {
+          parts.push(tf('rule.src.unknown', { vars: info.unknown_vars.join(t('list.sep')) }));
+        }
+        if (info.requires_elevation) parts.push(t('rule.src.elev'));
+        hint.textContent = parts.join(' · ');
+        hint.className = 'cell-hint ' +
+          ((info.unknown_vars && info.unknown_vars.length) || info.requires_elevation ? 'warn' : 'ok');
+        hint.title = hint.textContent;
+        return null;
+      } catch (e) {
+        if (my !== seq) return null;
+        // 校验命令本身失败时不阻断保存，交给 update_rule 的最终校验。
+        hint.textContent = e.message;
+        hint.className = 'cell-hint warn';
+        hint.title = hint.textContent;
+        return null;
+      }
+    }
+
+    inp.addEventListener('input', function () {
+      if (wait) clearTimeout(wait);
+      hint.textContent = t('inline.checking');
+      hint.className = 'cell-hint';
+      wait = setTimeout(runCheck, 350);
+    });
     read = function () { return { source_template: inp.value.trim() }; };
+    check = runCheck;
+    if (inp.value.trim()) runCheck();
   } else if (field === 'category') {
     const sel = cellSelect((state.snap.categories || []).map(function (c) {
       return [c, categoryLabel(c)];
@@ -2267,7 +2329,19 @@ function buildFieldEditor(field, src) {
     };
   }
 
-  return { node: box, focus: focus || box, read: read };
+  return { node: box, focus: focus || box, read: read, check: check };
+}
+
+/** 已建链接的规则改了源/目标/链接类型后，需要重新应用才能生效。 */
+function isLinkedRule(rule) {
+  return rule.badge === '✅' || rule.badge === '⚠️';
+}
+
+function needsReapply(rule, patch) {
+  if (!isLinkedRule(rule)) return false;
+  return ['source_template', 'target_root_id', 'target_subpath', 'link_type'].some(function (k) {
+    return patch[k] !== undefined && !sameRuleValue(rule[k], patch[k]);
+  });
 }
 
 /** 单个单元格保存：合并完整表单后调用 update_rule（后端要求完整 RuleForm）。 */
@@ -2278,10 +2352,12 @@ async function saveRulePatch(rule, patch) {
     renderRows();
     return false;
   }
+  const reapply = needsReapply(rule, patch);
   inlineSaving = true;
   try {
     await invoke('update_rule', { id: rule.id, form: form });
-    toast(t('common.saved'), form.name || ('#' + rule.id), 'ok');
+    if (reapply) toast(t('toast.reapply_title'), t('toast.reapply_msg'), 'warn');
+    else toast(t('common.saved'), form.name || ('#' + rule.id), 'ok');
     await refresh(true);
     return true;
   } catch (e) {
@@ -2325,19 +2401,60 @@ function beginCellEdit(td, rule, field) {
 
   async function commit() {
     if (done) return;
-    const patch = editor.read();
+    let patch = editor.read();
     if (!patch) {
       cancel();
       return;
     }
-    try {
-      validateRuleValues(ruleFormOf(rule, patch));
-    } catch (e) {
-      // 校验不过就留在编辑态，别把用户刚输入的内容清掉。
+    let form = ruleFormOf(rule, patch);
+
+    function handleValidation(e) {
+      const limitProblem = form.auto_clean_limit_bytes > 0 && !form.auto_clean_policy;
+      if (limitProblem && field === 'clean_limit') {
+        toast(t('common.save_failed'), t('inline.limit_needs_policy_hint'), 'error');
+        cancel();
+        openCellEditor(rule.id, 'clean_policy', true);
+        return true;
+      }
+      if (limitProblem && field === 'clean_policy') {
+        toast(t('common.save_failed'), t('inline.policy_needs_limit_hint'), 'error');
+        cancel();
+        openCellEditor(rule.id, 'clean_limit', true);
+        return true;
+      }
+      // 其它校验不过就留在编辑态，别把用户刚输入的内容清掉。
       toast(t('common.save_failed'), e.message, 'error');
       editor.focus.focus();
-      return;
+      return true;
     }
+
+    try {
+      validateRuleValues(form);
+    } catch (e) {
+      if (handleValidation(e)) return;
+    }
+
+    if (editor.check) {
+      const problem = await editor.check();
+      if (problem) {
+        toast(t('common.save_failed'), problem, 'error');
+        editor.focus.focus();
+        return;
+      }
+      // 校验期间用户可能又改了源路径：以最新值为准重新校验一次。
+      patch = editor.read();
+      if (!patch) {
+        cancel();
+        return;
+      }
+      form = ruleFormOf(rule, patch);
+      try {
+        validateRuleValues(form);
+      } catch (e) {
+        if (handleValidation(e)) return;
+      }
+    }
+
     if (!patchChanged(rule, patch)) {
       cancel();
       return;
@@ -2390,8 +2507,8 @@ async function toggleRuleFlag(rule, field) {
   }
 }
 
-/** 详情面板 / 右键菜单的「编辑」：滚到该行并直接打开名称单元格。 */
-function focusInlineEdit(id) {
+/** 重画后按 id + 字段打开某行的行内编辑器（详情编辑、依赖引导共用）。 */
+function openCellEditor(id, field, flash) {
   const rule = (state.snap.rules || []).find(function (r) { return r.id === id; });
   if (!rule) return;
   state.focusId = id;
@@ -2402,8 +2519,18 @@ function focusInlineEdit(id) {
   const tr = document.querySelector('#rows tr[data-id="' + id + '"]');
   if (!tr) return;
   tr.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  const td = tr.querySelector('td[data-field="name"]');
-  if (td) beginCellEdit(td, rule, 'name');
+  const td = tr.querySelector('td[data-field="' + field + '"]');
+  if (!td) return;
+  if (flash) {
+    td.classList.add('need-attention');
+    setTimeout(function () { td.classList.remove('need-attention'); }, 2400);
+  }
+  beginCellEdit(td, rule, field);
+}
+
+/** 详情面板 / 右键菜单的「编辑」：滚到该行并直接打开名称单元格。 */
+function focusInlineEdit(id) {
+  openCellEditor(id, 'name');
 }
 
 /** 列表顶部插入一条空白草稿行，所有字段直接在行内填。 */
@@ -2441,8 +2568,18 @@ function focusDraft(field) {
   if (!root) return;
   const box = root.matches('input, select, textarea') ? root : root.querySelector('input, select, textarea');
   if (!box) return;
+  box.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   box.focus();
   if (box.select) box.select();
+}
+
+/** 草稿行的依赖提示：闪一下需要先填的那一格。 */
+function flashDraftField(field) {
+  const root = document.querySelector('tr.draft-row [data-draft-field="' + field + '"]');
+  const cell = root && root.closest('td');
+  if (!cell) return;
+  cell.classList.add('need-attention');
+  setTimeout(function () { cell.classList.remove('need-attention'); }, 2400);
 }
 
 /** 草稿行：列结构与正式规则一致，只是每格都是编辑控件。 */
@@ -2474,7 +2611,7 @@ function renderDraftRow() {
     editor.node.dataset.draftField = field;
     td.appendChild(editor.node);
     tr.appendChild(td);
-    controls.push(editor);
+    controls.push({ field: field, editor: editor });
     function sync() {
       const patch = editor.read();
       if (!patch) return;
@@ -2529,28 +2666,54 @@ function renderDraftRow() {
   wrap.className = 'row-actions';
 
   async function saveDraft() {
-    controls.forEach(function (editor) {
-      const patch = editor.read();
-      if (!patch) return;
-      Object.keys(patch).forEach(function (k) { draft[k] = patch[k]; });
-    });
-    const form = {
-      name: draft.name,
-      category: draft.category,
-      source_template: draft.source_template,
-      target_root_id: draft.target_root_id,
-      target_subpath: draft.target_subpath,
-      link_type: draft.link_type,
-      want_enabled: draft.want_enabled,
-      rebuild_on_boot: draft.rebuild_on_boot,
-      notes: draft.notes || null,
-      excludes: draft.excludes || [],
-      auto_clean_policy: draft.auto_clean_policy || '',
-      auto_clean_limit_bytes: draft.auto_clean_limit_bytes || 0,
-    };
+    function syncDraft() {
+      controls.forEach(function (c) {
+        const patch = c.editor.read();
+        if (!patch) return;
+        Object.keys(patch).forEach(function (k) { draft[k] = patch[k]; });
+      });
+    }
+    function draftForm() {
+      return {
+        name: draft.name,
+        category: draft.category,
+        source_template: draft.source_template,
+        target_root_id: draft.target_root_id,
+        target_subpath: draft.target_subpath,
+        link_type: draft.link_type,
+        want_enabled: draft.want_enabled,
+        rebuild_on_boot: draft.rebuild_on_boot,
+        notes: draft.notes || null,
+        excludes: draft.excludes || [],
+        auto_clean_policy: draft.auto_clean_policy || '',
+        auto_clean_limit_bytes: draft.auto_clean_limit_bytes || 0,
+      };
+    }
+    function limitProblem(form) {
+      return form.auto_clean_limit_bytes > 0 && !form.auto_clean_policy;
+    }
+
+    syncDraft();
+    const srcCtl = controls.find(function (c) { return c.field === 'source'; });
+    if (srcCtl && srcCtl.editor.check) {
+      const problem = await srcCtl.editor.check();
+      if (problem) {
+        toast(t('rule.add_failed'), problem, 'error');
+        return;
+      }
+    }
+    // 校验可能等待过，重新读一遍控件，避免把旧值写进规则。
+    syncDraft();
+    const form = draftForm();
     try {
       validateRuleValues(form);
     } catch (e) {
+      if (limitProblem(form)) {
+        toast(t('rule.add_failed'), t('inline.limit_needs_policy_hint'), 'error');
+        flashDraftField('clean_policy');
+        focusDraft('clean_policy');
+        return;
+      }
       toast(t('rule.add_failed'), e.message, 'error');
       return;
     }

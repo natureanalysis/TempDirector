@@ -106,7 +106,7 @@ async function launch() {
     const host = document.querySelector('#toasts');
     return host ? host.textContent : '';
   });
-  ok('上限 > 0 且无策略时保存被拦下', /必须选|requires/i.test(toastText), toastText.slice(0, 80));
+  ok('上限 > 0 且无策略时保存被拦下', /选择策略|必须选|requires/i.test(toastText), toastText.slice(0, 80));
   ok('草稿行保留，未丢失已填内容', await page.isVisible('#rows tr.draft-row'));
   ok('全程未出现规则弹窗', await page.isHidden('#modal'));
 

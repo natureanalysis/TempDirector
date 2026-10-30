@@ -40,7 +40,9 @@ launch defaults to English, and the choice is remembered.
 * **Add / edit rule (all inline, no dialogs)**: “Add rule” inserts a blank draft row at the
   top of the list; click any cell of an existing rule to edit it in place — name, category,
   link type, source, target root + subpath, flags, auto-clean policy, capacity limit,
-  excludes and notes. Enter or blur saves, Esc reverts.
+  excludes and notes. Enter or blur saves, Esc reverts. Source paths are expanded and validated
+  inline; protected paths are marked and blocked. Changing source / target / link type on a
+  linked rule prompts you to re-apply.
 * **Also**: batch progress overlay, activity log, settings (autostart / scheduled cleaning /
   target roots), and a tray menu.
 
