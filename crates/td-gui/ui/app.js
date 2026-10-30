@@ -71,6 +71,9 @@ const state = {
   // 分类树侧栏：展开的分类名集合；treeSeeded 保证首屏只自动展开一次当前条目所在分类。
   treeOpen: new Set(),
   treeSeeded: false,
+  // 列表顶部的新规则草稿（null = 没有草稿行）。新增规则不再弹表单，直接在
+  // 列表行里填；保存后才写入后端，取消就丢掉这一行。
+  draft: null,
 };
 
 // 分类标签走 i18n（键 cat.<category>）；未收录的分类回退原始值。
@@ -608,6 +611,8 @@ function syncSelectAll(rows) {
 }
 
 function renderRows() {
+  // 重画会销毁正在编辑的单元格：放弃旧编辑器的引用，避免之后误提交已脱离 DOM 的输入。
+  activeCellEditor = null;
   // 重画行会丢掉 .ctx-target 高亮，菜单留着也没意义 —— 直接收起。
   if (ctxTarget) closeRowMenu();
   const rows = filteredRules();
@@ -625,7 +630,7 @@ function renderRows() {
   syncSelectAll(rows);
 
   const empty = $('empty');
-  if (!rows.length && !tpls.length) {
+  if (!rows.length && !tpls.length && !state.draft) {
     empty.classList.remove('hidden');
     // 三选一：被隐藏了 / 被筛选了 / 一条规则都还没有。
     if (state.snap.rules.length && !state.filters.showHidden && hiddenMatchCount()) {
@@ -640,6 +645,8 @@ function renderRows() {
   empty.classList.add('hidden');
 
   const frag = document.createDocumentFragment();
+  // 新增规则草稿固定插在列表最上面（筛选 / 排序都不影响它，方便连续填）。
+  if (state.draft) frag.appendChild(renderDraftRow());
   rows.forEach(function (r) {
     const tr = document.createElement('tr');
     tr.dataset.id = String(r.id);
@@ -648,6 +655,17 @@ function renderRows() {
     // 已隐藏的条目只在「显示已隐藏」打开时才会被渲染；整行淡一点 + 名字后带标记，
     // 免得和正常条目混淆（它们照样参与开机重建与巡检，只是不占列表位置）。
     if (r.hidden) tr.className += ' row-hidden';
+
+    /** 可编辑单元格：单击进入控件，回车 / 失焦保存（见 beginCellEdit）。 */
+    const editTd = function (field, cls) {
+      const td = document.createElement('td');
+      td.className = 'cell-edit' + (cls ? ' ' + cls : '');
+      td.dataset.id = String(r.id);
+      td.dataset.field = field;
+      td.title = t('table.edit_tip');
+      tr.appendChild(td);
+      return td;
+    };
 
     // 勾选框 + 拖拽把手
     const tdCheck = document.createElement('td');
@@ -674,7 +692,7 @@ function renderRows() {
     tr.appendChild(tdBadge);
 
     // 名称 + 需要处理的原因
-    const tdName = document.createElement('td');
+    const tdName = editTd('name', 'cell-name-wrap');
     const nm = document.createElement('div');
     nm.className = 'cell-name';
     nm.textContent = r.name;
@@ -697,34 +715,32 @@ function renderRows() {
       note.textContent = r.warnings[0];
       tdName.appendChild(note);
     }
-    tdName.dataset.act = 'focus';
-    tdName.dataset.id = String(r.id);
-    tr.appendChild(tdName);
 
     // 分类
-    const tdCat = document.createElement('td');
+    const tdCat = editTd('category');
     const pill = document.createElement('span');
     pill.className = 'pill';
     pill.textContent = categoryLabel(r.category);
     tdCat.appendChild(pill);
-    tr.appendChild(tdCat);
+
+    // 链接类型
+    const tdLink = editTd('link_type', 'cell-link');
+    tdLink.textContent = r.link_type === 'symlink_dir' ? t('badge.symlink') : t('badge.junction');
 
     // 源路径
-    const tdSrc = document.createElement('td');
+    const tdSrc = editTd('source', 'cell-source');
     const src = document.createElement('div');
     src.className = 'cell-path';
     src.textContent = r.source;
     src.title = r.source_template;
     tdSrc.appendChild(src);
-    tr.appendChild(tdSrc);
 
     // 目标
-    const tdTgt = document.createElement('td');
+    const tdTgt = editTd('target', 'cell-target');
     const tgt = document.createElement('div');
     tgt.className = 'cell-path root';
     tgt.textContent = r.target;
     tdTgt.appendChild(tgt);
-    tr.appendChild(tdTgt);
 
     // 占用空间（MB）：只有点过「空间统计」才有数，未统计时给占位符。
     const tdUsage = document.createElement('td');
@@ -740,25 +756,60 @@ function renderRows() {
     }
     tr.appendChild(tdUsage);
 
-    // 旗标：期望开启 + 开机重建合并成一列
-    // （两个布尔各占一列太浪费横向空间，完整含义在详情面板 chips 里也有一份）
+    // 旗标：期望开启 + 开机重建合并成一列，单击即切换并保存。
     const tdFlags = document.createElement('td');
+    tdFlags.className = 'cell-flags';
     const flags = document.createElement('div');
     flags.className = 'row-flags';
     const on = document.createElement('span');
-    on.className = 'toggle ' + (r.want_enabled ? 'on' : 'off');
+    on.className = 'toggle clickable ' + (r.want_enabled ? 'on' : 'off');
     on.textContent = r.want_enabled ? '●' : '○';
     on.title = r.want_enabled ? t('row.expect_on') : t('row.expect_off');
+    on.dataset.act = 'toggle-flag';
+    on.dataset.id = String(r.id);
+    on.dataset.flag = 'want_enabled';
     flags.appendChild(on);
     const bt = document.createElement('span');
-    bt.className = 'toggle ' + (r.rebuild_on_boot ? 'on' : 'off');
+    bt.className = 'toggle clickable ' + (r.rebuild_on_boot ? 'on' : 'off');
     bt.textContent = r.rebuild_on_boot ? '⟳' : '·';
     bt.title = r.rebuild_on_boot ? t('row.rebuild_on') : t('row.rebuild_off');
+    bt.dataset.act = 'toggle-flag';
+    bt.dataset.id = String(r.id);
+    bt.dataset.flag = 'rebuild_on_boot';
     flags.appendChild(bt);
     tdFlags.appendChild(flags);
     tr.appendChild(tdFlags);
 
-    // 行内操作
+    // 自动清理策略
+    const tdAuto = editTd('clean_policy', 'cell-auto');
+    tdAuto.textContent = autoPolicyShort(r.auto_clean_policy);
+    if (!r.auto_clean_policy) tdAuto.classList.add('none');
+
+    // 文件夹容量上限
+    const tdLimit = editTd('clean_limit', 'cell-limit');
+    if (r.auto_clean_limit_bytes > 0) {
+      tdLimit.textContent = humanBytes(r.auto_clean_limit_bytes);
+    } else {
+      tdLimit.textContent = '—';
+      tdLimit.classList.add('none');
+    }
+
+    // 清理排除
+    const tdEx = editTd('excludes', 'cell-excludes');
+    if (r.excludes && r.excludes.length) {
+      tdEx.textContent = tf('table.excludes_count', { n: r.excludes.length });
+      tdEx.title = r.excludes.join(' · ') + '\n' + t('table.edit_tip');
+    } else {
+      tdEx.textContent = '—';
+      tdEx.classList.add('none');
+    }
+
+    // 备注
+    const tdNotes = editTd('notes', 'cell-notes');
+    tdNotes.textContent = r.notes || '—';
+    if (!r.notes) tdNotes.classList.add('none');
+
+    // 行内操作（编辑已并入单元格，这里只保留执行动作）
     const tdAct = document.createElement('td');
     const wrap = document.createElement('div');
     wrap.className = 'row-actions';
@@ -767,7 +818,6 @@ function renderRows() {
       { act: 'restore', label: t('row.act.restore'), when: r.badge === '✅' || r.badge === '⚠️' },
       { act: 'relink', label: t('row.act.relink'), when: r.badge === '⚠️' || r.badge === '❌' },
       { act: 'clean', label: t('row.act.clean'), when: true },
-      { act: 'edit', label: t('row.act.edit'), when: true },
     ].forEach(function (b) {
       if (!b.when) return;
       const btn = document.createElement('button');
@@ -834,6 +884,12 @@ function templateRow(p) {
   tdCat.appendChild(pill);
   tr.appendChild(tdCat);
 
+  // 链接类型：模板按默认 junction（与一键添加的默认一致）
+  const tdLink = document.createElement('td');
+  tdLink.className = 'cell-link';
+  tdLink.textContent = t('badge.junction');
+  tr.appendChild(tdLink);
+
   // 源路径（展开后的路径，title 显示原始模板）
   const tdSrc = document.createElement('td');
   const src = document.createElement('div');
@@ -871,6 +927,14 @@ function templateRow(p) {
   });
   tdFlags.appendChild(flags);
   tr.appendChild(tdFlags);
+
+  // 模板还没有清理策略 / 容量上限 / 排除（建规则后再在行内设置）。
+  ['cell-auto', 'cell-limit', 'cell-excludes', 'cell-notes'].forEach(function (cls) {
+    const td = document.createElement('td');
+    td.className = cls + ' none';
+    td.textContent = '—';
+    tr.appendChild(td);
+  });
 
   // 行操作：一键"添加并应用"（与勾选后按「应用选中」等价，只是省一步）
   const tdAct = document.createElement('td');
@@ -1952,556 +2016,572 @@ async function doImport() {
 }
 
 // ---------------------------------------------------------------------------
-// 添加 / 编辑规则
+// 规则行内编辑（列表单元格即表单，不再弹编辑对话框）
 // ---------------------------------------------------------------------------
 
-async function openRuleForm(id) {
-  const snap = state.snap;
-  if (!snap.roots.length) {
+/** 当前正在编辑的单元格（同一时刻只允许一个）。 */
+let activeCellEditor = null;
+/** 行内保存进行中：此时刷新/重画会吞掉焦点，先拒绝新的编辑动作。 */
+let inlineSaving = false;
+
+function cellInput(value, placeholder, type) {
+  const i = document.createElement('input');
+  i.className = 'cell-input';
+  i.type = type || 'text';
+  if (value !== null && value !== undefined) i.value = String(value);
+  if (placeholder) i.placeholder = placeholder;
+  return i;
+}
+
+function cellSelect(pairs, value) {
+  const s = document.createElement('select');
+  s.className = 'cell-select';
+  pairs.forEach(function (p) {
+    const o = document.createElement('option');
+    o.value = p[0];
+    o.textContent = p[1];
+    s.appendChild(o);
+  });
+  if (value !== undefined && value !== null) s.value = String(value);
+  return s;
+}
+
+function cellRow() {
+  const d = document.createElement('div');
+  d.className = 'cell-editor-row';
+  for (let i = 0; i < arguments.length; i++) {
+    if (arguments[i]) d.appendChild(arguments[i]);
+  }
+  return d;
+}
+
+/** 水位策略的短描述（单元格里空间有限，详情面板仍用完整措辞）。 */
+function autoPolicyShort(policy) {
+  if (!policy) return t('auto.short.off');
+  if (policy === 'empty') return t('auto.short.empty');
+  const m = /^older:(\d+)$/.exec(policy);
+  if (m) {
+    const secs = Number(m[1]);
+    if (secs % 86400 === 0) return tf('auto.short.older_days', { n: secs / 86400 });
+    return tf('auto.short.older_hours', { n: Math.max(1, Math.round(secs / 3600)) });
+  }
+  const k = /^keep:(\d+)$/.exec(policy);
+  if (k) return tf('auto.short.keep', { size: humanBytes(Number(k[1])) });
+  return policy;
+}
+
+function parseAutoPolicy(policy) {
+  const p = policy || '';
+  if (p === 'empty') return { mode: 'empty', hours: 24, num: 0, unit: 'mb' };
+  const m = /^older:(\d+)$/.exec(p);
+  if (m) return { mode: 'older', hours: Math.max(1, Math.round(Number(m[1]) / 3600)), num: 0, unit: 'mb' };
+  const k = /^keep:(\d+)$/.exec(p);
+  if (k) {
+    const bytes = Number(k[1]);
+    if (bytes >= 1073741824 && bytes % 1073741824 === 0) {
+      return { mode: 'keep', hours: 24, num: bytes / 1073741824, unit: 'gb' };
+    }
+    return { mode: 'keep', hours: 24, num: Math.max(1, Math.round(bytes / 1048576)), unit: 'mb' };
+  }
+  return { mode: '', hours: 24, num: 0, unit: 'mb' };
+}
+
+function ruleFormOf(rule, patch) {
+  const pick = function (k, fallback) {
+    return patch[k] !== undefined ? patch[k] : fallback;
+  };
+  return {
+    name: pick('name', rule.name),
+    category: pick('category', rule.category),
+    source_template: pick('source_template', rule.source_template),
+    target_root_id: pick('target_root_id', rule.target_root_id),
+    target_subpath: pick('target_subpath', rule.target_subpath),
+    link_type: pick('link_type', rule.link_type),
+    want_enabled: pick('want_enabled', rule.want_enabled),
+    rebuild_on_boot: pick('rebuild_on_boot', rule.rebuild_on_boot),
+    notes: pick('notes', rule.notes || null),
+    excludes: pick('excludes', rule.excludes || []),
+    auto_clean_policy: pick('auto_clean_policy', rule.auto_clean_policy || ''),
+    auto_clean_limit_bytes: pick('auto_clean_limit_bytes', rule.auto_clean_limit_bytes || 0),
+  };
+}
+
+function validateRuleValues(form) {
+  if (!form.name) throw new Error(t('inline.name_required'));
+  if (!form.source_template) throw new Error(t('inline.source_required'));
+  if (!form.target_subpath) throw new Error(t('inline.sub_required'));
+  if (form.auto_clean_limit_bytes < 0) throw new Error(t('inline.bad_limit'));
+  if (form.auto_clean_limit_bytes > 0 && !form.auto_clean_policy) {
+    throw new Error(t('rule.auto.limit_needs_policy'));
+  }
+}
+
+function sameRuleValue(a, b) {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return JSON.stringify(a || []) === JSON.stringify(b || []);
+  }
+  const emptyA = a === null || a === undefined || a === '';
+  const emptyB = b === null || b === undefined || b === '';
+  if (emptyA && emptyB) return true;
+  return a === b;
+}
+
+function patchChanged(rule, patch) {
+  return Object.keys(patch).some(function (k) {
+    return !sameRuleValue(rule[k], patch[k]);
+  });
+}
+
+/** 按字段生成单元格里的编辑控件。src 可以是规则视图，也可以是新增草稿。 */
+function buildFieldEditor(field, src) {
+  const box = document.createElement('div');
+  box.className = 'cell-editor';
+  let focus = null;
+  let read = function () { return null; };
+
+  if (field === 'name' || field === 'notes') {
+    const inp = cellInput(
+      field === 'name' ? src.name : src.notes,
+      field === 'name' ? t('rule.name_ph') : t('rule.notes_ph')
+    );
+    box.appendChild(inp);
+    focus = inp;
+    read = function () {
+      if (field === 'name') return { name: inp.value.trim() };
+      return { notes: inp.value.trim() || null };
+    };
+  } else if (field === 'source') {
+    const inp = cellInput(src.source_template, t('inline.source_ph'));
+    inp.spellcheck = false;
+    box.appendChild(inp);
+    focus = inp;
+    read = function () { return { source_template: inp.value.trim() }; };
+  } else if (field === 'category') {
+    const sel = cellSelect((state.snap.categories || []).map(function (c) {
+      return [c, categoryLabel(c)];
+    }), src.category);
+    box.appendChild(sel);
+    focus = sel;
+    read = function () { return { category: sel.value }; };
+  } else if (field === 'link_type') {
+    const sel = cellSelect([
+      ['junction', t('inline.link_junction')],
+      ['symlink_dir', t('inline.link_symlink')],
+    ], src.link_type);
+    box.appendChild(sel);
+    focus = sel;
+    read = function () { return { link_type: sel.value }; };
+  } else if (field === 'target') {
+    const root = cellSelect((state.snap.roots || []).map(function (r) {
+      return [String(r.id), r.label + ' · ' + r.path];
+    }), String(src.target_root_id));
+    const sub = cellInput(src.target_subpath, t('rule.sub_ph'));
+    box.appendChild(root);
+    box.appendChild(sub);
+    focus = sub;
+    read = function () {
+      return { target_root_id: Number(root.value), target_subpath: sub.value.trim() };
+    };
+  } else if (field === 'clean_policy') {
+    const parsed = parseAutoPolicy(src.auto_clean_policy);
+    const sel = cellSelect([
+      ['', t('auto.short.off')],
+      ['empty', t('auto.short.empty')],
+      ['older', t('auto.short.older')],
+      ['keep', t('auto.short.keep_field')],
+    ], parsed.mode);
+    const num = cellInput(parsed.mode === 'older' ? parsed.hours : (parsed.mode === 'keep' ? parsed.num : ''), '', 'number');
+    num.min = '1';
+    num.step = '1';
+    const unit = cellSelect([
+      ['mb', t('rule.auto.unit_mb')],
+      ['gb', t('rule.auto.unit_gb')],
+    ], parsed.unit);
+    const param = cellRow(num, unit);
+    box.appendChild(sel);
+    box.appendChild(param);
+    focus = sel;
+    function syncMode() {
+      param.style.display = (sel.value === 'older' || sel.value === 'keep') ? '' : 'none';
+      unit.style.display = sel.value === 'keep' ? '' : 'none';
+      num.placeholder = sel.value === 'older' ? t('rule.auto.hours_ph') : t('rule.auto.keep_ph');
+      // 切到按时间 / 按空间时给一个可用的起点值，避免“选了策略却没填值”被静默存成未启用。
+      if (!num.value) {
+        if (sel.value === 'older') num.value = '24';
+        else if (sel.value === 'keep') num.value = '100';
+      }
+    }
+    sel.addEventListener('change', syncMode);
+    syncMode();
+    read = function () {
+      if (sel.value === 'empty') return { auto_clean_policy: 'empty' };
+      const n = Math.floor(Number(num.value));
+      if (sel.value === 'older') {
+        return { auto_clean_policy: n > 0 ? 'older:' + (n * 3600) : '' };
+      }
+      if (sel.value === 'keep') {
+        if (!(n > 0)) return { auto_clean_policy: '' };
+        const bytes = unit.value === 'gb' ? n * 1073741824 : n * 1048576;
+        return { auto_clean_policy: 'keep:' + bytes };
+      }
+      return { auto_clean_policy: '' };
+    };
+  } else if (field === 'clean_limit') {
+    const bytes0 = Number(src.auto_clean_limit_bytes) || 0;
+    let num0 = 0;
+    let unit0 = 'mb';
+    if (bytes0 >= 1073741824 && bytes0 % 1073741824 === 0) {
+      num0 = bytes0 / 1073741824;
+      unit0 = 'gb';
+    } else if (bytes0 > 0) {
+      num0 = Math.max(1, Math.round(bytes0 / 1048576));
+      unit0 = 'mb';
+    }
+    const num = cellInput(num0 > 0 ? num0 : '', t('rule.auto.limit_ph'), 'number');
+    num.min = '0';
+    num.step = '1';
+    const unit = cellSelect([
+      ['mb', t('rule.auto.unit_mb')],
+      ['gb', t('rule.auto.unit_gb')],
+    ], unit0);
+    box.appendChild(cellRow(num, unit));
+    focus = num;
+    read = function () {
+      const n = Math.floor(Number(num.value));
+      if (!(n > 0)) return { auto_clean_limit_bytes: 0 };
+      return { auto_clean_limit_bytes: unit.value === 'gb' ? n * 1073741824 : n * 1048576 };
+    };
+  } else if (field === 'excludes') {
+    const ta = document.createElement('textarea');
+    ta.className = 'cell-input cell-textarea';
+    ta.rows = 2;
+    ta.placeholder = t('inline.excludes_ph');
+    ta.value = (src.excludes || []).join('\n');
+    box.appendChild(ta);
+    focus = ta;
+    read = function () {
+      return {
+        excludes: ta.value.split(/\r?\n/).map(function (s) { return s.trim(); })
+          .filter(function (s) { return s.length > 0; }),
+      };
+    };
+  }
+
+  return { node: box, focus: focus || box, read: read };
+}
+
+/** 单个单元格保存：合并完整表单后调用 update_rule（后端要求完整 RuleForm）。 */
+async function saveRulePatch(rule, patch) {
+  const form = ruleFormOf(rule, patch);
+  validateRuleValues(form);
+  if (!patchChanged(rule, patch)) {
+    renderRows();
+    return false;
+  }
+  inlineSaving = true;
+  try {
+    await invoke('update_rule', { id: rule.id, form: form });
+    toast(t('common.saved'), form.name || ('#' + rule.id), 'ok');
+    await refresh(true);
+    return true;
+  } catch (e) {
+    toast(t('common.save_failed'), e.message, 'error');
+    await refresh(true);
+    return false;
+  } finally {
+    inlineSaving = false;
+  }
+}
+
+/** 把一个单元格切换成编辑态。回车 / 失焦保存，Esc 撤销。 */
+function beginCellEdit(td, rule, field) {
+  if (inlineSaving || !td || !rule) return;
+  if (activeCellEditor) {
+    // 另一格还在编辑：先把那一格提交，避免两套输入控件抢焦点。
+    activeCellEditor.commit();
+    return;
+  }
+
+  td.classList.add('editing');
+  td.textContent = '';
+  const editor = buildFieldEditor(field, rule);
+  td.appendChild(editor.node);
+
+  let done = false;
+  let timer = null;
+
+  function cleanup() {
+    if (timer) clearTimeout(timer);
+    activeCellEditor = null;
+    td.classList.remove('editing');
+  }
+
+  function cancel() {
+    if (done) return;
+    done = true;
+    cleanup();
+    renderRows();
+  }
+
+  async function commit() {
+    if (done) return;
+    const patch = editor.read();
+    if (!patch) {
+      cancel();
+      return;
+    }
+    try {
+      validateRuleValues(ruleFormOf(rule, patch));
+    } catch (e) {
+      // 校验不过就留在编辑态，别把用户刚输入的内容清掉。
+      toast(t('common.save_failed'), e.message, 'error');
+      editor.focus.focus();
+      return;
+    }
+    if (!patchChanged(rule, patch)) {
+      cancel();
+      return;
+    }
+    done = true;
+    cleanup();
+    await saveRulePatch(rule, patch);
+  }
+
+  activeCellEditor = { commit: commit, cancel: cancel };
+  editor.focus.focus();
+  if (editor.focus.tagName === 'INPUT' && editor.focus.select) editor.focus.select();
+
+  editor.node.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && ev.target.tagName !== 'TEXTAREA') {
+      ev.preventDefault();
+      commit();
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      cancel();
+    }
+  });
+  editor.node.addEventListener('focusout', function (ev) {
+    if (done) return;
+    if (ev.relatedTarget && editor.node.contains(ev.relatedTarget)) return;
+    if (timer) clearTimeout(timer);
+    // 等一拍再判断焦点去了哪里：组合控件（目标根 + 子目录）内部切换不算失焦。
+    timer = setTimeout(function () {
+      if (done) return;
+      if (editor.node.contains(document.activeElement)) return;
+      commit();
+    }, 60);
+  });
+}
+
+/** 旗标单击即切换并保存（不需要输入框）。 */
+async function toggleRuleFlag(rule, field) {
+  if (inlineSaving || !rule) return;
+  if (activeCellEditor) {
+    activeCellEditor.commit();
+    return;
+  }
+  const patch = {};
+  patch[field] = !rule[field];
+  try {
+    await saveRulePatch(rule, patch);
+  } catch (e) {
+    toast(t('common.save_failed'), e.message, 'error');
+  }
+}
+
+/** 详情面板 / 右键菜单的「编辑」：滚到该行并直接打开名称单元格。 */
+function focusInlineEdit(id) {
+  const rule = (state.snap.rules || []).find(function (r) { return r.id === id; });
+  if (!rule) return;
+  state.focusId = id;
+  if (!state.treeOpen.has(rule.category)) state.treeOpen.add(rule.category);
+  renderSidebar();
+  renderRows();
+  renderDetail();
+  const tr = document.querySelector('#rows tr[data-id="' + id + '"]');
+  if (!tr) return;
+  tr.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  const td = tr.querySelector('td[data-field="name"]');
+  if (td) beginCellEdit(td, rule, 'name');
+}
+
+/** 列表顶部插入一条空白草稿行，所有字段直接在行内填。 */
+function startDraftRule() {
+  if (!state.snap) return;
+  if (!(state.snap.roots || []).length) {
     toast(t('rule.no_root_title'), t('rule.no_root_hint'), 'warn');
     return;
   }
-  const rule = id ? snap.rules.find(function (r) { return r.id === id; }) : null;
-
-  const body = document.createElement('div');
-  const mk = function (labelText, node, hintText, hintClass) {
-    const f = document.createElement('div');
-    f.className = 'field';
-    const l = document.createElement('label');
-    l.textContent = labelText;
-    f.appendChild(l);
-    f.appendChild(node);
-    const h = document.createElement('div');
-    h.className = 'hint ' + (hintClass || '');
-    h.textContent = hintText || '';
-    f.appendChild(h);
-    return { field: f, hint: h };
+  if (state.draft) {
+    focusDraft('name');
+    return;
+  }
+  const cats = state.snap.categories || ['other'];
+  state.draft = {
+    name: '',
+    category: cats.indexOf('other') >= 0 ? 'other' : cats[0],
+    source_template: '',
+    target_root_id: state.snap.roots[0].id,
+    target_subpath: '',
+    link_type: 'junction',
+    want_enabled: true,
+    rebuild_on_boot: true,
+    notes: null,
+    excludes: [],
+    auto_clean_policy: '',
+    auto_clean_limit_bytes: 0,
   };
+  renderRows();
+  focusDraft('name');
+}
 
-  // 常用预设（仅新增时显示；后端已按本机实际存在过滤，没装的软件不会出现）
-  let nameInput = null;
-  let catSelect = null;
-  let srcInput = null;
-  let subInput = null;
-  if (!rule) {
-    let presets = [];
-    try { presets = await invoke('preset_rules', {}); } catch (e) { presets = []; }
-    if (presets.length) {
-      const presetSelect = document.createElement('select');
-      presetSelect.className = 'select';
-      const placeholder = document.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = t('rule.preset_ph');
-      presetSelect.appendChild(placeholder);
-      const groups = {};
-      presets.forEach(function (p) {
-        (groups[p.category] = groups[p.category] || []).push(p);
-      });
-      Object.keys(groups).forEach(function (cat) {
-        const og = document.createElement('optgroup');
-        og.label = categoryLabel(cat);
-        groups[cat].forEach(function (p) {
-          const o = document.createElement('option');
-          o.value = p.source_template;
-          o.textContent = p.name;
-          og.appendChild(o);
-        });
-        presetSelect.appendChild(og);
-      });
-      const presetWrap = mk(t('rule.preset'), presetSelect, t('rule.preset_hint'));
-      const presetHint = document.createElement('div');
-      presetHint.className = 'hint';
-      presetWrap.field.appendChild(presetHint);
-      presetSelect.addEventListener('change', function () {
-        const p = presets.find(function (x) { return x.source_template === presetSelect.value; });
-        if (!p) { presetHint.textContent = ''; presetHint.className = 'hint'; return; }
-        if (nameInput) nameInput.value = p.name;
-        if (catSelect) catSelect.value = p.category;
-        if (srcInput) { srcInput.value = p.source_template; checkSource(); }
-        if (subInput) { subInput.value = p.target_subpath; checkTarget(); }
-        presetHint.textContent = (p.note ? '⚠ ' + p.note + ' · ' : '') + p.source;
-        presetHint.className = p.note ? 'hint warn' : 'hint';
-      });
-      body.appendChild(presetWrap.field);
+function focusDraft(field) {
+  const root = document.querySelector('tr.draft-row [data-draft-field="' + field + '"]');
+  if (!root) return;
+  const box = root.matches('input, select, textarea') ? root : root.querySelector('input, select, textarea');
+  if (!box) return;
+  box.focus();
+  if (box.select) box.select();
+}
+
+/** 草稿行：列结构与正式规则一致，只是每格都是编辑控件。 */
+function renderDraftRow() {
+  const draft = state.draft;
+  const tr = document.createElement('tr');
+  tr.className = 'draft-row';
+  tr.dataset.draft = '1';
+
+  const tdCheck = document.createElement('td');
+  const plus = document.createElement('span');
+  plus.className = 'draft-plus';
+  plus.textContent = '＋';
+  tdCheck.appendChild(plus);
+  tr.appendChild(tdCheck);
+
+  const tdBadge = document.createElement('td');
+  const badge = document.createElement('span');
+  badge.className = 'badge tpl';
+  badge.textContent = t('draft.badge');
+  tdBadge.appendChild(badge);
+  tr.appendChild(tdBadge);
+
+  const controls = [];
+  function fieldTd(field, cls) {
+    const td = document.createElement('td');
+    td.className = 'cell-edit editing' + (cls ? ' ' + cls : '');
+    const editor = buildFieldEditor(field, draft);
+    editor.node.dataset.draftField = field;
+    td.appendChild(editor.node);
+    tr.appendChild(td);
+    controls.push(editor);
+    function sync() {
+      const patch = editor.read();
+      if (!patch) return;
+      Object.keys(patch).forEach(function (k) { draft[k] = patch[k]; });
     }
+    editor.node.addEventListener('input', sync);
+    editor.node.addEventListener('change', sync);
+    return td;
   }
 
-  // 名称
-  nameInput = mkInput(t('rule.name_ph'));
-  nameInput.value = rule ? rule.name : '';
-  body.appendChild(mk(t('rule.name'), nameInput).field);
+  fieldTd('name', 'cell-name-wrap');
+  fieldTd('category');
+  fieldTd('link_type');
+  fieldTd('source', 'cell-source');
+  fieldTd('target', 'cell-target');
 
-  // 分类
-  catSelect = document.createElement('select');
-  catSelect.className = 'select';
-  snap.categories.forEach(function (c) {
-    const o = document.createElement('option');
-    o.value = c;
-    o.textContent = categoryLabel(c);
-    catSelect.appendChild(o);
-  });
-  catSelect.value = rule ? rule.category : 'other';
-  body.appendChild(mk(t('rule.category'), catSelect).field);
+  const tdUsage = document.createElement('td');
+  tdUsage.className = 'cell-usage none';
+  tdUsage.textContent = '—';
+  tr.appendChild(tdUsage);
 
-  // 源路径 + 浏览 + 实时校验
-  const srcField = document.createElement('div');
-  srcField.className = 'field';
-  const srcLabel = document.createElement('label');
-  srcLabel.textContent = t('rule.source');
-  srcField.appendChild(srcLabel);
-  const srcRow = document.createElement('div');
-  srcRow.className = 'field-row';
-  srcInput = mkInput('%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache');
-  srcInput.value = rule ? rule.source_template : '';
-  srcInput.style.flex = '1';
-  const srcPick = mkPickButton(t('rule.pick_dir'), async function () {
-    const p = await invoke('pick_folder', { title: t('rule.pick_dir_title'), defaultPath: srcInput.value });
-    if (p) { srcInput.value = p; checkSource(); }
-  });
-  srcRow.appendChild(srcInput);
-  srcRow.appendChild(srcPick);
-  srcField.appendChild(srcRow);
-  const srcHint = document.createElement('div');
-  srcHint.className = 'hint';
-  srcField.appendChild(srcHint);
-  body.appendChild(srcField);
-
-  // 目标根 + 子目录
-  const rootSelect = document.createElement('select');
-  rootSelect.className = 'select';
-  snap.roots.forEach(function (r) {
-    const o = document.createElement('option');
-    o.value = String(r.id);
-    o.textContent = tf('rule.root_fmt', { id: r.id, label: r.label, path: r.path }) + (r.state === 'ready' ? '' : t('rule.root_unavailable_tag'));
-    rootSelect.appendChild(o);
-  });
-  rootSelect.value = String(rule ? rule.target_root_id : snap.roots[0].id);
-
-  subInput = mkInput(t('rule.sub_ph'));
-  subInput.value = rule ? rule.target_subpath : '';
-
-  const targetRow = document.createElement('div');
-  targetRow.className = 'field-row';
-  const rootFieldWrap = document.createElement('div');
-  rootFieldWrap.className = 'field';
-  const rootL = document.createElement('label');
-  rootL.textContent = t('settings.root');
-  rootFieldWrap.appendChild(rootL);
-  rootFieldWrap.appendChild(rootSelect);
-  const subFieldWrap = document.createElement('div');
-  subFieldWrap.className = 'field';
-  const subL = document.createElement('label');
-  subL.textContent = t('rule.sub');
-  subFieldWrap.appendChild(subL);
-  subFieldWrap.appendChild(subInput);
-  targetRow.appendChild(rootFieldWrap);
-  targetRow.appendChild(subFieldWrap);
-  body.appendChild(targetRow);
-  const tgtHint = document.createElement('div');
-  tgtHint.className = 'hint';
-  body.appendChild(tgtHint);
-
-  // 链接类型
-  const linkSelect = document.createElement('select');
-  linkSelect.className = 'select';
-  [['junction', t('rule.link_junction')],
-   ['symlink_dir', t('rule.link_symlink')]].forEach(function (p) {
-    const o = document.createElement('option');
-    o.value = p[0];
-    o.textContent = p[1];
-    linkSelect.appendChild(o);
-  });
-  linkSelect.value = rule ? rule.link_type : 'junction';
-  body.appendChild(mk(t('detail.key.link_type'), linkSelect).field);
-
-  // 开关
-  const onCheck = document.createElement('input');
-  onCheck.type = 'checkbox';
-  onCheck.checked = rule ? rule.want_enabled : true;
-  const bootCheck = document.createElement('input');
-  bootCheck.type = 'checkbox';
-  bootCheck.checked = rule ? rule.rebuild_on_boot : true;
+  const tdFlags = document.createElement('td');
   const flags = document.createElement('div');
-  [[t('rule.want_enabled'), onCheck], [t('rule.rebuild_on_boot'), bootCheck]].forEach(function (p) {
-    const l = document.createElement('label');
-    l.className = 'inline-check';
-    l.appendChild(p[1]);
+  flags.className = 'row-flags';
+  [
+    { key: 'want_enabled', on: '●', off: '○', onTip: t('row.expect_on'), offTip: t('row.expect_off') },
+    { key: 'rebuild_on_boot', on: '⟳', off: '·', onTip: t('row.rebuild_on'), offTip: t('row.rebuild_off') },
+  ].forEach(function (f) {
     const s = document.createElement('span');
-    s.textContent = p[0];
-    l.appendChild(s);
-    flags.appendChild(l);
+    s.className = 'toggle ' + (draft[f.key] ? 'on' : 'off');
+    s.textContent = draft[f.key] ? f.on : f.off;
+    s.title = draft[f.key] ? f.onTip : f.offTip;
+    s.classList.add('clickable');
+    s.addEventListener('click', function () {
+      draft[f.key] = !draft[f.key];
+      s.className = 'toggle ' + (draft[f.key] ? 'on' : 'off') + ' clickable';
+      s.textContent = draft[f.key] ? f.on : f.off;
+      s.title = draft[f.key] ? f.onTip : f.offTip;
+    });
+    flags.appendChild(s);
   });
-  body.appendChild(flags);
+  tdFlags.appendChild(flags);
+  tr.appendChild(tdFlags);
 
-  // 备注
-  const notes = document.createElement('input');
-  notes.className = 'input';
-  notes.placeholder = t('rule.notes_ph');
-  notes.value = rule && rule.notes ? rule.notes : '';
-  body.appendChild(mk(t('detail.key.notes'), notes).field);
+  fieldTd('clean_policy', 'cell-auto');
+  fieldTd('clean_limit', 'cell-limit');
+  fieldTd('excludes', 'cell-excludes');
+  fieldTd('notes', 'cell-notes');
 
-  // 清理排除：一行一条，只影响「清理」，不影响应用/恢复的搬运
-  const excludes = document.createElement('textarea');
-  excludes.className = 'input';
-  excludes.rows = 2;
-  excludes.placeholder = t('rule.excludes_ph');
-  excludes.value = rule && rule.excludes ? rule.excludes.join('\n') : '';
-  const exWrap = mk(t('rule.excludes'), excludes);
-  const exHint = document.createElement('div');
-  exHint.className = 'hint';
-  exHint.textContent = t('rule.excludes_hint');
-  exWrap.field.appendChild(exHint);
-  body.appendChild(exWrap.field);
+  const tdAct = document.createElement('td');
+  const wrap = document.createElement('div');
+  wrap.className = 'row-actions';
 
-  // 水位自动清理：RAM 盘到严重线（默认 95%）或规则目录达到下面的容量上限时的预授权，
-  // 30 分钟冷却防反复删。建议值**按源目录自己的内容定**：量到实际占用后，上限取
-  // 「当前占用 × 1.3」、下限取上限的一半；目录只有几十/一两百 MB 时不会配出 1 GB
-  // 下限（那等于永远删不到东西）。量不到（空目录 / 路径不存在）才退回分类典型值，
-  // 量级也都按 MB 给。
-  const AUTO_REC_MB = {
-    browser: [512, 256],
-    media: [1024, 512],
-    dev: [2048, 1024],
-    design: [2048, 1024],
-    office: [1024, 512],
-    system: [256, 128],
-    game: [4096, 2048],
-    other: [512, 256],
-  };
-  // 已测到的源目录占用（null = 还没量到 / 量不到，此时用分类典型值）。
-  let measuredBytes = null;
-  // 用户手动改过上限 / 下限之后，测量回来的建议值不再覆盖他的手改。
-  let recTouched = false;
-  let recHintEl = null;
-  let measureSeq = 0;
-  const autoSelect = document.createElement('select');
-  autoSelect.className = 'select';
-  [['', t('rule.auto.none')],
-   ['empty', t('rule.auto.empty')],
-   ['older', t('rule.auto.older')],
-   ['keep', t('rule.auto.keep')]].forEach(function (p) {
-    const o = document.createElement('option');
-    o.value = p[0];
-    o.textContent = p[1];
-    autoSelect.appendChild(o);
-  });
-  const autoHours = mkInput(t('rule.auto.hours_ph'));
-  autoHours.type = 'number';
-  autoHours.min = '1';
-  autoHours.step = '1';
-  autoHours.value = '24';
-  const initPolicy = rule ? (rule.auto_clean_policy || '') : '';
-  const initHours = /older:(\d+)/.exec(initPolicy);
-  const initKeep = /keep:(\d+)/.exec(initPolicy);
-  if (initPolicy === 'empty') autoSelect.value = 'empty';
-  else if (initHours) { autoSelect.value = 'older'; autoHours.value = String(Math.max(1, Math.round(Number(initHours[1]) / 3600))); }
-  else if (initKeep) autoSelect.value = 'keep';
-  // 水位下限（按空间清理）：保留时间最近的若干容量，从最旧的文件删起。
-  const keepFloorNum = mkInput(t('rule.auto.keep_ph'));
-  keepFloorNum.type = 'number';
-  keepFloorNum.min = '1';
-  keepFloorNum.step = '1';
-  keepFloorNum.value = '100';
-  const keepFloorUnit = document.createElement('select');
-  keepFloorUnit.className = 'select';
-  // MB 在前：没有历史值时下拉默认选中的就是 MB（容量单位默认 MB）。
-  [['mb', t('rule.auto.unit_mb')], ['gb', t('rule.auto.unit_gb')]].forEach(function (u) {
-    const o = document.createElement('option');
-    o.value = u[0];
-    o.textContent = u[1];
-    keepFloorUnit.appendChild(o);
-  });
-  if (initKeep) {
-    const kb = Number(initKeep[1]);
-    if (kb >= 1073741824 && kb % 1073741824 === 0) {
-      keepFloorUnit.value = 'gb';
-      keepFloorNum.value = String(kb / 1073741824);
-    } else {
-      keepFloorUnit.value = 'mb';
-      keepFloorNum.value = String(Math.max(1, Math.round(kb / 1048576)));
-    }
-  }
-  const autoWrap = mk(t('rule.auto.label'), autoSelect);
-  const hoursWrap = mk(t('rule.auto.before'), autoHours);
-  const keepFloorWrap = mk(t('rule.auto.keep_label'), keepFloorNum);
-  const keepFloorUnitWrap = mk(t('rule.auto.floor_unit'), keepFloorUnit);
-  // 两个控件并排。提示文案**不能**塞进 .field-row：flex 行里它会把两个输入框
-  // 挤到近乎 0 宽（输入框 flex-basis 为 0，抢不过带内容的提示）。挂到外层
-  // .field 的下方，走 .field .hint 样式，输入框自然各占约一半宽度。
-  const autoRow = document.createElement('div');
-  autoRow.className = 'field-row';
-  autoRow.appendChild(autoWrap.field);
-  autoRow.appendChild(hoursWrap.field);
-  autoRow.appendChild(keepFloorWrap.field);
-  autoRow.appendChild(keepFloorUnitWrap.field);
-  const autoField = document.createElement('div');
-  autoField.className = 'field';
-  autoField.appendChild(autoRow);
-  const autoHint = document.createElement('div');
-  autoHint.className = 'hint';
-  autoHint.textContent = t('rule.auto.hint');
-  autoField.appendChild(autoHint);
-  if (!rule) {
-    recHintEl = document.createElement('div');
-    recHintEl.className = 'hint';
-    recHintEl.textContent = t('rule.auto.rec_hint');
-    autoField.appendChild(recHintEl);
-  }
-  function syncAutoMode() {
-    const isOlder = autoSelect.value === 'older';
-    const isKeep = autoSelect.value === 'keep';
-    hoursWrap.field.style.display = isOlder ? '' : 'none';
-    keepFloorWrap.field.style.display = isKeep ? '' : 'none';
-    keepFloorUnitWrap.field.style.display = isKeep ? '' : 'none';
-  }
-  autoSelect.addEventListener('change', syncAutoMode);
-  syncAutoMode();
-  body.appendChild(autoField);
-
-  // 文件夹级容量上限：这条规则**自己的目录**占用到量即**触发一次水位自动清理**
-  // （与卷水位路径同一套处理，只是触发条件不看整块盘 —— 单个缓存目录撑到几 GB 时
-  // 整块盘可能还很宽裕）。
-  const limitNum = mkInput(t('rule.auto.limit_ph'));
-  limitNum.type = 'number';
-  limitNum.min = '0';
-  limitNum.step = '1';
-  const limitUnit = document.createElement('select');
-  limitUnit.className = 'select';
-  [['mb', t('rule.auto.unit_mb')], ['gb', t('rule.auto.unit_gb')]].forEach(function (u) {
-    const o = document.createElement('option');
-    o.value = u[0];
-    o.textContent = u[1];
-    limitUnit.appendChild(o);
-  });
-  const initLimit = rule && rule.auto_clean_limit_bytes ? Number(rule.auto_clean_limit_bytes) : 0;
-  if (initLimit >= 1073741824 && initLimit % 1073741824 === 0) {
-    limitUnit.value = 'gb';
-    limitNum.value = String(initLimit / 1073741824);
-  } else if (initLimit > 0) {
-    limitUnit.value = 'mb';
-    limitNum.value = String(Math.max(1, Math.round(initLimit / 1048576)));
-  }
-  const limitWrap = mk(t('rule.auto.limit_label'), limitNum);
-  const unitWrap = mk(t('rule.auto.limit_unit'), limitUnit);
-  const limitRow = document.createElement('div');
-  limitRow.className = 'field-row';
-  limitRow.appendChild(limitWrap.field);
-  limitRow.appendChild(unitWrap.field);
-  const limitField = document.createElement('div');
-  limitField.className = 'field';
-  limitField.appendChild(limitRow);
-  const limitHint = document.createElement('div');
-  limitHint.className = 'hint';
-  limitField.appendChild(limitHint);
-  body.appendChild(limitField);
-
-  function autoLimitBytes() {
-    const n = Math.floor(Number(limitNum.value));
-    if (!(n > 0)) return 0;
-    return limitUnit.value === 'mb' ? n * 1048576 : n * 1073741824;
-  }
-  function syncLimitHint() {
-    const needs = autoLimitBytes() > 0 && !autoPolicyValue();
-    limitHint.textContent = needs ? '⚠️ ' + t('rule.auto.limit_needs_policy') : t('rule.auto.limit_hint');
-    limitHint.className = needs ? 'hint warn' : 'hint';
-  }
-  limitNum.addEventListener('input', syncLimitHint);
-  limitUnit.addEventListener('change', syncLimitHint);
-  keepFloorNum.addEventListener('input', syncLimitHint);
-  keepFloorUnit.addEventListener('change', syncLimitHint);
-  autoSelect.addEventListener('change', syncLimitHint);
-  syncLimitHint();
-  // 记录"用户动过建议值"：之后测量完成 / 切分类都不再自动改写。
-  [keepFloorNum, limitNum].forEach(function (el) {
-    el.addEventListener('input', function () { recTouched = true; });
-  });
-  [keepFloorUnit, limitUnit].forEach(function (el) {
-    el.addEventListener('change', function () { recTouched = true; });
-  });
-
-  function sizeValueText(mb) {
-    return mb >= 2048 && mb % 1024 === 0 ? (mb / 1024) + ' GB' : mb + ' MB';
-  }
-  function setSizeValue(num, unit, mb) {
-    if (mb >= 2048 && mb % 1024 === 0) {
-      unit.value = 'gb';
-      num.value = String(mb / 1024);
-    } else {
-      unit.value = 'mb';
-      num.value = String(mb);
-    }
-  }
-  /** 按源目录实际占用（`bytes`）或分类典型值，填一套「容量上限 + 水位下限」建议值。
-   *  `force` 只在表单初始化时用：之后用户手改过的值不覆盖。 */
-  function applyRecommendation(bytes, force) {
-    if (recTouched && !force) return;
-    measuredBytes = bytes && bytes > 0 ? bytes : null;
-    let limitMb, floorMb;
-    if (measuredBytes) {
-      const cur = measuredBytes / 1048576;
-      // 步长跟量级走：小目录 32 MB 一档，几百 MB 64 MB 一档，GB 级 256 MB 一档，
-      // 建议值看起来才是整数而不是「1372 MB」。
-      const step = cur >= 2048 ? 256 : cur >= 512 ? 64 : 32;
-      limitMb = Math.max(step, Math.ceil((cur * 1.3) / step) * step);
-      floorMb = Math.max(step, Math.floor((limitMb * 0.5) / step) * step);
-    } else {
-      const rec = AUTO_REC_MB[catSelect.value] || AUTO_REC_MB.other;
-      limitMb = rec[0];
-      floorMb = rec[1];
-    }
-    setSizeValue(keepFloorNum, keepFloorUnit, floorMb);
-    setSizeValue(limitNum, limitUnit, limitMb);
-    syncLimitHint();
-    if (!recHintEl) return;
-    if (measuredBytes) {
-      recHintEl.textContent = tf('rule.auto.rec_measured', {
-        size: humanBytes(measuredBytes),
-        limit: sizeValueText(limitMb),
-        floor: sizeValueText(floorMb),
-      });
-      recHintEl.className = 'hint ok';
-    } else {
-      recHintEl.textContent = t('rule.auto.rec_hint');
-      recHintEl.className = 'hint';
-    }
-  }
-
-  /** 量源目录当前占用，把建议值落到「这个目录」的量级；量不到就退回分类典型值。 */
-  async function measureSource(path) {
-    if (recTouched) return;
-    const seq = ++measureSeq;
-    if (recHintEl) {
-      recHintEl.textContent = t('rule.auto.rec_measuring');
-      recHintEl.className = 'hint';
+  async function saveDraft() {
+    controls.forEach(function (editor) {
+      const patch = editor.read();
+      if (!patch) return;
+      Object.keys(patch).forEach(function (k) { draft[k] = patch[k]; });
+    });
+    const form = {
+      name: draft.name,
+      category: draft.category,
+      source_template: draft.source_template,
+      target_root_id: draft.target_root_id,
+      target_subpath: draft.target_subpath,
+      link_type: draft.link_type,
+      want_enabled: draft.want_enabled,
+      rebuild_on_boot: draft.rebuild_on_boot,
+      notes: draft.notes || null,
+      excludes: draft.excludes || [],
+      auto_clean_policy: draft.auto_clean_policy || '',
+      auto_clean_limit_bytes: draft.auto_clean_limit_bytes || 0,
+    };
+    try {
+      validateRuleValues(form);
+    } catch (e) {
+      toast(t('rule.add_failed'), e.message, 'error');
+      return;
     }
     try {
-      const pv = await invoke('clean_preview', {
-        target: { kind: 'folder', path: path },
-        policy: { mode: 'empty' },
-        typeExcludes: [],
-      });
-      if (seq !== measureSeq) return;
-      applyRecommendation(Number(pv.bytes) || 0);
+      await invoke('add_rule', { form: form });
+      const name = form.name;
+      state.draft = null;
+      toast(t('rule.added'), name, 'ok');
+      await refresh(false);
     } catch (e) {
-      if (seq !== measureSeq) return;
-      applyRecommendation(null);
+      toast(t('rule.add_failed'), e.message, 'error');
     }
   }
 
-  catSelect.addEventListener('change', function () {
-    // 量到了实际占用就按目录本身走；只有量不到时，分类才决定建议值。
-    if (!rule && !measuredBytes) applyRecommendation(null);
+  const save = document.createElement('button');
+  save.className = 'mini primary';
+  save.textContent = t('common.save');
+  save.addEventListener('click', saveDraft);
+  wrap.appendChild(save);
+  const cancel = document.createElement('button');
+  cancel.className = 'mini';
+  cancel.textContent = t('common.cancel');
+  cancel.addEventListener('click', function () {
+    state.draft = null;
+    renderRows();
   });
+  wrap.appendChild(cancel);
+  tdAct.appendChild(wrap);
+  tr.appendChild(tdAct);
 
-  if (!rule) {
-    // 建议默认值只给新增规则：编辑已有条目时不静默塞策略，没配就是没配。
-    autoSelect.value = 'keep';
-    applyRecommendation(null);
-  }
-
-  function autoPolicyValue() {
-    if (autoSelect.value === 'empty') return 'empty';
-    if (autoSelect.value === 'older') {
-      const h = Math.floor(Number(autoHours.value));
-      return h > 0 ? 'older:' + (h * 3600) : '';
-    }
-    if (autoSelect.value === 'keep') {
-      const n = Math.floor(Number(keepFloorNum.value));
-      if (!(n > 0)) return '';
-      return 'keep:' + (keepFloorUnit.value === 'mb' ? n * 1048576 : n * 1073741824);
-    }
-    return '';
-  }
-
-  async function checkSource() {
-    const v = srcInput.value.trim();
-    if (!v) { srcHint.textContent = ''; srcHint.className = 'hint'; return; }
-    try {
-      const info = await invoke('inspect_source', { template: v });
-      const parts = [tf('rule.src.expanded', { path: info.expanded }) + (info.exists ? t('rule.src.exists') : t('rule.src.not_exist'))];
-      if (info.unknown_vars.length) parts.push(tf('rule.src.unknown', { vars: info.unknown_vars.join(t('list.sep')) }));
-      if (info.requires_elevation) parts.push(t('rule.src.elev'));
-      srcHint.textContent = parts.join(' · ');
-      srcHint.className = info.blocking.length ? 'hint err'
-        : (info.requires_elevation || info.unknown_vars.length) ? 'hint warn' : 'hint ok';
-      if (info.blocking.length) srcHint.textContent = '⛔ ' + info.blocking.join(t('list.sep'));
-      if (!rule) {
-        if (info.exists && !info.blocking.length) measureSource(info.expanded);
-        else { measureSeq++; applyRecommendation(null); }
-      }
-    } catch (e) {
-      srcHint.textContent = e.message;
-      srcHint.className = 'hint err';
-      if (!rule) { measureSeq++; applyRecommendation(null); }
-    }
-  }
-
-  async function checkTarget() {
-    const sub = subInput.value.trim();
-    if (!sub) { tgtHint.textContent = ''; tgtHint.className = 'hint'; return; }
-    try {
-      const info = await invoke('inspect_target', { rootId: Number(rootSelect.value), subpath: sub });
-      let text = tf('rule.tgt.target', { path: info.target });
-      if (!info.root_ready) text += t('rule.tgt.root_unavailable');
-      if (info.occupied) text += t('rule.tgt.occupied');
-      tgtHint.textContent = text;
-      tgtHint.className = 'hint ' + (!info.root_ready || info.occupied ? 'warn' : '');
-    } catch (e) {
-      tgtHint.textContent = e.message;
-      tgtHint.className = 'hint err';
-    }
-  }
-
-  srcInput.addEventListener('blur', checkSource);
-  subInput.addEventListener('blur', checkTarget);
-  rootSelect.addEventListener('change', checkTarget);
-  if (rule) { checkSource(); checkTarget(); }
-
-  openModal({
-    title: rule ? tf('rule.edit_title', { id: rule.id }) : t('rule.add_title'),
-    body: body,
-    actions: [
-      { label: t('common.cancel'), onClick: closeModal },
-      {
-        label: rule ? t('common.save') : t('common.add'),
-        kind: 'primary',
-        onClick: async function () {
-          // ⚠️ 字段名必须是 snake_case：Tauri 只把「命令参数名」从 camelCase 转
-          // 成 snake_case（如 rootId→root_id），嵌套结构体的字段名原样反序列化。
-          // 这里发 sourceTemplate 而 Rust RuleForm 要 source_template，就会报
-          // `missing field source_template`（真机才暴露，mock 校验形状能拦住）。
-          const form = {
-            name: nameInput.value,
-            category: catSelect.value,
-            source_template: srcInput.value,
-            target_root_id: Number(rootSelect.value),
-            target_subpath: subInput.value,
-            link_type: linkSelect.value,
-            want_enabled: onCheck.checked,
-            rebuild_on_boot: bootCheck.checked,
-            notes: notes.value || null,
-            excludes: excludes.value.split(/\r?\n/).map(function (s) { return s.trim(); })
-              .filter(function (s) { return s.length > 0; }),
-            auto_clean_policy: autoPolicyValue(),
-            auto_clean_limit_bytes: autoLimitBytes(),
-          };
-          if (form.auto_clean_limit_bytes > 0 && !form.auto_clean_policy) {
-            toast(t('common.save_failed'), t('rule.auto.limit_needs_policy'), 'error');
-            return;
-          }
-          try {
-            if (rule) await invoke('update_rule', { id: rule.id, form: form });
-            else await invoke('add_rule', { form: form });
-            closeModal();
-            toast(rule ? t('common.saved') : t('rule.added'), form.name, 'ok');
-            await refresh(rule ? true : false);
-          } catch (e) {
-            toast(rule ? t('common.save_failed') : t('rule.add_failed'), e.message, 'error');
-          }
-        },
-      },
-    ],
-  });
+  return tr;
 }
 
 // ---------------------------------------------------------------------------
@@ -3164,7 +3244,7 @@ function buildRuleMenu(m, ids) {
   m.appendChild(mkCtxItem(t('detail.act.locks'), function () { doLocks(ids[0]); }, { disabled: !single }));
   m.appendChild(mkCtxItem(t('detail.act.clean'), function () { openCleanTargets(ids); }));
   m.appendChild(mkCtxSep());
-  m.appendChild(mkCtxItem(t('detail.act.edit'), function () { openRuleForm(ids[0]); }, { disabled: !single }));
+  m.appendChild(mkCtxItem(t('detail.act.edit'), function () { focusInlineEdit(ids[0]); }, { disabled: !single }));
   m.appendChild(mkCtxItem(t('detail.act.copy_source'), function () {
     copyText(rules.map(function (r) { return r.source; }).join(CTX_NL));
   }));
@@ -3234,6 +3314,11 @@ document.addEventListener('click', async function (ev) {
       }
       return;
     }
+    if (act === 'toggle-flag') {
+      const r = (state.snap.rules || []).find(function (x) { return x.id === id; });
+      await toggleRuleFlag(r, target.dataset.flag);
+      return;
+    }
     if (act === 'apply') { await runApply([id], false); return; }
     if (act === 'apply-elevated') { await runElevated('apply', [id]); return; }
     if (act === 'restore') { await runRestore([id]); return; }
@@ -3244,7 +3329,7 @@ document.addEventListener('click', async function (ev) {
       await openCleanDialog([{ kind: 'rule', id: id }], tf('clean.title_rule', { name: r ? r.name : ('#' + id) }));
       return;
     }
-    if (act === 'edit') { await openRuleForm(id); return; }
+    if (act === 'edit') { focusInlineEdit(id); return; }
     if (act === 'copy-source') {
       const r = state.snap.rules.find(function (x) { return x.id === id; });
       if (r) await copyText(r.source);
@@ -3263,6 +3348,25 @@ document.addEventListener('click', async function (ev) {
       if (!p) return;
       await applyTemplates([p]);
       return;
+    }
+    return;
+  }
+
+  // 单击可编辑单元格：名称 / 分类 / 链接 / 源 / 目标 / 自动清理 / 上限 / 排除 / 备注。
+  // 先切到该条规则，再由 beginCellEdit 原地换成输入控件（不弹任何对话框）。
+  const cell = ev.target.closest ? ev.target.closest('td[data-field]') : null;
+  if (cell && !(ev.target.closest && ev.target.closest('.cell-editor'))) {
+    const id = Number(cell.dataset.id);
+    const rule = (state.snap.rules || []).find(function (r) { return r.id === id; });
+    if (rule) {
+      state.focusId = id;
+      document.querySelectorAll('#rows tr.selected').forEach(function (tr) { tr.classList.remove('selected'); });
+      const tr = cell.closest('tr');
+      if (tr) tr.classList.add('selected');
+      if (!state.treeOpen.has(rule.category)) state.treeOpen.add(rule.category);
+      renderSidebar();
+      renderDetail();
+      beginCellEdit(cell, rule, cell.dataset.field);
     }
     return;
   }
@@ -3287,7 +3391,7 @@ document.addEventListener('click', async function (ev) {
   if (el.id === 'btn-more') { toggleMoreMenu(); return; }
   if (closest('#more-menu')) hideMoreMenu();
   if (el.id === 'btn-refresh') await refresh(true);
-  else if (el.id === 'btn-add') await openRuleForm(null);
+  else if (el.id === 'btn-add') startDraftRule();
   else if (el.id === 'btn-apply') { if (requireAnyPick(t('pick.apply'))) await applyPickedAll(); }
   else if (el.id === 'btn-restore') { if (requirePicked(t('pick.restore'))) await runRestore(pickedIds()); }
   else if (el.id === 'btn-enable' || el.id === 'btn-disable') {
@@ -3645,6 +3749,12 @@ function createMockBackend() {
           const f = assertFormShape(args.form);
           const id = Math.max.apply(null, rules.map(function (r) { return r.id; })) + 1;
           rules.push(mockRule(id, f.name, f.category, f.source_template, f.target_subpath, '❌', 'plain_dir', { want_enabled: f.want_enabled, auto_clean_policy: f.auto_clean_policy || '', auto_clean_limit_bytes: f.auto_clean_limit_bytes || 0 }));
+          const added = find(id);
+          if (added) {
+            added.link_type = f.link_type;
+            added.notes = f.notes || null;
+            added.excludes = f.excludes || [];
+          }
           return Promise.resolve(id);
         }
         case 'update_rule': {
@@ -3654,6 +3764,8 @@ function createMockBackend() {
             r.name = args.form.name; r.category = args.form.category;
             r.source_template = args.form.source_template; r.target_subpath = args.form.target_subpath;
             r.source = args.form.source_template; r.target = 'R:\\' + args.form.target_subpath;
+            r.target_root_id = args.form.target_root_id;
+            r.link_type = args.form.link_type;
             r.want_enabled = args.form.want_enabled; r.rebuild_on_boot = args.form.rebuild_on_boot;
             r.notes = args.form.notes;
             r.excludes = args.form.excludes || [];
@@ -3916,8 +4028,8 @@ function simulateProgress(total) {
     showProgress(t('mock.progress_title'));
     setProgress(46, t('mock.progress_detail'));
   }
-  if (PARAMS.has('modal')) {
-    await openRuleForm(null);
+  if (PARAMS.has('modal') || PARAMS.has('add')) {
+    startDraftRule();
   }
   if (PARAMS.has('settings')) {
     await openSettings();

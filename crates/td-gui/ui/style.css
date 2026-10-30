@@ -370,8 +370,9 @@ table.rules tbody tr.row-hidden .cell-name { color: var(--muted); }
 
 .table-wrap { flex: 1 1 auto; overflow: auto; background: var(--card); }
 
-/* 表格保底宽度：侧栏展开 / 窄窗口下宁可横向滚动，也不把路径挤成逐字换行。 */
-table.rules { width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 0; }
+/* 表格保底宽度：侧栏展开 / 窄窗口下宁可横向滚动，也不把路径挤成逐字换行。
+   列里现在直接内联编辑（分类 / 链接 / 清理 / 排除 / 备注），因此比原先更宽。 */
+table.rules { width: 100%; min-width: 1560px; border-collapse: separate; border-spacing: 0; }
 
 table.rules thead th {
   position: sticky;
@@ -408,13 +409,82 @@ table.rules tbody tr.tpl-row .cell-name { color: var(--ink-2); }
 
 .col-check { width: 34px; }
 .col-badge { width: 82px; }
-.col-cat { width: 76px; }
-.col-usage { width: 80px; }
+.col-cat { width: 88px; }
+.col-link { width: 76px; }
+.col-source { width: 200px; }
+.col-target { width: 200px; }
+.col-usage { width: 64px; }
 .col-flag { width: 78px; }
-.col-actions { width: 172px; }
-.col-name { width: 150px; }
+.col-auto { width: 150px; }
+.col-limit { width: 112px; }
+.col-excludes { width: 80px; }
+.col-notes { width: 110px; }
+.col-actions { width: 140px; }
+.col-name { width: 132px; }
 
 .col-check input { accent-color: var(--brand); cursor: pointer; vertical-align: middle; }
+
+/* 可编辑单元格：单击就地变输入控件，不弹对话框。悬停给一点浅色底提示。 */
+.cell-edit {
+  cursor: text;
+  position: relative;
+  transition: background .12s, box-shadow .12s;
+}
+.cell-edit:hover { background: #f4f9ff; box-shadow: inset 0 0 0 1px #dbeafe; }
+.cell-edit.editing { background: #f8fbff; box-shadow: inset 0 0 0 1px #93c5fd; padding: 4px 6px; }
+.cell-edit.none { color: var(--muted); }
+td.cell-flags { cursor: default; }
+
+/* 表格比窗口宽时把行操作固定在右侧，横向滚动不会把「应用 / 恢复 / 清理」甩出视野。 */
+table.rules th.col-actions,
+table.rules td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--card);
+  box-shadow: -1px 0 0 var(--line);
+}
+table.rules thead th.col-actions { z-index: 3; background: #f8fafc; }
+table.rules tbody tr:hover td:last-child { background: #f8fbff; }
+table.rules tbody tr.selected td:last-child { background: #eff6ff; }
+table.rules tbody tr.picked td:last-child { background: #eef4ff; }
+table.rules tbody tr.tpl-row td:last-child { background: #fbfdff; }
+table.rules tbody tr.tpl-row:hover td:last-child { background: #f2f8ff; }
+table.rules tbody tr.draft-row td:last-child { background: #f6faff; }
+
+.cell-editor { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cell-editor-row { display: flex; gap: 4px; align-items: center; min-width: 0; flex-wrap: wrap; }
+.cell-input,
+.cell-select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 5px;
+}
+.cell-input:focus,
+.cell-select:focus { outline: 2px solid #bfdbfe; outline-offset: 0; border-color: var(--brand); }
+.cell-editor-row .cell-input[type="number"] { flex: 1 1 46px; width: auto; min-width: 40px; }
+.cell-editor-row .cell-select { flex: 0 0 50px; width: 50px; }
+.cell-textarea { resize: vertical; min-height: 42px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.cell-link { font-size: 12px; color: var(--ink-2); }
+.cell-auto { font-size: 12px; color: var(--ink-2); }
+.cell-limit { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.cell-excludes,
+.cell-notes { font-size: 12px; color: var(--ink-2); }
+.cell-notes { overflow: hidden; text-overflow: ellipsis; }
+.toggle.clickable { cursor: pointer; }
+.toggle.clickable:hover { filter: brightness(.82); }
+
+/* 新增规则草稿行：插在列表最上面，整行淡蓝底 + 左侧加号。 */
+table.rules tbody tr.draft-row { background: #f6faff; box-shadow: inset 3px 0 0 #93c5fd; }
+table.rules tbody tr.draft-row:hover { background: #f0f7ff; }
+.draft-plus { display: inline-block; color: var(--brand); font-weight: 700; margin-right: 4px; }
 
 .cell-name { font-weight: 600; color: var(--ink); }
 .cell-path {

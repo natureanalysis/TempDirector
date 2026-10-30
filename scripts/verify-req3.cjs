@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * verify-req3.cjs —— 文件夹级容量上限的界面取证（需求 3）。
+ * verify-req3.cjs —— 文件夹级容量上限的界面取证（需求 3，行内编辑版）。
  *
- * 用 ?mock=1 起界面，程序化测量而不是"看图猜"：
+ * 界面已取消规则表单弹窗：容量上限直接在列表单元格里编辑。本脚本用 ?mock=1 起界面，
+ * 程序化测量而不是“看图猜”：
  *   1) 详情面板是否展示「文件夹容量上限」行，且数值格式化正确；
- *   2) 规则弹窗里新增的「容量上限 + 单位」两个控件宽度是否可用（不被挤扁）；
+ *   2) 单击容量上限单元格后，「数值 + 单位」控件宽度是否可用（不被挤扁）；
  *   3) 编辑既有规则时能正确回填（2 GB → 数值 2 + 单位 GB）；
- *   4) 填了上限却没选策略时给出警示（warn 提示 + 保存前拦截）。
+ *   4) 填了上限却没选策略时，保存会被前端拦下并给出警示。
  *
  * 用法： node scripts/verify-req3.cjs
  * 依赖： playwright（见 take-screens.cjs 的 NODE_PATH 说明）
@@ -44,7 +45,7 @@ async function launch() {
 
 (async () => {
   const browser = await launch();
-  const context = await browser.newContext({ locale: 'zh-CN', viewport: { width: 1240, height: 900 } });
+  const context = await browser.newContext({ locale: 'zh-CN', viewport: { width: 1600, height: 900 } });
   await context.addInitScript(() => {
     try { localStorage.setItem('tempdirector.locale', 'zh'); } catch (e) {}
   });
@@ -52,12 +53,13 @@ async function launch() {
   const uiUrl = url.pathToFileURL(UI_INDEX).href + '?mock=1';
 
   await page.goto(uiUrl, { waitUntil: 'load' });
-  await page.waitForSelector('#rows tr');
-  await page.waitForFunction(() => document.querySelectorAll('#rows tr').length >= 8);
+  await page.waitForSelector('#rows tr[data-id]');
 
   // ---- 1) 详情面板 ----
-  await page.click('#rows tr:first-child td[data-act="focus"]');
+  await page.click('#rows tr[data-id="1"] td[data-field="clean_limit"]');
   await page.waitForSelector('#detail:not(.hidden)');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(120);
   const detail = await page.evaluate(() => {
     const keys = Array.from(document.querySelectorAll('#detail .detail-key')).map((e) => e.textContent);
     const vals = Array.from(document.querySelectorAll('#detail .detail-val')).map((e) => e.textContent);
@@ -67,17 +69,13 @@ async function launch() {
   ok('详情面板有「文件夹容量上限」行', detail.hasKey, detail.keys.join(' / '));
   ok('容量上限展示为人类可读', detail.value === '2.0 GB', String(detail.value));
 
-  // ---- 2) 规则弹窗里的容量上限控件 ----
-  await page.click('#detail [data-act="edit"]');
-  await page.waitForSelector('#modal:not(.hidden)');
-  await page.waitForTimeout(120);
-
+  // ---- 2) 行内容量上限控件与回填 ----
+  await page.click('#rows tr[data-id="1"] td[data-field="clean_limit"]');
+  await page.waitForSelector('#rows tr[data-id="1"] td[data-field="clean_limit"] .cell-editor');
   const geom = await page.evaluate(() => {
-    const rows = Array.from(document.querySelectorAll('#modal-body .field-row'));
-    const row = rows.find((r) => r.querySelector('select option[value="gb"]'));
-    if (!row) return null;
-    const n = row.querySelector('input[type="number"]');
-    const s = row.querySelector('select');
+    const td = document.querySelector('#rows tr[data-id="1"] td[data-field="clean_limit"]');
+    const n = td.querySelector('input[type="number"]');
+    const s = td.querySelector('select');
     const rn = n.getBoundingClientRect();
     const rs = s.getBoundingClientRect();
     return {
@@ -86,38 +84,31 @@ async function launch() {
       value: n.value, unit: s.value,
     };
   });
-  ok('弹窗里存在「容量上限 + 单位」一行', !!geom, JSON.stringify(geom));
-  if (geom) {
-    ok('数值输入框宽度可用（>=120px）', geom.numW >= 120, geom.numW + 'px');
-    ok('单位选择框宽度可用（>=120px）', geom.selW >= 120, geom.selW + 'px');
-    ok('数值无横向截断', geom.numScroll <= geom.numClient + 1, geom.numScroll + '/' + geom.numClient);
-    ok('编辑既有规则回填正确（2 / GB）', geom.value === '2' && geom.unit === 'gb', geom.value + ' / ' + geom.unit);
-  }
+  ok('行内存在「容量上限 + 单位」控件', !!geom, JSON.stringify(geom));
+  ok('数值输入框宽度可用（>=40px）', geom.numW >= 40, geom.numW + 'px');
+  ok('单位选择框宽度可用（>=40px）', geom.selW >= 40, geom.selW + 'px');
+  ok('数值无横向截断', geom.numScroll <= geom.numClient + 1, geom.numScroll + '/' + geom.numClient);
+  ok('编辑既有规则回填正确（2 / GB）', geom.value === '2' && geom.unit === 'gb', geom.value + ' / ' + geom.unit);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(100);
 
-  // ---- 3) 填上限但不选策略 → 警示 ----
-  await page.evaluate(() => {
-    const row = Array.from(document.querySelectorAll('#modal-body .field-row'))
-      .find((r) => r.querySelector('select option[value="gb"]'));
-    const sel = row.querySelector('select');
-    sel.value = 'gb';
-    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  // ---- 3) 填上限但不选策略 → 保存被拦下 + 警示 ----
+  await page.click('#btn-add');
+  await page.waitForSelector('#rows tr.draft-row');
+  await page.fill('#rows tr.draft-row [data-draft-field="name"] input', '上限校验');
+  await page.fill('#rows tr.draft-row [data-draft-field="source"] input', '%LOCALAPPDATA%\\LimitCheck');
+  await page.fill('#rows tr.draft-row [data-draft-field="target"] input', 'dev\\limit-check');
+  await page.fill('#rows tr.draft-row [data-draft-field="clean_limit"] input[type="number"]', '2');
+  await page.click('#rows tr.draft-row button.mini.primary');
+  await page.waitForSelector('#toasts .toast, #toasts > *', { timeout: 3000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  const toastText = await page.evaluate(() => {
+    const host = document.querySelector('#toasts');
+    return host ? host.textContent : '';
   });
-  // 把策略切回「未启用」
-  await page.evaluate(() => {
-    const s = document.querySelector('#modal-body select option[value=""]').parentElement;
-    s.value = '';
-    s.dispatchEvent(new Event('change', { bubbles: true }));
-  });
-  const hint = await page.evaluate(() => {
-    const row = Array.from(document.querySelectorAll('#modal-body .field-row'))
-      .find((r) => r.querySelector('select option[value="gb"]'));
-    // 只认 .field 的直接子 .hint：mk() 生成的每个 .field 内部各有一个空 .hint，
-    // 用后代选择器会命中那个空壳（第一版就踩了这个坑）。
-    const h = row.parentElement.querySelector(':scope > .hint');
-    return { cls: h.className, text: h.textContent };
-  });
-  ok('上限>0 且无策略时提示转为警示', /warn/.test(hint.cls), hint.cls);
-  ok('警示文案点出「必须选策略」', /策略/.test(hint.text), hint.text.slice(0, 40));
+  ok('上限 > 0 且无策略时保存被拦下', /必须选|requires/i.test(toastText), toastText.slice(0, 80));
+  ok('草稿行保留，未丢失已填内容', await page.isVisible('#rows tr.draft-row'));
+  ok('全程未出现规则弹窗', await page.isHidden('#modal'));
 
   await browser.close();
 

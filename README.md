@@ -37,9 +37,10 @@ launch defaults to English, and the choice is remembered.
   its own **Add & apply**, to create and link it without opening the dialog.
 * **Detail panel**: full info per rule (source template and expanded path, link type,
   warnings, last applied time and size) plus single-rule actions.
-* **Add / edit rule**: live validation (path expansion, protected location, target state),
-  system folder picker for the source, and a presets dropdown with cache-dir templates for
-  common apps.
+* **Add / edit rule (all inline, no dialogs)**: “Add rule” inserts a blank draft row at the
+  top of the list; click any cell of an existing rule to edit it in place — name, category,
+  link type, source, target root + subpath, flags, auto-clean policy, capacity limit,
+  excludes and notes. Enter or blur saves, Esc reverts.
 * **Also**: batch progress overlay, activity log, settings (autostart / scheduled cleaning /
   target roots), and a tray menu.
 
@@ -60,7 +61,7 @@ scripts\cargo.cmd build -p td-gui --release   # output: target\release\tempdirec
 
 The interface is static files embedded into the exe — no npm, no bundler. To preview it
 without Tauri, open `crates/td-gui/ui/index.html?mock=1` in a browser (add `&progress=1` /
-`&modal=1` / `&settings=1` / `&ops=1` for the overlays and dialogs).
+`&add=1` / `&settings=1` / `&ops=1` for the overlays and inline draft row).
 
 ---
 

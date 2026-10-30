@@ -96,7 +96,7 @@ async function scanCJK(page) {
   await page.goto(uiUrl(), { waitUntil: 'load' });
   await page.waitForSelector('#rows tr');
   await page.waitForFunction(() => document.querySelectorAll('#rows tr').length >= 8);
-  await page.click('#rows tr:first-child td[data-act="focus"]');
+  await page.evaluate(() => { state.focusId = state.snap.rules[0].id; renderDetail(); });
   await page.waitForSelector('#detail:not(.hidden)');
   if (CHECK_ONLY) {
     const bad = await scanCJK(page);
@@ -109,10 +109,12 @@ async function scanCJK(page) {
     console.log('main-window' + suffix + '.png  (' + VIEWPORT.width + 'x' + Math.min(h + 2, 1200) + ')');
   }
 
-  // ---- 添加规则弹窗（目标子目录填上与中文截图相同的值） ----
+  // ---- 添加规则草稿行（目标子目录填上与中文截图相同的值） ----
   await page.click('#btn-add');
-  await page.waitForSelector('#modal:not(.hidden)');
-  await page.fill('#modal-body input[placeholder*="browsers"]', 'browsers\\chrome-cache');
+  await page.waitForSelector('#rows tr.draft-row');
+  await page.fill('#rows tr.draft-row [data-draft-field="name"] input', 'Chrome cache');
+  await page.fill('#rows tr.draft-row [data-draft-field="source"] input', '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache');
+  await page.fill('#rows tr.draft-row [data-draft-field="target"] input', 'browsers\\chrome-cache');
   await page.waitForTimeout(120);
   if (CHECK_ONLY) {
     const bad = await scanCJK(page);

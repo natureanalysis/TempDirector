@@ -89,7 +89,7 @@ const waitCount = (page, n) => page.waitForFunction((arg) =>
   ok('可以监听 mock 后端 invoke（前置条件）', hooked === true, String(hooked));
 
   // ---- 打开清理弹窗 ----
-  await page.click('#rows tr:first-child td[data-act="focus"]');
+  await page.evaluate(() => { state.focusId = state.snap.rules[0].id; renderDetail(); });
   await page.waitForSelector('#detail:not(.hidden)');
   await page.click('#detail [data-act="clean"]');
   await page.waitForSelector('#modal:not(.hidden) ' + BTNROW);
