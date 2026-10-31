@@ -2,6 +2,19 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-11-01（预设：移除错误条目「VS 设置日志」）
+
+### 修正
+
+* 删除内置预设「VS 设置日志」（`%LOCALAPPDATA%\Microsoft\VisualStudio\SettingsLogs`）：VS 并不创建这个目录，本机看到的同名目录是此前应用该预设时由 TempDirector 建出的空 junction。VS 的日志实际是 `%APPDATA%\Microsoft\VisualStudio\<版本>\ActivityLog.xml`（`devenv /Log` 生成）与 `%LOCALAPPDATA%\Microsoft\VisualStudio\<版本>\ComponentModelCache` 下的 MEF 日志，二者都不是「可整体搬迁的缓存目录」，因此不另设替代条目。
+* 复核同批 22 条预设的其余条目：`ShadowBot\cache`、`Tencent\WXWork\Log`、`Tencent\WeMail\cache`、`VisualStudio\Roslyn\Cache` 均有公开资料或本机实测支撑，保留。
+
+### 验证
+
+* 本机实测：`SettingsLogs` 是 2026-10-29 由本工具创建的 junction，指向空的目标目录；VS 树内无任何其他 `*SettingsLog*` 目录。
+* `scripts\cargo.cmd test -p td-core builtin_presets_parse` 通过（清单 47→46，仍满足 ≥20 与唯一性约束）。
+* 已应用过该预设的机器需要手动清理残留规则（恢复或删除规则），预设删除不会自动回滚已建链接。
+
 ## 2026-10-31（列表右键新增「复制为新规则」）
 
 ### 变更

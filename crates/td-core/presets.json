@@ -161,13 +161,6 @@
     "note": null
   },
   {
-    "name": "VS 设置日志",
-    "category": "dev",
-    "source_template": "%LOCALAPPDATA%\\Microsoft\\VisualStudio\\SettingsLogs",
-    "target_subpath": "dev\\vs-settings-logs",
-    "note": null
-  },
-  {
     "name": "用户 TEMP",
     "category": "system",
     "source_template": "%LOCALAPPDATA%\\Temp",
