@@ -5,10 +5,9 @@
  *
  * 界面已取消规则表单弹窗：容量上限直接在列表单元格里编辑。本脚本用 ?mock=1 起界面，
  * 程序化测量而不是“看图猜”：
- *   1) 详情面板是否展示「文件夹容量上限」行，且数值格式化正确；
- *   2) 单击容量上限单元格后，「数值 + 单位」控件宽度是否可用（不被挤扁）；
- *   3) 编辑既有规则时能正确回填（2 GB → 数值 2 + 单位 GB）；
- *   4) 填了上限却没选策略时，保存会被前端拦下并给出警示。
+ *   1) 单击容量上限单元格后，「数值 + 单位」控件宽度是否可用（不被挤扁）；
+ *   2) 编辑既有规则时能正确回填（2 GB → 数值 2 + 单位 GB）；
+ *   3) 填了上限却没选策略时，保存会被前端拦下并给出警示。
  *
  * 用法： node scripts/verify-req3.cjs
  * 依赖： playwright（见 take-screens.cjs 的 NODE_PATH 说明）
@@ -55,21 +54,7 @@ async function launch() {
   await page.goto(uiUrl, { waitUntil: 'load' });
   await page.waitForSelector('#rows tr[data-id]');
 
-  // ---- 1) 详情面板 ----
-  await page.click('#rows tr[data-id="1"] td[data-field="clean_limit"]');
-  await page.waitForSelector('#detail:not(.hidden)');
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(120);
-  const detail = await page.evaluate(() => {
-    const keys = Array.from(document.querySelectorAll('#detail .detail-key')).map((e) => e.textContent);
-    const vals = Array.from(document.querySelectorAll('#detail .detail-val')).map((e) => e.textContent);
-    const i = keys.indexOf('文件夹容量上限');
-    return { hasKey: i >= 0, value: i >= 0 ? vals[i] : null, keys: keys };
-  });
-  ok('详情面板有「文件夹容量上限」行', detail.hasKey, detail.keys.join(' / '));
-  ok('容量上限展示为人类可读', detail.value === '2.0 GB', String(detail.value));
-
-  // ---- 2) 行内容量上限控件与回填 ----
+  // ---- 1) 行内容量上限控件与回填 ----
   await page.click('#rows tr[data-id="1"] td[data-field="clean_limit"]');
   await page.waitForSelector('#rows tr[data-id="1"] td[data-field="clean_limit"] .cell-editor');
   const geom = await page.evaluate(() => {
@@ -92,7 +77,7 @@ async function launch() {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(100);
 
-  // ---- 3) 填上限但不选策略 → 保存被拦下 + 警示 ----
+  // ---- 2) 填上限但不选策略 → 保存被拦下 + 警示 ----
   await page.click('#btn-add');
   await page.waitForSelector('#rows tr.draft-row');
   await page.fill('#rows tr.draft-row [data-draft-field="name"] input', '上限校验');

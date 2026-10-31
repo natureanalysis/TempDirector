@@ -92,12 +92,10 @@ async function scanCJK(page) {
   const page = await context.newPage();
   const suffix = LANG === 'zh' ? '' : '-' + LANG;
 
-  // ---- 主窗口（点第一行展开详情面板，与既有中文截图同构图） ----
+  // ---- 主窗口（列表首屏；详情面板已移除，构图以表格为主） ----
   await page.goto(uiUrl(), { waitUntil: 'load' });
   await page.waitForSelector('#rows tr');
   await page.waitForFunction(() => document.querySelectorAll('#rows tr').length >= 8);
-  await page.evaluate(() => { state.focusId = state.snap.rules[0].id; renderDetail(); });
-  await page.waitForSelector('#detail:not(.hidden)');
   if (CHECK_ONLY) {
     const bad = await scanCJK(page);
     console.log(bad.length ? 'main-window CJK 残留:\n  ' + bad.join('\n  ') : 'main-window: 无 CJK 残留');

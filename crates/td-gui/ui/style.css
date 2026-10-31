@@ -350,6 +350,7 @@ table.rules tbody tr.row-hidden .cell-name { color: var(--muted); }
 .sidebar.collapsed .tree { display: none; }
 
 .tree-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -378,6 +379,21 @@ table.rules tbody tr.row-hidden .cell-name { color: var(--muted); }
 .tree-count { flex: none; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tree-row.active .tree-count { color: var(--brand); }
 .tree-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: none; }
+/* 树内拖拽：规则节点整行可拖，落点用上下两条指示线表示插入位置。 */
+.tree-row[draggable="true"] { cursor: grab; }
+.tree-row.dragging { opacity: .45; }
+.tree-row.drop-before::after,
+.tree-row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--brand);
+  pointer-events: none;
+}
+.tree-row.drop-before::after { top: -1px; }
+.tree-row.drop-after::after { bottom: -1px; }
 
 @media (max-width: 760px) { .sidebar { width: 190px; } }
 
@@ -426,7 +442,7 @@ table.rules tbody tr.tpl-row .cell-name { color: var(--ink-2); }
 .tpl-pick:hover .cell-name { color: var(--brand); text-decoration: underline dotted; }
 
 .col-check { width: 34px; }
-.col-badge { width: 82px; }
+.col-badge { width: 52px; }
 .col-cat { width: 88px; }
 .col-link { width: 76px; }
 .col-source { width: 200px; }
@@ -592,25 +608,10 @@ table.rules thead th.col-usage { text-align: right; }
 .empty { padding: 48px 16px; text-align: center; color: var(--muted); }
 .hidden { display: none !important; }
 
-/* ---------------- 详情面板（表格下方常驻区块） ----------------
-   点一行在表格下方展开详情；空时整块 hidden 不占位。 */
-
-.detail {
-  flex: none;
-  border-top: 1px solid var(--line-strong);
-  background: #fbfdff;
-  padding: 12px 16px;
-  max-height: 240px;
-  overflow: auto;
-}
-.detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.detail-title { font-size: 14px; font-weight: 600; }
-.detail-grid { display: grid; grid-template-columns: 88px 1fr; gap: 6px 12px; align-items: start; }
-.detail-key { color: var(--muted); font-size: 12px; padding-top: 2px; }
+/* 详情面板已移除；下面两个类仍被其它地方复用，不能跟着删：
+   `.detail-val` = 运维日志行，`.detail-actions` = 设置页的动作区。 */
 .detail-val { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 11.5px; word-break: break-all; }
-.detail-val.plain { font-family: inherit; font-size: 12.5px; color: var(--ink-2); }
 .detail-actions { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
-.chips { display: flex; gap: 6px; flex-wrap: wrap; }
 
 /* ---------------- 进度 ---------------- */
 

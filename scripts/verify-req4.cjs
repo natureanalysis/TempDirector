@@ -88,10 +88,8 @@ const waitCount = (page, n) => page.waitForFunction((arg) =>
   });
   ok('可以监听 mock 后端 invoke（前置条件）', hooked === true, String(hooked));
 
-  // ---- 打开清理弹窗 ----
-  await page.evaluate(() => { state.focusId = state.snap.rules[0].id; renderDetail(); });
-  await page.waitForSelector('#detail:not(.hidden)');
-  await page.click('#detail [data-act="clean"]');
+  // ---- 打开清理弹窗（详情面板已移除，走行内「清理」按钮） ----
+  await page.click('#rows tr[data-id="1"] [data-act="clean"]');
   await page.waitForSelector('#modal:not(.hidden) ' + BTNROW);
 
   // ---- 1) 保留类型控件 ----

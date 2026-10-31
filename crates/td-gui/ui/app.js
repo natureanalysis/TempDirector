@@ -155,17 +155,6 @@ function badgeClass(badge) {
   return 'plain';
 }
 
-/** 徽标后缀文案。
- * 只有"确实存在链接"的状态才配说联接/符号链接 —— 真实目录显示「未链接」，
- * 否则会出现「❌ 联接」这种自相矛盾的显示。 */
-function badgeSuffix(rule) {
-  if (rule.badge === '✅' || rule.badge === '⚠️') {
-    return rule.link_type === 'symlink_dir' ? t('badge.symlink') : t('badge.junction');
-  }
-  if (rule.badge === '❌') return t('badge.unlinked');
-  if (rule.badge === '🚫') return t('badge.foreign');
-  return t('badge.unknown');
-}
 
 function toast(title, message, kind) {
   const box = document.createElement('div');
@@ -223,7 +212,7 @@ function render() {
   renderSidebar();
   renderRows();
   applyColumnVisibility();
-  renderDetail();
+
   renderSortIndicators();
 }
 
@@ -332,6 +321,8 @@ function treeRow(opts) {
   count.className = 'tree-count';
   if (opts.count) count.textContent = String(opts.count);
   btn.appendChild(count);
+  // 规则节点整行可拖：同一分类内拖动即重排（顺序写库）。
+  if (opts.act === 'rule') btn.title = t('row.drag_tip');
   return btn;
 }
 
@@ -432,7 +423,7 @@ function onTreeClick(ev) {
       renderSidebar();
       renderRows();
     }
-    renderDetail();
+
     const tr = document.querySelector('#rows tr[data-id="' + id + '"]');
     if (tr) tr.scrollIntoView({ block: 'center' });
   }
@@ -734,11 +725,11 @@ function renderRows() {
     tdCheck.appendChild(cb);
     tr.appendChild(tdCheck);
 
-    // 状态徽标
+    // 状态徽标：只给图标，完整状态文字放 title（需要的细节在「名称」下方与悬停提示里）。
     const tdBadge = document.createElement('td');
     const badge = document.createElement('span');
     badge.className = 'badge ' + badgeClass(r.badge);
-    badge.textContent = (r.badge || '❔') + ' ' + badgeSuffix(r);
+    badge.textContent = r.badge || '❔';
     badge.title = r.label;
     tdBadge.appendChild(badge);
     tr.appendChild(tdBadge);
@@ -911,11 +902,11 @@ function templateRow(p) {
   tdCheck.appendChild(cb);
   tr.appendChild(tdCheck);
 
-  // 状态徽标：明确"还没添加成规则"
+  // 状态徽标：只给图标（虚线蓝底表示"还没添加成规则"），文案放 title。
   const tdBadge = document.createElement('td');
   const badge = document.createElement('span');
   badge.className = 'badge tpl';
-  badge.textContent = t('tpl.badge');
+  badge.textContent = '＋';
   badge.title = t('tpl.badge_tip');
   tdBadge.appendChild(badge);
   tr.appendChild(tdBadge);
@@ -1012,123 +1003,6 @@ function templateRow(p) {
   return tr;
 }
 
-function renderDetail() {
-  const host = $('detail');
-  const rule = (state.snap.rules || []).find(function (r) { return r.id === state.focusId; });
-  if (!rule) {
-    host.classList.add('hidden');
-    host.textContent = '';
-    return;
-  }
-  host.classList.remove('hidden');
-  host.textContent = '';
-
-  const head = document.createElement('div');
-  head.className = 'detail-head';
-  const badge = document.createElement('span');
-  badge.className = 'badge ' + badgeClass(rule.badge);
-  badge.textContent = rule.badge;
-  const title = document.createElement('span');
-  title.className = 'detail-title';
-  title.textContent = rule.name;
-  const cat = document.createElement('span');
-  cat.className = 'pill';
-  cat.textContent = categoryLabel(rule.category);
-  head.appendChild(badge);
-  head.appendChild(title);
-  head.appendChild(cat);
-  const chips = document.createElement('span');
-  chips.className = 'chips';
-  if (rule.want_enabled) chips.appendChild(chip(t('detail.chip.want_enabled')));
-  if (rule.rebuild_on_boot) chips.appendChild(chip(t('detail.chip.rebuild')));
-  if (rule.needs_elevation) chips.appendChild(chip(t('detail.chip.needs_elevation')));
-  if (rule.has_acl) chips.appendChild(chip(t('detail.chip.has_acl')));
-  if (rule.last_files) chips.appendChild(chip(tf('detail.chip.files', { n: rule.last_files, size: humanBytes(rule.last_bytes || 0) })));
-  head.appendChild(chips);
-  host.appendChild(head);
-
-  const grid = document.createElement('div');
-  grid.className = 'detail-grid';
-  addRow(grid, t('detail.key.status'), rule.label, true);
-  addRow(grid, t('detail.key.source_template'), rule.source_template);
-  addRow(grid, t('detail.key.expanded'), rule.source);
-  addRow(grid, t('detail.key.target'), rule.target);
-  addRow(grid, t('detail.key.link_type'), rule.link_type === 'symlink_dir' ? t('detail.link.symlink') : t('detail.link.junction'));
-  if (rule.notes) addRow(grid, t('detail.key.notes'), rule.notes, true);
-  if (rule.excludes && rule.excludes.length) {
-    addRow(grid, t('detail.key.excludes'), rule.excludes.join(t('list.sep')), true);
-  }
-  if (rule.auto_clean_policy) {
-    addRow(grid, t('detail.key.auto_clean'), describeAutoPolicy(rule.auto_clean_policy), true);
-  }
-  if (rule.auto_clean_limit_bytes > 0) {
-    addRow(grid, t('detail.key.auto_limit'), humanBytes(rule.auto_clean_limit_bytes), true);
-  }
-  if (rule.unknown_vars && rule.unknown_vars.length) {
-    addRow(grid, t('detail.key.unknown_vars'), rule.unknown_vars.join(t('list.sep')), true);
-  }
-  (rule.warnings || []).forEach(function (w, i) {
-    addRow(grid, i === 0 ? t('detail.key.warning') : '', w, true);
-  });
-  if (rule.applied_at) addRow(grid, t('detail.key.applied_at'), rule.applied_at, true);
-  host.appendChild(grid);
-
-  const actions = document.createElement('div');
-  actions.className = 'detail-actions';
-  host.appendChild(actions);
-  actions.appendChild(mkBtn(t('detail.act.apply'), 'apply', rule.id, true));
-  if (rule.needs_elevation && rule.badge !== '✅') {
-    actions.appendChild(mkBtn(t('detail.act.apply_elevated'), 'apply-elevated', rule.id));
-  }
-  actions.appendChild(mkBtn(t('detail.act.restore'), 'restore', rule.id));
-  actions.appendChild(mkBtn(t('detail.act.relink'), 'relink', rule.id));
-  actions.appendChild(mkBtn(t('detail.act.locks'), 'locks', rule.id));
-  actions.appendChild(mkBtn(t('detail.act.clean'), 'clean', rule.id));
-  actions.appendChild(mkBtn(t('detail.act.copy_source'), 'copy-source', rule.id));
-  actions.appendChild(mkBtn(t('detail.act.reveal'), 'reveal', rule.id));
-  actions.appendChild(mkBtn(t('detail.act.edit'), 'edit', rule.id));
-}
-
-function describeAutoPolicy(p) {
-  if (p === 'empty') return t('detail.auto.empty');
-  const m = /older:(\d+)/.exec(p);
-  if (m) {
-    const secs = Number(m[1]);
-    if (secs % 86400 === 0) return tf('detail.auto.days', { n: secs / 86400 });
-    if (secs % 3600 === 0) return tf('detail.auto.hours', { n: secs / 3600 });
-    return tf('detail.auto.secs', { n: secs });
-  }
-  const mkeep = /keep:(\d+)/.exec(p);
-  if (mkeep) return tf('detail.auto.keep', { size: humanBytes(Number(mkeep[1])) });
-  return p;
-}
-
-function chip(text) {
-  const s = document.createElement('span');
-  s.className = 'pill';
-  s.textContent = text;
-  return s;
-}
-
-function mkBtn(label, act, id, primary) {
-  const b = document.createElement('button');
-  b.className = 'btn' + (primary ? ' primary' : ' ghost');
-  b.textContent = label;
-  b.dataset.act = act;
-  b.dataset.id = String(id);
-  return b;
-}
-
-function addRow(grid, key, value, plain) {
-  const k = document.createElement('div');
-  k.className = 'detail-key';
-  k.textContent = key;
-  const v = document.createElement('div');
-  v.className = 'detail-val' + (plain ? ' plain' : '');
-  v.textContent = value;
-  grid.appendChild(k);
-  grid.appendChild(v);
-}
 
 // ---------------------------------------------------------------------------
 // 弹窗
@@ -2607,7 +2481,7 @@ function openCellEditor(id, field, flash) {
   if (!state.treeOpen.has(rule.category)) state.treeOpen.add(rule.category);
   renderSidebar();
   renderRows();
-  renderDetail();
+
   const tr = document.querySelector('#rows tr[data-id="' + id + '"]');
   if (!tr) return;
   tr.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -3586,25 +3460,14 @@ document.addEventListener('click', async function (ev) {
   if (target) {
     const act = target.dataset.act;
     const id = Number(target.dataset.id);
-    if (act === 'focus') {
-      state.focusId = id;
-      renderRows();
-      renderDetail();
-      // 侧栏同步高亮到这条规则；所在分类没展开时顺手展开，省得还要再点一次。
-      const r = (state.snap.rules || []).find(function (x) { return x.id === id; });
-      if (r) {
-        if (!state.treeOpen.has(r.category)) state.treeOpen.add(r.category);
-        renderSidebar();
-      }
-      return;
-    }
+
     if (act === 'toggle-flag') {
       const r = (state.snap.rules || []).find(function (x) { return x.id === id; });
       await toggleRuleFlag(r, target.dataset.flag);
       return;
     }
     if (act === 'apply') { await runApply([id], false); return; }
-    if (act === 'apply-elevated') { await runElevated('apply', [id]); return; }
+
     if (act === 'restore') { await runRestore([id]); return; }
     if (act === 'relink') { await doRelink(id); return; }
     if (act === 'locks') { await doLocks(id); return; }
@@ -3669,7 +3532,7 @@ document.addEventListener('click', async function (ev) {
       if (tr) tr.classList.add('selected');
       if (!state.treeOpen.has(rule.category)) state.treeOpen.add(rule.category);
       renderSidebar();
-      renderDetail();
+
       beginCellEdit(cell, rule, cell.dataset.field);
     }
     return;
@@ -3789,14 +3652,14 @@ document.addEventListener('keydown', function (ev) {
     return;
   }
   if (ev.key === 'Escape') {
-    // 行右键菜单最轻，最先关（再按一次才轮到弹窗 / 详情）。
+    // 行右键菜单最轻，最先关（再按一次才轮到弹窗）。
     if (ctxTarget) { closeRowMenu(); return; }
-    // 弹窗优先于详情：弹窗开着时 Esc 只关弹窗，不顺手把详情也收掉。
     if (!$('modal').classList.contains('hidden')) {
       closeModal();
-    } else if (!$('detail').classList.contains('hidden')) {
+    } else if (state.focusId !== null) {
+      // Esc 取消当前行 / 树节点的高亮（详情面板已移除，高亮本身仍用于定位）。
       state.focusId = null;
-      renderDetail();
+      renderSidebar();
       renderRows();
     }
   }
@@ -3809,31 +3672,67 @@ document.addEventListener('keydown', function (ev) {
 // ---------------------------------------------------------------------------
 // 拖拽排序（同一分类内）。列表按 category 分组展示，跨分类拖拽没有意义
 // （后端 ORDER BY category 优先），在 dragover 阶段就拒绝。
+// 表格拖把手、侧栏树里直接拖规则节点，两种入口共用同一套落点与写库逻辑。
 // ---------------------------------------------------------------------------
 
-/** 只有抓着把手才允许拖整行：若行常驻 draggable，文本选择与点击都会被拖拽劫持。 */
+/** 表格行只有抓着把手才临时开启 draggable；树里的规则节点整行可拖。 */
 document.addEventListener('mousedown', function (ev) {
-  const h = ev.target.closest('.drag-handle');
-  if (!h) return;
-  const tr = h.closest('tr');
-  if (tr) tr.draggable = true;
+  const h = ev.target.closest && ev.target.closest('.drag-handle');
+  if (h) {
+    const tr = h.closest('tr');
+    if (tr) tr.draggable = true;
+    return;
+  }
+  const node = ev.target.closest && ev.target.closest('.tree-row[data-act="rule"]');
+  if (node) node.draggable = true;
 });
 
+function ruleById(id) {
+  return (state.snap.rules || []).find(function (r) { return r.id === Number(id); });
+}
+
+function treeDragTarget(ev) {
+  return ev.target.closest ? ev.target.closest('.tree-row[data-act="rule"]') : null;
+}
+
 document.addEventListener('dragstart', function (ev) {
+  const node = treeDragTarget(ev);
+  if (node) {
+    const r = ruleById(node.dataset.id);
+    if (!r) return;
+    state.drag = { id: r.id, category: r.category, fromTree: true };
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', String(r.id));
+    node.classList.add('dragging');
+    return;
+  }
   const tr = ev.target.closest && ev.target.closest('tr');
   if (!tr || !tr.draggable || !tr.dataset.id) return;
-  const r = state.snap.rules.find(function (x) { return x.id === Number(tr.dataset.id); });
+  const r = ruleById(tr.dataset.id);
   if (!r) return;
-  state.drag = { id: r.id, category: r.category };
+  state.drag = { id: r.id, category: r.category, fromTree: false };
   ev.dataTransfer.effectAllowed = 'move';
   ev.dataTransfer.setData('text/plain', String(r.id));
 });
 
 document.addEventListener('dragover', function (ev) {
   if (!state.drag) return;
+  // 树内拖拽：只认同分类的规则节点，落点在上半 = 插到它前面，下半 = 后面。
+  if (state.drag.fromTree) {
+    const node = treeDragTarget(ev);
+    if (!node) return;
+    const r = ruleById(node.dataset.id);
+    if (!r || r.category !== state.drag.category || r.id === state.drag.id) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
+    clearTreeDropHints();
+    const rect = node.getBoundingClientRect();
+    node.classList.add(ev.clientY < rect.top + rect.height / 2 ? 'drop-before' : 'drop-after');
+    return;
+  }
   const tr = ev.target.closest && ev.target.closest('tr');
   if (!tr || !tr.dataset.id) return;
-  const r = state.snap.rules.find(function (x) { return x.id === Number(tr.dataset.id); });
+  const r = ruleById(tr.dataset.id);
   // 跨分类 / 拖到自己：不 preventDefault = 不允许落点
   if (!r || r.category !== state.drag.category || r.id === state.drag.id) return;
   ev.preventDefault();
@@ -3846,32 +3745,56 @@ document.addEventListener('drop', async function (ev) {
   const drag = state.drag;
   state.drag = null;
   clearDragFeedback();
+
+  if (drag.fromTree) {
+    const node = treeDragTarget(ev);
+    if (!node || !node.dataset.id) return;
+    ev.preventDefault();
+    const target = ruleById(node.dataset.id);
+    if (!target || target.category !== drag.category || target.id === drag.id) return;
+    const rect = node.getBoundingClientRect();
+    await persistReorder(drag.id, target.id, ev.clientY < rect.top + rect.height / 2);
+    return;
+  }
+
   const tr = ev.target.closest && ev.target.closest('tr');
   if (!tr || !tr.dataset.id) return;
   ev.preventDefault();
   const targetId = Number(tr.dataset.id);
   if (targetId === drag.id) return;
-
   // 落点在行的上半 → 插到目标之前；下半 → 之后。
   const rect = tr.getBoundingClientRect();
-  const before = ev.clientY < rect.top + rect.height / 2;
-  const orderedIds = categoryOrderAfterDrop(drag.id, targetId, before);
+  await persistReorder(drag.id, targetId, ev.clientY < rect.top + rect.height / 2);
+});
+
+/** 树与表格共用的写库入口：拖完即保存该分类的完整顺序。 */
+async function persistReorder(dragId, targetId, before) {
+  const orderedIds = categoryOrderAfterDrop(dragId, targetId, before);
   try {
     await invoke('reorder_rules', { orderedIds: orderedIds });
     await refresh(true);
   } catch (e) {
     toast(t('toast.reorder_failed'), e.message, 'error');
   }
-});
+}
 
 document.addEventListener('dragend', function () {
   state.drag = null;
   clearDragFeedback();
 });
 
+function clearTreeDropHints() {
+  document.querySelectorAll('.tree-row.drop-before, .tree-row.drop-after').forEach(function (n) {
+    n.classList.remove('drop-before', 'drop-after');
+  });
+}
+
 function clearDragFeedback() {
   document.querySelectorAll('tr.drag-over').forEach(function (tr) { tr.classList.remove('drag-over'); });
   document.querySelectorAll('tr[draggable="true"]').forEach(function (tr) { tr.draggable = false; });
+  document.querySelectorAll('.tree-row.dragging').forEach(function (n) { n.classList.remove('dragging'); });
+  document.querySelectorAll('.tree-row[draggable="true"]').forEach(function (n) { n.draggable = false; });
+  clearTreeDropHints();
 }
 
 /** 组装拖拽后该分类的全量顺序（后端要求完整覆盖该分类 ——
@@ -4060,10 +3983,14 @@ function createMockBackend() {
         case 'delete_root':
           return Promise.resolve(null);
         case 'reorder_rules': {
-          // 这些 id 原本占据的索引集合不变，按新顺序回填（其它规则不动）。
+          // 这些 id 原本占据的索引集合不变，但集合内按前端传来的新顺序回填。
+          // 注意必须用 orderedIds 的顺序取规则 —— 直接 filter 原数组会得到旧顺序，
+          // 预览里拖拽就像"没生效"。
           const set = {};
           args.orderedIds.forEach(function (id) { set[id] = true; });
-          const moved = rules.filter(function (r) { return set[r.id]; });
+          const moved = args.orderedIds.map(function (id) {
+            return rules.find(function (r) { return r.id === id; });
+          }).filter(Boolean);
           let mi = 0;
           const next = rules.map(function (r) { return set[r.id] ? moved[mi++] : r; });
           rules.length = 0;

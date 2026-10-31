@@ -119,12 +119,9 @@ const DICT = {
     'cat.game': '游戏',
     'cat.other': '其他',
 
-    // 徽标后缀
+    // 链接类型（表格「链接」列）
     'badge.junction': '联接',
     'badge.symlink': '符号链接',
-    'badge.unlinked': '未链接',
-    'badge.foreign': '外来',
-    'badge.unknown': '未知',
 
     // 头部 / 统计
     'header.no_root': '未配置目标根 —— 先到「设置」里添加 RAM 盘',
@@ -176,28 +173,8 @@ const DICT = {
     'ctx.title_tpl': '模板：{name}',
     'ctx.title_tpl_multi': '{n} 个内置模板',
 
-    // 详情
-    'detail.chip.want_enabled': '期望开启',
-    'detail.chip.rebuild': '开机重建',
-    'detail.chip.needs_elevation': '需要管理员权限',
-    'detail.chip.has_acl': '已存权限模板',
-    'detail.chip.files': '{n} 个文件 · {size}',
-    'detail.key.status': '状态',
-    'detail.key.source_template': '源路径模板',
-    'detail.key.expanded': '展开后',
-    'detail.key.target': '目标路径',
-    'detail.key.link_type': '链接类型',
-    'detail.key.notes': '备注',
-    'detail.key.excludes': '清理排除',
-    'detail.key.auto_clean': '水位自动清理',
-    'detail.key.auto_limit': '文件夹容量上限',
-    'detail.key.unknown_vars': '未解析变量',
-    'detail.key.warning': '警告',
-    'detail.key.applied_at': '上次应用',
-    'detail.link.symlink': '目录符号链接（需要特权）',
-    'detail.link.junction': '目录联接 Junction（免提权）',
+    // 右键菜单动作（详情面板已移除，这些键只服务行右键菜单）
     'detail.act.apply': '应用（搬运 + 建链）',
-    'detail.act.apply_elevated': '以管理员身份应用',
     'detail.act.restore': '恢复（拆链 + 搬回）',
     'detail.act.relink': '仅重建链接',
     'detail.act.locks': '检测占用',
@@ -205,11 +182,6 @@ const DICT = {
     'detail.act.copy_source': '复制源路径',
     'detail.act.reveal': '打开位置',
     'detail.act.edit': '编辑',
-    'detail.auto.empty': '清空全部（水位触线或目录达到容量上限时）',
-    'detail.auto.days': '清空早于 {n} 天修改的（水位触线或目录达到容量上限时）',
-    'detail.auto.hours': '清空早于 {n} 小时修改的（水位触线或目录达到容量上限时）',
-    'detail.auto.secs': '清空早于 {n} 秒修改的（水位触线或目录达到容量上限时）',
-    'detail.auto.keep': '保留最近修改的 {size}，删除更旧的（水位触线或目录达到容量上限时）',
     'mock.progress_title': '正在处理 3 条规则…',
     'mock.progress_detail': '#2/3 Edge 缓存 · 已复制 12800 个文件 / 512.4 MB',
     // mock 假数据（?mock=1 本地预览 / 无头截图核验用）。
@@ -593,7 +565,7 @@ const DICT = {
     'filter.only_enabled': 'Enabled only',
     'filter.only_attention': 'Needs action only',
     'filter.select_all': 'Select all current results',
-'filter.select_all_tip': 'Select / deselect all current results',
+    'filter.select_all_tip': 'Select / deselect all current results',
     'filter.all_categories': 'All categories',
     'filter.show_hidden': 'Show hidden',
     'filter.show_hidden_tip': 'Also show entries you have hidden (hiding only affects the list, not boot rebuild or the water-level patrol)',
@@ -653,12 +625,9 @@ const DICT = {
     'cat.game': 'Game',
     'cat.other': 'Other',
 
-    // 徽标后缀
+    // link type (table “Link” column)
     'badge.junction': 'junction',
     'badge.symlink': 'symlink',
-    'badge.unlinked': 'unlinked',
-    'badge.foreign': 'foreign',
-    'badge.unknown': 'unknown',
 
     // header / stats
     'header.no_root': 'No target root configured — add a RAM disk in Settings first',
@@ -710,28 +679,8 @@ const DICT = {
     'ctx.title_tpl': 'Template: {name}',
     'ctx.title_tpl_multi': '{n} templates',
 
-    // detail
-    'detail.chip.want_enabled': 'Desired on',
-    'detail.chip.rebuild': 'Rebuild on boot',
-    'detail.chip.needs_elevation': 'Needs admin',
-    'detail.chip.has_acl': 'ACL saved',
-    'detail.chip.files': '{n} files · {size}',
-    'detail.key.status': 'Status',
-    'detail.key.source_template': 'Source template',
-    'detail.key.expanded': 'Expanded',
-    'detail.key.target': 'Target path',
-    'detail.key.link_type': 'Link type',
-    'detail.key.notes': 'Notes',
-    'detail.key.excludes': 'Clean excludes',
-    'detail.key.auto_clean': 'Water-level auto-clean',
-    'detail.key.auto_limit': 'Folder capacity limit',
-    'detail.key.unknown_vars': 'Unresolved variables',
-    'detail.key.warning': 'Warning',
-    'detail.key.applied_at': 'Last applied',
-    'detail.link.symlink': 'Directory symlink (privileged)',
-    'detail.link.junction': 'Directory junction (no elevation)',
+    // context-menu actions (the detail panel is gone; these keys only serve the row menu)
     'detail.act.apply': 'Apply (move + link)',
-    'detail.act.apply_elevated': 'Apply as administrator',
     'detail.act.restore': 'Restore (unlink + move back)',
     'detail.act.relink': 'Relink only',
     'detail.act.locks': 'Check locks',
@@ -739,11 +688,6 @@ const DICT = {
     'detail.act.copy_source': 'Copy source path',
     'detail.act.reveal': 'Reveal location',
     'detail.act.edit': 'Edit',
-    'detail.auto.empty': 'Clear everything (on water trigger or folder capacity limit)',
-    'detail.auto.days': 'Clear entries older than {n} days (on water trigger or folder capacity limit)',
-    'detail.auto.hours': 'Clear entries older than {n} hours (on water trigger or folder capacity limit)',
-    'detail.auto.secs': 'Clear entries older than {n} seconds (on water trigger or folder capacity limit)',
-    'detail.auto.keep': 'Keep the most recently modified {size}; delete older (on water trigger or folder capacity limit)',
     'mock.progress_title': 'Processing 3 rules…',
     'mock.progress_detail': '#2/3 Edge cache · copied 12800 files / 512.4 MB',
     // mock fixture strings (for the ?mock=1 local preview / headless screenshot checks).

@@ -24,8 +24,9 @@ launch defaults to English, and the choice is remembered.
 
 ![Main window](docs/screenshots/main-window-en.png)
 
-* **Rule list**: status badges (✅ OK / ⚠️ broken link or empty target / ❌ not linked /
-  🚫 foreign reparse point), source → target paths side by side, wanted/boot-rebuild flags;
+* **Rule list**: status icons only (✅ OK / ⚠️ broken link or empty target / ❌ not linked /
+  🚫 foreign reparse point; hover for the full explanation), source → target paths side by side,
+  wanted/boot-rebuild flags;
   search, category filter and "needs attention only" narrow the list; checked rows drive
   batch actions (apply / restore / enable / disable / relink / delete); **right-click a row**
   for the same per-row actions on that row (or on the whole checked selection, if the row is
@@ -33,10 +34,11 @@ launch defaults to English, and the choice is remembered.
   A **Size (MB)** column shows each rule's cache usage; it stays `—` until you press
   **Disk usage** in the toolbar, which fills the column in.
   Presets whose source dir exists on this machine also show up as template rows at the
-  bottom of the list (badge "➕ Not added"): check one and press **Apply selected**, or use
+  bottom of the list (status column shows ＋): check one and press **Apply selected**, or use
   its own **Add & apply**, to create and link it without opening the dialog.
-* **Detail panel**: full info per rule (source template and expanded path, link type,
-  warnings, last applied time and size) plus single-rule actions.
+* **Category sidebar**: the “All → category → rule” tree on the left filters by category and
+  jumps to a rule; rule nodes can be dragged to reorder within their category and the new
+  order is saved automatically (the table’s drag handle shares the same sort order).
 * **Add / edit rule (all inline, no dialogs)**: “Add rule” inserts a blank draft row at the
   top of the list; click any cell of an existing rule to edit it in place — name, category,
   link type, source, target root + subpath, flags, auto-clean policy, capacity limit,
