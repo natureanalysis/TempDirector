@@ -1959,6 +1959,8 @@ let activeCellEditor = null;
 let pendingCell = null;
 /** 当前格提交后要载入的模板（点模板行时先把正在编辑的单元格保存掉）。 */
 let pendingTemplate = null;
+/** 当前格提交后要复制的规则（右键「复制为新规则」时先保存正在编辑的单元格）。 */
+let pendingDraftRule = null;
 /** 行内保存进行中：此时刷新/重画会吞掉焦点，先拒绝新的编辑动作。 */
 let inlineSaving = false;
 
@@ -2363,6 +2365,7 @@ function beginCellEdit(td, rule, field) {
         toast(t('common.save_failed'), t('inline.limit_needs_policy_hint'), 'error');
         pendingCell = null;
         pendingTemplate = null;
+        pendingDraftRule = null;
         cancel();
         openCellEditor(rule.id, 'clean_policy', true);
         return true;
@@ -2371,6 +2374,7 @@ function beginCellEdit(td, rule, field) {
         toast(t('common.save_failed'), t('inline.policy_needs_limit_hint'), 'error');
         pendingCell = null;
         pendingTemplate = null;
+        pendingDraftRule = null;
         cancel();
         openCellEditor(rule.id, 'clean_limit', true);
         return true;
@@ -2378,6 +2382,7 @@ function beginCellEdit(td, rule, field) {
       // 其它校验不过就留在编辑态，别把用户刚输入的内容清掉；这一次点击不再跳格。
       pendingCell = null;
       pendingTemplate = null;
+      pendingDraftRule = null;
       toast(t('common.save_failed'), e.message, 'error');
       editor.focus.focus();
       return true;
@@ -2396,6 +2401,7 @@ function beginCellEdit(td, rule, field) {
       if (problem) {
         pendingCell = null;
         pendingTemplate = null;
+        pendingDraftRule = null;
         toast(t('common.save_failed'), problem, 'error');
         editor.focus.focus();
         return;
@@ -2508,6 +2514,12 @@ function runPending(ownId, ownField) {
     startDraftRule(preset);
     return;
   }
+  if (pendingDraftRule) {
+    const rule = pendingDraftRule;
+    pendingDraftRule = null;
+    startDraftFromRule(rule);
+    return;
+  }
   if (ownId !== undefined) refocusCell(ownId, ownField);
 }
 
@@ -2556,6 +2568,49 @@ function startDraftRule(preset) {
   renderRows();
   focusDraft('name');
   if (preset) toast(t('tpl.draft_loaded'), preset.name, 'ok');
+}
+
+/** 右键「复制为新规则」的入口：先把正在编辑的单元格提交，再载入草稿。 */
+function duplicateRuleToDraft(rule) {
+  if (inlineSaving || !rule) return;
+  if (activeCellEditor) {
+    pendingDraftRule = rule;
+    activeCellEditor.commit();
+    return;
+  }
+  startDraftFromRule(rule);
+}
+
+/** 把一条已有规则的可编辑字段完整带进顶部草稿行；名称加副本后缀。
+    源路径沿用原值（保存前需改成不重复的路径，否则后端会拒绝）。 */
+function startDraftFromRule(rule) {
+  if (!state.snap) return;
+  if (!(state.snap.roots || []).length) {
+    toast(t('rule.no_root_title'), t('rule.no_root_hint'), 'warn');
+    return;
+  }
+  const cats = state.snap.categories || ['other'];
+  const category = cats.indexOf(rule.category) >= 0
+    ? rule.category
+    : (cats.indexOf('other') >= 0 ? 'other' : cats[0]);
+  const root = (state.snap.roots || []).find(function (r) { return r.id === rule.target_root_id; });
+  state.draft = {
+    name: tf('draft.copy_name', { name: rule.name }),
+    category: category,
+    source_template: rule.source_template,
+    target_root_id: root ? root.id : state.snap.roots[0].id,
+    target_subpath: rule.target_subpath,
+    link_type: rule.link_type || 'junction',
+    want_enabled: !!rule.want_enabled,
+    rebuild_on_boot: !!rule.rebuild_on_boot,
+    notes: rule.notes || null,
+    excludes: (rule.excludes || []).slice(),
+    auto_clean_policy: rule.auto_clean_policy || '',
+    auto_clean_limit_bytes: rule.auto_clean_limit_bytes || 0,
+  };
+  renderRows();
+  focusDraft('source');
+  toast(t('draft.copy_loaded'), t('draft.copy_hint'), 'ok');
 }
 
 function focusDraft(field) {
@@ -3403,6 +3458,7 @@ function buildRuleMenu(m, ids) {
   m.appendChild(mkCtxItem(t('detail.act.clean'), function () { openCleanTargets(ids); }));
   m.appendChild(mkCtxSep());
   m.appendChild(mkCtxItem(t('detail.act.edit'), function () { focusInlineEdit(ids[0]); }, { disabled: !single }));
+  m.appendChild(mkCtxItem(t('detail.act.duplicate'), function () { duplicateRuleToDraft(rules[0]); }, { disabled: !single }));
   m.appendChild(mkCtxItem(t('detail.act.copy_source'), function () {
     copyText(rules.map(function (r) { return r.source; }).join(CTX_NL));
   }));
