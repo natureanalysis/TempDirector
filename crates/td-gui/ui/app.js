@@ -3960,6 +3960,10 @@ function createMockBackend() {
     mockRule(8, t('mock.rule.premiere'), 'design', 'C:\\Users\\me\\AppData\\Roaming\\Adobe\\Common\\Media Cache', 'design\\pr-media-cache', '❌', 'plain_dir', { needs_elevation: true, has_acl: true, want_enabled: false }),
   ];
 
+  // 高权限登录任务的登记态：可切换，方便在预览里走通启用 / 停用两个分支。
+  // `&needs_update=1` 演示「已注册任务参数是旧版」的提示。
+  const autostart = { elevated: false, needsUpdate: PARAMS.has('needs_update') };
+
   /** 状态说明按当前语言生成（键在 i18n.js 的 mock.state.*，措辞与后端对齐）。
    *  切换语言时由 relabelRules() 重算，行为与真机一致（名称是用户数据，不重算）。 */
   function stateLabel(r) {
@@ -4272,27 +4276,37 @@ function createMockBackend() {
             warnings: ['Photoshop 暂存盘：源路径已变回真实目录（可能被软件更新覆盖），未自动处理，请在界面上重新应用'],
             failed: [], elapsed_ms: 37,
           });
-        case 'autostart_status':
+        case 'autostart_status': {
+          const exe = 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe';
+          const normalCmd = exe + ' boot-rebuild --skip-elevated';
+          const elevCmd = autostart.elevated ? exe + ' boot-rebuild --elevated-only' : '';
           return Promise.resolve({
             registered: true,
             task_name: 'TempDirector-BootRebuild',
-            command: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild --skip-elevated',
-            message: tf('mock.autostart_registered', { cmd: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild --skip-elevated' }),
-            elevated_registered: false,
+            command: normalCmd,
+            message: tf('mock.autostart_registered', { cmd: normalCmd }),
+            elevated_registered: autostart.elevated,
             elevated_task_name: 'TempDirector-BootRebuild-Elevated',
-            elevated_command: '',
-            elevated_message: '未注册（登录时不会自动重建）',
-            needs_update: false,
+            elevated_command: elevCmd,
+            elevated_message: autostart.elevated
+              ? tf('mock.autostart_registered', { cmd: elevCmd })
+              : t('auto.elev_hint'),
+            needs_update: autostart.needsUpdate,
             elevated: false,
             data_dir: 'C:\\ProgramData\\TempDirector',
             extra_args: '',
-            recommended_exe: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe',
+            recommended_exe: exe,
           });
+        }
         case 'autostart_enable': return Promise.resolve('C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild --skip-elevated');
         case 'autostart_disable': return Promise.resolve('已取消开机自启');
         case 'autostart_run_now': return Promise.resolve('已触发一次开机重建任务');
-        case 'autostart_elevated_enable': return Promise.resolve('C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild --elevated-only');
-        case 'autostart_elevated_disable': return Promise.resolve('已取消开机自启');
+        case 'autostart_elevated_enable':
+          autostart.elevated = true;
+          return Promise.resolve('C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild --elevated-only');
+        case 'autostart_elevated_disable':
+          autostart.elevated = false;
+          return Promise.resolve('已取消开机自启');
         case 'run_elevated_job': {
           const out = [];
           (args.ids || []).forEach(function (id) {
