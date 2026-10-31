@@ -131,6 +131,19 @@ pub fn run_elevated_wait(exe: &Path, args: &str) -> TdResult<u32> {
     }
 }
 
+/// 拼提权 worker 的命令行（`elevated <job>` + 可选的数据目录参数）。
+///
+/// 便携模式下必须显式带上 `--data-dir`：提权进程拿到的是新的环境块，
+/// `TEMPDIRECTOR_DATA_DIR` 不会传过去，worker 会去 ProgramData 找 job 并把它拒掉。
+pub fn worker_args(job_path: &Path, extra_args: &str) -> String {
+    let mut s = format!("elevated {}", quote_arg(&job_path.to_string_lossy()));
+    if !extra_args.trim().is_empty() {
+        s.push(' ');
+        s.push_str(extra_args.trim());
+    }
+    s
+}
+
 /// 把单个参数按命令行规则加引号（路径带空格时必需）。
 pub fn quote_arg(s: &str) -> String {
     if s.is_empty() {
@@ -181,6 +194,21 @@ mod tests {
         assert_eq!(quote_arg(""), "\"\"");
         // 结尾的反斜杠在引号内必须翻倍，否则会转义掉收尾引号
         assert_eq!(quote_arg(r"C:\dir with space\"), r#""C:\dir with space\\""#);
+    }
+
+    #[test]
+    fn worker_args_carry_data_dir() {
+        let job = Path::new(r"C:\ProgramData\TempDirector\jobs\apply-1.job.json");
+        assert_eq!(
+            worker_args(job, ""),
+            r#"elevated C:\ProgramData\TempDirector\jobs\apply-1.job.json"#
+        );
+        assert_eq!(
+            worker_args(job, r#"--data-dir "D:\portable""#),
+            r#"elevated C:\ProgramData\TempDirector\jobs\apply-1.job.json --data-dir "D:\portable""#
+        );
+        let spaced = Path::new(r"D:\my data\jobs\apply-1.job.json");
+        assert!(worker_args(spaced, "").starts_with(r#"elevated "D:\my data\jobs\apply-1.job.json""#));
     }
 
     #[test]

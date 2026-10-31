@@ -18,11 +18,16 @@
 * 留意旧版本注册的 `TempDirector-BootRebuild` 没有 scope 参数——在设置页（或 `autostart status` 看到 `needs_update`）重新点一次「启用」即可写入 `--skip-elevated`。
 * 受保护位置的规则要开机自动重建，需要单独启用高权限任务；不启用时这些规则只会在手动执行时处理。
 
+### 修正
+
+* 便携模式（`TEMPDIRECTOR_DATA_DIR` / `--data-dir`）下提权 worker 会被自己拒掉：提权进程拿到的是新的环境块，数据目录环境变量传不过去，worker 于是去 ProgramData 找 job 并报 `worker.bad_location`。现在拉起提权 worker 时显式追加 `--data-dir`，apply / restore 与高权限登录任务的注册 / 注销都恢复正常。
+
 ### 验证
 
-* `scripts\cargo.cmd test -p td-core`（203 通过）、`-p td-cli`（11 通过）、`-p td-gui`（8 + 2 通过）。
-* 新增单测：`mover::tests::best_effort_skips_locked_file_and_reports_leftovers`（独占句柄下跳过 1 个文件、严格模式报错、删除只移除可用项）、`boot::rebuild::tests::scope_splits_protected_and_normal_rules`、`autostart::tests::elevated_task_uses_highest_available_and_only_protected_scope`。
-* `node --check`（app.js / i18n.js）通过。未在本机真实注册计划任务（避免改动系统状态），任务 XML 与状态解析用单测覆盖。
+* `scripts\cargo.cmd test -p td-core`（204 通过）、`-p td-cli`（11 通过）、`-p td-gui`（8 + 2 通过）。
+* 新增单测：`mover::tests::best_effort_skips_locked_file_and_reports_leftovers`（独占句柄下跳过 1 个文件、严格模式报错、删除只移除可用项）、`boot::rebuild::tests::scope_splits_protected_and_normal_rules`、`autostart::tests::elevated_task_uses_highest_available_and_only_protected_scope`、`elevate::tests::worker_args_carry_data_dir`。
+* `node --check`（app.js / i18n.js）通过；`?mock=1` 浏览器走查设置页与提权确认框（中英），启用 / 停用高权限任务、`needs_update` 提示与三段确认文案均正常。
+* 真实机器（沙箱数据目录，任务名与正式相同、验证后已注销）：普通任务 XML 为 `LeastPrivilege` + `boot-rebuild --skip-elevated --data-dir …`；高权限任务为 `HighestAvailable` + `boot-rebuild --elevated-only --data-dir …`；`schtasks /run` 两次均返回 0，普通 / 高权限报告分别落入 `last_boot_report` 与 `last_boot_report_elevated` 且告警 0（手动以普通权限跑 `--elevated-only` 时为 1 条告警、退出码 2）；把任务参数改回旧版后 `autostart status` 正确提示 `needs_update`。
 
 ## 2026-11-01（预设：移除错误条目「VS 设置日志」）
 

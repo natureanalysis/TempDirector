@@ -58,10 +58,7 @@ fn run_autostart_job(kind: &str) -> TdResult<String> {
     let job_path = worker::write_job(&job)?;
     let exe = std::env::current_exe()
         .map_err(|e| TdError::Other(tf("elevated.exe_path_failed", &[("err", &e.to_string())])))?;
-    let args = format!(
-        "elevated {}",
-        elevate::quote_arg(&job_path.to_string_lossy())
-    );
+    let args = elevate::worker_args(&job_path, &autostart_svc::extra_args_from_env());
 
     let code = elevate::run_elevated_wait(&exe, &args)?;
     let result = worker::read_result(&job_path);
