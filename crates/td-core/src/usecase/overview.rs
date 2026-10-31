@@ -219,16 +219,34 @@ pub fn recent_ops(store: &Store, limit: i64) -> TdResult<Vec<Operation>> {
 }
 
 /// 上一次开机重建是不是有问题（界面顶部提示用）。返回 `(时间, 摘要)`。
+///
+/// 普通任务与高权限任务各写一份报告，这里把两份合起来看：
+/// 任何一份有问题都要提示，不能因为另一份正常就把它盖掉。
 pub fn last_boot_problem(store: &Store) -> Option<(String, String)> {
-    let json = store.get_setting("last_boot_report").ok().flatten()?;
-    let report: BootReport = serde_json::from_str(&json).ok()?;
-    if !report.has_problem() {
+    let mut at_parts: Vec<String> = Vec::new();
+    let mut summary_parts: Vec<String> = Vec::new();
+    for (report_key, at_key) in [
+        ("last_boot_report", "last_boot_at"),
+        ("last_boot_report_elevated", "last_boot_at_elevated"),
+    ] {
+        let Some(json) = store.get_setting(report_key).ok().flatten() else {
+            continue;
+        };
+        let Ok(report) = serde_json::from_str::<BootReport>(&json) else {
+            continue;
+        };
+        if !report.has_problem() {
+            continue;
+        }
+        if let Some(at) = store.get_setting(at_key).ok().flatten() {
+            if !at.is_empty() {
+                at_parts.push(at);
+            }
+        }
+        summary_parts.push(report.one_line());
+    }
+    if summary_parts.is_empty() {
         return None;
     }
-    let at = store
-        .get_setting("last_boot_at")
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    Some((at, report.one_line()))
+    Some((at_parts.join(" / "), summary_parts.join("；")))
 }

@@ -4,5 +4,5 @@ pub mod acl;
 pub mod rebuild;
 pub mod volume;
 
-pub use rebuild::{run_boot_rebuild, BootReport, RootOutcome};
+pub use rebuild::{run_boot_rebuild, run_boot_rebuild_scoped, BootReport, BootScope, RootOutcome};
 pub use volume::{ensure_root_dir, is_volume_ready, probe_volume, wait_for_root, wait_for_volume};

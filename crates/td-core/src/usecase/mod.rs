@@ -20,12 +20,15 @@ pub mod view;
 pub mod water;
 
 pub use apply::{apply_rules, check_locks, relink, restore_rules};
-pub use autostart::{autostart_disable, autostart_enable, autostart_run_now, autostart_status};
+pub use autostart::{
+    autostart_disable, autostart_elevated_disable, autostart_elevated_enable, autostart_enable,
+    autostart_run_now, autostart_status,
+};
 pub use clean::{clean_preview, clean_run};
 pub use disk::disk_usage;
 pub use elevated::run_elevated_job;
 pub use inspect::{describe_state, human_bytes, inspect_source, inspect_target, parent_of_display};
-pub use lifecycle::{boot_rebuild, export_config, import_config};
+pub use lifecycle::{boot_rebuild, boot_rebuild_scoped, export_config, import_config};
 pub use overview::{
     last_boot_problem, recent_events, recent_ops, root_views, rule_views, snapshot,
 };

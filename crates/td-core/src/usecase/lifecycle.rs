@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::boot::run_boot_rebuild;
+use crate::boot::{run_boot_rebuild, run_boot_rebuild_scoped, BootScope};
 use crate::error::{TdError, TdResult};
 use crate::i18n::tf;
 use crate::portable;
@@ -12,6 +12,11 @@ use super::view::{BootReport, ImportReport};
 
 pub fn boot_rebuild(store: &Store) -> TdResult<BootReport> {
     run_boot_rebuild(store)
+}
+
+/// 按权限分工的开机重建（登录任务用）。
+pub fn boot_rebuild_scoped(store: &Store, scope: BootScope) -> TdResult<BootReport> {
+    run_boot_rebuild_scoped(store, scope)
 }
 
 pub fn export_config(store: &Store, path: &Path) -> TdResult<(usize, usize)> {

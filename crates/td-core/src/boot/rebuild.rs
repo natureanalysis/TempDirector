@@ -88,10 +88,63 @@ enum RebuildAction {
     NeedsAttention(String),
 }
 
+/// 开机重建的分工范围。
+///
+/// 登录时注册了两个任务：普通权限任务处理普通源，最高权限任务只处理
+/// `C:\Windows` / `Program Files` 这类受保护源。两条任务各写各的报告，
+/// 界面把两份都读出来展示。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootScope {
+    /// 全部规则（手动执行 / CLI 默认）。
+    All,
+    /// 只处理需要管理员权限的源（高权限登录任务）。
+    ElevatedOnly,
+    /// 只处理普通源（普通登录任务）。
+    NonElevatedOnly,
+}
+
+impl BootScope {
+    pub fn parse(flag: &str) -> Option<Self> {
+        match flag {
+            "" | "all" => Some(Self::All),
+            "elevated_only" | "elevated-only" => Some(Self::ElevatedOnly),
+            "non_elevated_only" | "skip-elevated" => Some(Self::NonElevatedOnly),
+            _ => None,
+        }
+    }
+
+    fn accepts(self, elevated: bool) -> bool {
+        match self {
+            Self::All => true,
+            Self::ElevatedOnly => elevated,
+            Self::NonElevatedOnly => !elevated,
+        }
+    }
+
+    fn report_keys(self) -> (&'static str, &'static str) {
+        match self {
+            Self::ElevatedOnly => ("last_boot_report_elevated", "last_boot_at_elevated"),
+            _ => ("last_boot_report", "last_boot_at"),
+        }
+    }
+}
+
 /// 执行一次开机重建。
 pub fn run_boot_rebuild(store: &Store) -> TdResult<BootReport> {
+    run_boot_rebuild_scoped(store, BootScope::All)
+}
+
+/// 按权限分工执行开机重建。
+pub fn run_boot_rebuild_scoped(store: &Store, scope: BootScope) -> TdResult<BootReport> {
     let started = Instant::now();
     let mut report = BootReport::default();
+
+    // 高权限任务在非管理员上下文里跑（用户不在 Administrators 组）时，
+    // 受保护目录的链接一个也建不出来 —— 提前说清楚，别让用户去猜。
+    let elevated = crate::elevate::is_elevated();
+    if scope == BootScope::ElevatedOnly && !elevated {
+        report.warnings.push(t("boot.not_elevated").into());
+    }
 
     // ---- 1. 等各目标卷就绪 ----
     let roots = store.list_roots()?;
@@ -148,6 +201,17 @@ pub fn run_boot_rebuild(store: &Store) -> TdResult<BootReport> {
         if !ready_ids.contains(&rule.target_root_id) {
             continue;
         }
+        if scope != BootScope::All {
+            // 解析失败（环境变量属于别的用户等）的规则交给普通任务去报告，
+            // 免得两条任务各报一遍同样的错。
+            let source_elevated = match engine::resolve(store, &rule) {
+                Ok(r) => crate::safety::requires_elevation(&r.source),
+                Err(_) => false,
+            };
+            if !scope.accepts(source_elevated) {
+                continue;
+            }
+        }
         let root = store.get_root(rule.target_root_id)?;
         pending.push((rule, root));
     }
@@ -198,8 +262,9 @@ pub fn run_boot_rebuild(store: &Store) -> TdResult<BootReport> {
     // 落盘一份结果：登录任务是无界面跑的，失败必须能在下次打开界面时看到，
     // 而不是只躺在事件日志里等用户去翻。
     if let Ok(json) = serde_json::to_string(&report) {
-        let _ = store.set_setting("last_boot_report", &json);
-        let _ = store.set_setting("last_boot_at", &store.now().unwrap_or_default());
+        let (report_key, at_key) = scope.report_keys();
+        let _ = store.set_setting(report_key, &json);
+        let _ = store.set_setting(at_key, &store.now().unwrap_or_default());
     }
     Ok(report)
 }
@@ -456,6 +521,45 @@ mod tests {
         let report = run_boot_rebuild(&env.store).unwrap();
         assert_eq!(report.rules_total, 0);
         assert!(!env.target.exists());
+        let _ = fs::remove_dir_all(&env.base);
+    }
+
+    #[test]
+    fn scope_splits_protected_and_normal_rules() {
+        let env = setup("scope");
+        let win = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+        env.store
+            .insert_rule(&NewRule {
+                name: "受保护源".into(),
+                category: "system".into(),
+                source_template: format!("{win}\\Temp\\td-scope-{}", std::process::id()),
+                target_root_id: 1,
+                target_subpath: "system\\protected".into(),
+                link_type: "junction".into(),
+                want_enabled: true,
+                rebuild_on_boot: true,
+                notes: None,
+                excludes: Vec::new(),
+                auto_clean_policy: String::new(),
+                auto_clean_limit_bytes: 0,
+            })
+            .unwrap();
+
+        let non_elevated = run_boot_rebuild_scoped(&env.store, BootScope::NonElevatedOnly).unwrap();
+        assert_eq!(non_elevated.rules_total, 1, "普通任务只管普通源");
+
+        let elevated = run_boot_rebuild_scoped(&env.store, BootScope::ElevatedOnly).unwrap();
+        assert_eq!(elevated.rules_total, 1, "高权限任务只管受保护源");
+
+        let all = run_boot_rebuild_scoped(&env.store, BootScope::All).unwrap();
+        assert_eq!(all.rules_total, 2);
+
+        // 两份报告写不同的键，界面才能同时看到
+        assert!(env.store.get_setting("last_boot_report").unwrap().is_some());
+        assert!(env.store
+            .get_setting("last_boot_report_elevated")
+            .unwrap()
+            .is_some());
         let _ = fs::remove_dir_all(&env.base);
     }
 }

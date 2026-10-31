@@ -376,6 +376,7 @@ fn clean_dir_follows_link_state() {
         verify: VerifyMode::CountAndSize,
         skip_lock_check: true,
         allow_merge: false,
+        best_effort: false,
     };
     apply_rule(&env.store, &rule, &opts, &mut noop).unwrap();
     assert_eq!(clean_dir_for_rule(&env.store, &rule).unwrap(), env.target);

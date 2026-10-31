@@ -23,6 +23,9 @@ pub struct ApplyOptions {
     pub skip_lock_check: bool,
     /// 允许把源内容合并进非空的目标目录。
     pub allow_merge: bool,
+    /// 尽力模式：跳过占用预检、自动允许合并、单个条目拷不动就跳过。
+    /// 只应在**已提权**且用户明确接受"部分搬运"时打开。
+    pub best_effort: bool,
 }
 
 impl Default for ApplyOptions {
@@ -32,6 +35,7 @@ impl Default for ApplyOptions {
             verify: VerifyMode::CountAndSize,
             skip_lock_check: false,
             allow_merge: false,
+            best_effort: false,
         }
     }
 }
@@ -217,12 +221,13 @@ pub fn apply_rule(
     let src_stats = verify::measure(&r.source)?;
     let target_non_empty = dir_has_content(&r.target);
 
-    if target_non_empty && !opts.allow_merge {
+    if target_non_empty && !opts.allow_merge && !opts.best_effort {
         return Err(TdError::SafetyBlocked(tf("apply.target_non_empty", &[("path", &r.target.display().to_string())])));
     }
 
     // 占用检测：证明源目录此刻没有被写入，副本才不会撕裂。
-    if !opts.skip_lock_check {
+    // 尽力模式刻意跳过 —— 它的语义就是"能拿多少拿多少，删不掉就留着"。
+    if !opts.skip_lock_check && !opts.best_effort {
         let report = occupancy::scan_locks(&r.source, &LockScanOptions::default())?;
         if !report.is_clear() {
             store.log_event(
@@ -264,19 +269,26 @@ pub fn apply_rule(
     let work = (|| -> TdResult<()> {
         if target_non_empty {
             store.op_phase(op, "copying", None)?;
-            let mr = mover::merge_into(&r.source, &r.target, sink)?;
+            let mr = mover::merge_into_ex(&r.source, &r.target, opts.best_effort, sink)?;
             action = "merged_and_linked";
             note = tf("apply.merged", &[
                 ("n", &(mr.copied + mr.overwritten).to_string()),
                 ("over", &mr.overwritten.to_string()),
                 ("skip", &mr.skipped.to_string()),
             ]);
+            if !mr.failed.is_empty() {
+                // 读不出来的条目没有副本，绝不能删源
+                return Err(TdError::Busy(tf("move.best_effort_skipped", &[
+                    ("n", &mr.failed.len().to_string()),
+                    ("list", &mr.failed.iter().take(3).map(|s| s.path.clone()).collect::<Vec<_>>().join("；")),
+                ])));
+            }
             store.op_phase(op, "copied", None)?;
             store.op_phase(op, "removing", None)?;
-            mover::delete_tree(&r.source, sink)?;
+            finish_delete(&r.source, mr.copied + mr.overwritten, opts.best_effort, sink)?;
         } else {
             store.op_phase(op, "copying", None)?;
-            let mr = mover::move_tree(&r.source, &r.target, opts.verify, sink)?;
+            let mr = mover::move_tree_ex(&r.source, &r.target, opts.verify, opts.best_effort, sink)?;
             note = format!("{}：{}", mr.method, mr.stats.summary());
             move_report = Some(mr);
             store.op_phase(op, "copied", None)?;
@@ -360,6 +372,28 @@ pub fn apply_rule(
     );
     o.links_recreated = links_recreated;
     Ok(o)
+}
+
+/// 合并后的删源。尽力模式下把"删不掉的条目"翻译成可操作的提示。
+fn finish_delete(
+    src: &std::path::Path,
+    copied: u64,
+    best_effort: bool,
+    sink: &mut dyn FnMut(Progress),
+) -> TdResult<()> {
+    if !best_effort {
+        mover::delete_tree(src, sink)?;
+        return Ok(());
+    }
+    let del = mover::delete_tree_ex(src, sink)?;
+    if !del.failures.is_empty() {
+        return Err(TdError::Busy(tf("move.best_effort_leftovers", &[
+            ("copied", &copied.to_string()),
+            ("n", &del.failures.len().to_string()),
+            ("list", &del.failures.iter().take(3).cloned().collect::<Vec<_>>().join("；")),
+        ])));
+    }
+    Ok(())
 }
 
 /// 应用失败时的回滚。

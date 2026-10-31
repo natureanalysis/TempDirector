@@ -1229,7 +1229,10 @@ async function applyTemplates(tpls) {
   if (ids.length) await runApply(ids, false);
 }
 
-const OPTS_NORMAL = { dry_run: false, allow_merge: false, skip_lock_check: false, sha256: false };
+const OPTS_NORMAL = { dry_run: false, allow_merge: false, skip_lock_check: false, best_effort: false, sha256: false };
+// 提权时对受保护源（C:\Windows、Program Files 等）启用尽力模式：拷不动的条目跳过，
+// 删不掉的源条目保留在原处并报错 —— 绝不为了建链而丢数据。
+const OPTS_ELEVATED = { dry_run: false, allow_merge: false, skip_lock_check: false, best_effort: true, sha256: false };
 
 /** 走提权 worker（会弹一次 UAC）。 */
 async function runElevated(kind, ids) {
@@ -1237,7 +1240,7 @@ async function runElevated(kind, ids) {
   state.busy = true;
   showProgress(t('act.elev_request'));
   try {
-    const out = await invoke('run_elevated_job', { kind: kind, ids: ids, opts: OPTS_NORMAL });
+    const out = await invoke('run_elevated_job', { kind: kind, ids: ids, opts: OPTS_ELEVATED });
     hideProgress();
     const ok = out.filter(function (o) { return o.ok; }).length;
     const failed = out.length - ok;
@@ -1282,6 +1285,7 @@ async function runApply(ids, dryRun) {
               (others ? tf('act.elev_needed_line2_rest', { n: others }) : ''),
             kind: '',
           },
+          { text: t('act.elev_needed_line3'), kind: '' },
         ],
         actions: [
           { label: t('act.elev_run'), kind: 'primary', value: 'elevate' },
@@ -1845,6 +1849,21 @@ async function appendAutostartSection(body, snap) {
   row.appendChild(kind);
   row.appendChild(msg);
   box.appendChild(row);
+
+  // 第二个任务：最高权限，只重建 C:\Windows 这类受保护源
+  if (auto) {
+    const erow = document.createElement('div');
+    erow.className = 'log-item';
+    const ekind = document.createElement('div');
+    ekind.className = 'log-kind';
+    ekind.textContent = auto.elevated_registered ? t('auto.elev_enabled') : t('auto.elev_disabled');
+    const emsg = document.createElement('div');
+    emsg.className = 'log-msg';
+    emsg.textContent = auto.elevated_message || t('auto.elev_hint');
+    erow.appendChild(ekind);
+    erow.appendChild(emsg);
+    box.appendChild(erow);
+  }
   field.appendChild(box);
 
   const actions = document.createElement('div');
@@ -1886,6 +1905,39 @@ async function appendAutostartSection(body, snap) {
   );
   field.appendChild(actions);
 
+  if (auto) {
+    const elevActions = document.createElement('div');
+    elevActions.className = 'detail-actions';
+    if (auto.elevated_registered) {
+      elevActions.appendChild(
+        mkSmallBtn(t('auto.elev_disable'), async function () {
+          try {
+            const msg2 = await invoke('autostart_elevated_disable');
+            toast(t('auto.elev_disabled_toast'), msg2, 'ok');
+            closeModal();
+            await openSettings();
+          } catch (e) {
+            toast(t('auto.elev_disable_failed'), e.message, 'error');
+          }
+        })
+      );
+    } else {
+      elevActions.appendChild(
+        mkSmallBtn(t('auto.elev_enable'), async function () {
+          try {
+            const msg2 = await invoke('autostart_elevated_enable');
+            toast(t('auto.elev_enabled_toast'), msg2, 'ok');
+            closeModal();
+            await openSettings();
+          } catch (e) {
+            toast(t('auto.elev_enable_failed'), e.message, 'error');
+          }
+        })
+      );
+    }
+    field.appendChild(elevActions);
+  }
+
   const hint = document.createElement('div');
   hint.className = 'hint';
   if (auto) {
@@ -1893,9 +1945,13 @@ async function appendAutostartSection(body, snap) {
       tf('auto.p1', { name: auto.task_name }),
       tf('auto.p2', { cmd: (auto.command || auto.recommended_exe + ' boot-rebuild') }),
       tf('auto.p3', { id: auto.elevated ? t('auto.admin') : t('auto.normal') }),
+      tf('auto.p5', { name: auto.elevated_task_name }),
     ];
     if (auto.extra_args) {
       parts.push(tf('auto.p4', { args: auto.extra_args }));
+    }
+    if (auto.needs_update) {
+      parts.push(t('auto.needs_update'));
     }
     hint.textContent = parts.join(' ');
   } else {
@@ -4220,16 +4276,23 @@ function createMockBackend() {
           return Promise.resolve({
             registered: true,
             task_name: 'TempDirector-BootRebuild',
-            command: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild',
-            message: tf('mock.autostart_registered', { cmd: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild' }),
+            command: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild --skip-elevated',
+            message: tf('mock.autostart_registered', { cmd: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild --skip-elevated' }),
+            elevated_registered: false,
+            elevated_task_name: 'TempDirector-BootRebuild-Elevated',
+            elevated_command: '',
+            elevated_message: '未注册（登录时不会自动重建）',
+            needs_update: false,
             elevated: false,
             data_dir: 'C:\\ProgramData\\TempDirector',
             extra_args: '',
             recommended_exe: 'C:\\Program Files\\TempDirector\\tempdirector-gui.exe',
           });
-        case 'autostart_enable': return Promise.resolve('C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild');
+        case 'autostart_enable': return Promise.resolve('C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild --skip-elevated');
         case 'autostart_disable': return Promise.resolve('已取消开机自启');
         case 'autostart_run_now': return Promise.resolve('已触发一次开机重建任务');
+        case 'autostart_elevated_enable': return Promise.resolve('C:\\Program Files\\TempDirector\\tempdirector-gui.exe boot-rebuild --elevated-only');
+        case 'autostart_elevated_disable': return Promise.resolve('已取消开机自启');
         case 'run_elevated_job': {
           const out = [];
           (args.ids || []).forEach(function (id) {

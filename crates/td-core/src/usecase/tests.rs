@@ -103,16 +103,17 @@ fn rule_form_wire_contract_is_snake_case() {
 
 #[test]
 fn apply_opts_wire_contract_is_snake_case() {
-    let json = r#"{"dry_run":true,"allow_merge":false,"skip_lock_check":true,"sha256":false}"#;
+    let json = r#"{"dry_run":true,"allow_merge":false,"skip_lock_check":true,"best_effort":true,"sha256":false}"#;
     let opts: ApplyOpts = serde_json::from_str(json).expect("选项字段名必须一致");
     assert!(opts.dry_run);
     assert!(!opts.allow_merge);
     assert!(opts.skip_lock_check);
+    assert!(opts.best_effort);
     assert!(!opts.sha256);
 
     // 缺字段时应有默认值（前端只传关心的那几个）
     let opts: ApplyOpts = serde_json::from_str("{}").unwrap();
-    assert!(!opts.dry_run && !opts.allow_merge && !opts.skip_lock_check && !opts.sha256);
+    assert!(!opts.dry_run && !opts.allow_merge && !opts.skip_lock_check && !opts.best_effort && !opts.sha256);
 }
 
 #[test]

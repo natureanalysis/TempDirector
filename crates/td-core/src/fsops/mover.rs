@@ -72,7 +72,32 @@ pub struct MoveReport {
     pub method: &'static str,
     /// 树内重建的链接数。
     pub links_recreated: u64,
+    /// 尽力模式下拷贝阶段被跳过的条目（严格模式永远为空）。
+    pub skipped: Vec<SkippedEntry>,
     pub elapsed_ms: u128,
+}
+
+/// 尽力模式下被跳过的条目。
+#[derive(Debug, Clone, Serialize)]
+pub struct SkippedEntry {
+    pub path: String,
+    pub reason: String,
+}
+
+/// 复制结果。尽力模式下 `skipped` 会有内容。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CopyOutcome {
+    pub files: u64,
+    pub bytes: u64,
+    pub links: u64,
+    pub skipped: Vec<SkippedEntry>,
+}
+
+/// 删除结果。`failures` 非空表示树里还有删不掉的东西。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct DeleteOutcome {
+    pub removed: u64,
+    pub failures: Vec<String>,
 }
 
 /// 查询某个路径所在卷的可用空间。
@@ -157,6 +182,23 @@ pub fn move_tree(
     verify_mode: VerifyMode,
     sink: &mut dyn FnMut(Progress),
 ) -> TdResult<MoveReport> {
+    move_tree_ex(src, dst, verify_mode, false, sink)
+}
+
+/// [`move_tree`] 的尽力模式版本。
+///
+/// `best_effort = true` 时：读不了 / 拷不动 / 重命名失败的**单个条目**会被跳过并记录，
+/// 而不是让整棵树失败；同卷重命名失败会退化为"复制 → 校验 → 删源"。
+///
+/// 唯一不妥协的是**删源**：只要源里还有删不掉的文件（被占用），就不会建立链接，
+/// 而是返回错误并把已复制的内容留在目标里 —— 下次重试时合并路径会接着收敛。
+pub fn move_tree_ex(
+    src: &Path,
+    dst: &Path,
+    verify_mode: VerifyMode,
+    best_effort: bool,
+    sink: &mut dyn FnMut(Progress),
+) -> TdResult<MoveReport> {
     let started = std::time::Instant::now();
 
     let md = fs::symlink_metadata(src).map_err(|e| io_ctx(e, src, t("io.action.read_source")))?;
@@ -218,18 +260,28 @@ pub fn move_tree(
             from: src.display().to_string(),
             to: dst.display().to_string(),
         });
-        fs::rename(util::to_verbatim(src), util::to_verbatim(dst))
-            .map_err(|e| io_ctx(e, src, t("io.action.rename")))?;
-        sink(Progress::Done {
-            files: stats.files,
-            bytes: stats.bytes,
-        });
-        return Ok(MoveReport {
-            stats,
-            method: t("move.method.rename"),
-            links_recreated: 0,
-            elapsed_ms: started.elapsed().as_millis(),
-        });
+        match fs::rename(util::to_verbatim(src), util::to_verbatim(dst)) {
+            Ok(()) => {
+                sink(Progress::Done {
+                    files: stats.files,
+                    bytes: stats.bytes,
+                });
+                return Ok(MoveReport {
+                    stats,
+                    method: t("move.method.rename"),
+                    links_recreated: 0,
+                    skipped: Vec::new(),
+                    elapsed_ms: started.elapsed().as_millis(),
+                });
+            }
+            Err(e) if !best_effort => {
+                return Err(io_ctx(e, src, t("io.action.rename")));
+            }
+            Err(_) => {
+                // 树里有被打开的文件时目录改不了名 —— 尽力模式下退化为复制，
+                // 能拿多少拿多少，删不掉的部分由下面的删源阶段如实报出。
+            }
+        }
     }
 
     // ---- 跨卷：复制 → 校验 → 删源 ----
@@ -247,31 +299,65 @@ pub fn move_tree(
         });
     }
 
-    let (copied, links_recreated) = copy_tree(src, dst, sink)?;
+    let copied = copy_tree_ex(src, dst, best_effort, sink)?;
 
     sink(Progress::Verifying);
     let actual = verify::measure(dst)?;
-    if copied != actual.files {
-        return Err(TdError::VerifyFailed(tf("move.count_mismatch", &[
-            ("copied", &copied.to_string()),
-            ("actual", &actual.files.to_string()),
-        ])));
-    }
-    verify::compare_stats(&stats, &actual, t("move.verify_ctx"))?;
-
-    if verify_mode == VerifyMode::Sha256 {
-        let h_src = verify::hash_tree(src)?;
-        let h_dst = verify::hash_tree(dst)?;
-        if h_src != h_dst {
-            return Err(TdError::VerifyFailed(tf("move.sha_mismatch", &[
-                ("src", &h_src),
-                ("dst", &h_dst),
+    if best_effort && !copied.skipped.is_empty() {
+        // 有跳过项时源的目标态不再是原始快照，只能按"实际拷出去多少"核对。
+        if copied.files != actual.files
+            || copied.bytes != actual.bytes
+            || copied.links != actual.links
+        {
+            return Err(TdError::VerifyFailed(tf("move.count_mismatch", &[
+                ("copied", &copied.files.to_string()),
+                ("actual", &actual.files.to_string()),
             ])));
+        }
+    } else {
+        if copied.files != actual.files {
+            return Err(TdError::VerifyFailed(tf("move.count_mismatch", &[
+                ("copied", &copied.files.to_string()),
+                ("actual", &actual.files.to_string()),
+            ])));
+        }
+        verify::compare_stats(&stats, &actual, t("move.verify_ctx"))?;
+
+        if verify_mode == VerifyMode::Sha256 {
+            let h_src = verify::hash_tree(src)?;
+            let h_dst = verify::hash_tree(dst)?;
+            if h_src != h_dst {
+                return Err(TdError::VerifyFailed(tf("move.sha_mismatch", &[
+                    ("src", &h_src),
+                    ("dst", &h_dst),
+                ])));
+            }
         }
     }
 
+    // 有读不出来的条目时绝不删源：那些文件的副本根本不在目标里。
+    if !copied.skipped.is_empty() {
+        return Err(TdError::Busy(tf("move.best_effort_skipped", &[
+            ("n", &copied.skipped.len().to_string()),
+            ("list", &copied
+                .skipped
+                .iter()
+                .take(3)
+                .map(|s| s.path.clone())
+                .collect::<Vec<_>>()
+                .join("；")),
+        ])));
+    }
+
     // 到这里才允许删源。
-    delete_tree(src, sink)?;
+    let del = delete_tree_ex(src, sink)?;
+    if !del.failures.is_empty() {
+        return Err(TdError::Busy(tf("move.best_effort_leftovers", &[
+            ("copied", &copied.files.to_string()),
+            ("n", &del.failures.len().to_string()),
+            ("list", &del.failures.iter().take(3).cloned().collect::<Vec<_>>().join("；")),
+        ])));
+    }
 
     sink(Progress::Done {
         files: stats.files,
@@ -280,32 +366,52 @@ pub fn move_tree(
     Ok(MoveReport {
         stats,
         method: t("move.method.copy"),
-        links_recreated,
+        links_recreated: copied.links,
+        skipped: copied.skipped,
         elapsed_ms: started.elapsed().as_millis(),
     })
 }
 
 /// 复制整棵树（含重建链接）。返回 `(文件数, 重建的链接数)`。
 pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<(u64, u64)> {
+    let out = copy_tree_ex(src, dst, false, sink)?;
+    Ok((out.files, out.links))
+}
+
+/// [`copy_tree`] 的尽力模式版本：单个条目失败只记录、不中断。
+pub fn copy_tree_ex(
+    src: &Path,
+    dst: &Path,
+    best_effort: bool,
+    sink: &mut dyn FnMut(Progress),
+) -> TdResult<CopyOutcome> {
     let src_v = util::to_verbatim(src);
     let dst_v = util::to_verbatim(dst);
     fs::create_dir_all(&dst_v).map_err(|e| io_ctx(e, dst, t("io.action.create_target")))?;
 
-    let mut files = 0u64;
-    let mut bytes = 0u64;
-    let mut links = 0u64;
+    let mut out = CopyOutcome::default();
 
     for entry in WalkDir::new(&src_v)
         .follow_links(false)
         .sort_by_file_name()
         .into_iter()
     {
-        let entry = entry.map_err(|e| {
-            TdError::Other(tf("move.walk_failed", &[
-                ("err", &e.to_string()),
-                ("path", &src.display().to_string()),
-            ]))
-        })?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) if best_effort => {
+                out.skipped.push(SkippedEntry {
+                    path: util::simplify(src).display().to_string(),
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+            Err(e) => {
+                return Err(TdError::Other(tf("move.walk_failed", &[
+                    ("err", &e.to_string()),
+                    ("path", &src.display().to_string()),
+                ])))
+            }
+        };
         let rel = match entry.path().strip_prefix(&src_v) {
             Ok(r) => r.to_path_buf(),
             Err(_) => continue,
@@ -317,48 +423,75 @@ pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdRe
         let ft = entry.file_type();
 
         if ft.is_symlink() {
-            let tag = read_reparse_tag(entry.path())?;
-            let target = read_link_target(entry.path())?;
-            let target_v = util::to_verbatim(&target);
-            match tag {
-                Some(IO_REPARSE_TAG_MOUNT_POINT) => {
-                    // junction crate 的参数顺序是 (target, junction)
-                    junction::create(&target_v, &to).map_err(|e| {
-                        TdError::Other(tf("move.recreate_junction_failed", &[
-                            ("err", &e.to_string()),
-                            ("from", &entry.path().display().to_string()),
-                            ("to", &target.display().to_string()),
-                        ]))
-                    })?;
+            let result = (|| -> TdResult<()> {
+                let tag = read_reparse_tag(entry.path())?;
+                let target = read_link_target(entry.path())?;
+                let target_v = util::to_verbatim(&target);
+                match tag {
+                    Some(IO_REPARSE_TAG_MOUNT_POINT) => {
+                        // junction crate 的参数顺序是 (target, junction)
+                        junction::create(&target_v, &to).map_err(|e| {
+                            TdError::Other(tf("move.recreate_junction_failed", &[
+                                ("err", &e.to_string()),
+                                ("from", &entry.path().display().to_string()),
+                                ("to", &target.display().to_string()),
+                            ]))
+                        })?;
+                    }
+                    Some(IO_REPARSE_TAG_SYMLINK) => {
+                        std::os::windows::fs::symlink_dir(&target_v, &to).map_err(|e| {
+                            TdError::Other(tf("move.recreate_symlink_failed", &[
+                                ("err", &e.to_string()),
+                            ]))
+                        })?;
+                    }
+                    other => {
+                        return Err(TdError::SafetyBlocked(tf("move.unsupported_reparse", &[
+                            ("tag", &format!("{other:?}")),
+                            ("path", &entry.path().display().to_string()),
+                        ])));
+                    }
                 }
-                Some(IO_REPARSE_TAG_SYMLINK) => {
-                    std::os::windows::fs::symlink_dir(&target_v, &to).map_err(|e| {
-                        TdError::Other(tf("move.recreate_symlink_failed", &[
-                            ("err", &e.to_string()),
-                        ]))
-                    })?;
-                }
-                other => {
-                    return Err(TdError::SafetyBlocked(tf("move.unsupported_reparse", &[
-                        ("tag", &format!("{other:?}")),
-                        ("path", &entry.path().display().to_string()),
-                    ])));
-                }
+                Ok(())
+            })();
+
+            match result {
+                Ok(()) => out.links += 1,
+                Err(e) if best_effort => out.skipped.push(SkippedEntry {
+                    path: util::simplify(entry.path()).display().to_string(),
+                    reason: e.to_string(),
+                }),
+                Err(e) => return Err(e),
             }
-            links += 1;
             continue;
         }
 
         if ft.is_dir() {
-            fs::create_dir_all(&to).map_err(|e| io_ctx(e, entry.path(), t("io.action.create_subdir")))?;
+            match fs::create_dir_all(&to) {
+                Ok(()) => {}
+                Err(e) if best_effort => out.skipped.push(SkippedEntry {
+                    path: util::simplify(entry.path()).display().to_string(),
+                    reason: e.to_string(),
+                }),
+                Err(e) => return Err(io_ctx(e, entry.path(), t("io.action.create_subdir"))),
+            }
             continue;
         }
 
         if ft.is_file() {
-            let n = fs::copy(entry.path(), &to)
-                .map_err(|e| io_ctx(e, entry.path(), t("io.action.copy_file")))?;
-            files += 1;
-            bytes += n;
+            let n = match fs::copy(entry.path(), &to) {
+                Ok(n) => n,
+                Err(e) if best_effort => {
+                    out.skipped.push(SkippedEntry {
+                        path: util::simplify(entry.path()).display().to_string(),
+                        reason: e.to_string(),
+                    });
+                    continue;
+                }
+                Err(e) => return Err(io_ctx(e, entry.path(), t("io.action.copy_file"))),
+            };
+            out.files += 1;
+            out.bytes += n;
 
             // 保留时间戳与只读属性
             if let Ok(md) = entry.metadata() {
@@ -372,17 +505,17 @@ pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdRe
                 }
             }
 
-            if files % PROGRESS_EVERY == 0 {
+            if out.files % PROGRESS_EVERY == 0 {
                 sink(Progress::Copying {
-                    files,
-                    bytes,
+                    files: out.files,
+                    bytes: out.bytes,
                     current: util::simplify(entry.path()).display().to_string(),
                 });
             }
         }
     }
 
-    Ok((files, links))
+    Ok(out)
 }
 
 /// 删除整棵目录树。返回删除的文件数。
@@ -391,6 +524,18 @@ pub fn copy_tree(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdRe
 /// * 子项是重解析点 → 只删链接条目本身，**不跟随**。
 /// * 只读文件先清掉只读属性再删（Windows 上只读文件无法直接删除）。
 pub fn delete_tree(dir: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<u64> {
+    let out = delete_tree_ex(dir, sink)?;
+    if !out.failures.is_empty() {
+        return Err(TdError::Busy(tf("move.delete_failures", &[
+            ("n", &out.failures.len().to_string()),
+            ("list", &out.failures.iter().take(3).cloned().collect::<Vec<_>>().join("；")),
+        ])));
+    }
+    Ok(out.removed)
+}
+
+/// [`delete_tree`] 的明细版本：删不掉的条目放在 `failures` 里而不是直接报错。
+pub fn delete_tree_ex(dir: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<DeleteOutcome> {
     let md = fs::symlink_metadata(dir).map_err(|e| io_ctx(e, dir, t("io.action.read_delete_dir")))?;
     if md.file_type().is_symlink() {
         return Err(TdError::SafetyBlocked(tf("move.refuse_delete_reparse", &[
@@ -403,8 +548,7 @@ pub fn delete_tree(dir: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<u64> 
         ])));
     }
 
-    let mut removed = 0u64;
-    let mut failures: Vec<String> = Vec::new();
+    let mut out = DeleteOutcome::default();
 
     // contents_first：先删子项再删父项，这样父目录删的时候已经是空的。
     for entry in WalkDir::new(util::to_verbatim(dir))
@@ -415,7 +559,7 @@ pub fn delete_tree(dir: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<u64> 
         let entry = match entry {
             Ok(e) => e,
             Err(e) => {
-                failures.push(e.to_string());
+                out.failures.push(e.to_string());
                 continue;
             }
         };
@@ -441,26 +585,20 @@ pub fn delete_tree(dir: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<u64> 
         match outcome {
             Ok(()) => {
                 if ft.is_file() {
-                    removed += 1;
-                    if removed % PROGRESS_EVERY == 0 {
-                        sink(Progress::Deleting { files: removed });
+                    out.removed += 1;
+                    if out.removed % PROGRESS_EVERY == 0 {
+                        sink(Progress::Deleting { files: out.removed });
                     }
                 }
             }
-            Err(e) => failures.push(tf("move.delete_failure_entry", &[
+            Err(e) => out.failures.push(tf("move.delete_failure_entry", &[
                 ("path", &util::simplify(path).display().to_string()),
                 ("err", &e.to_string()),
             ])),
         }
     }
 
-    if !failures.is_empty() {
-        return Err(TdError::Busy(tf("move.delete_failures", &[
-            ("n", &failures.len().to_string()),
-            ("list", &failures.iter().take(3).cloned().collect::<Vec<_>>().join("；")),
-        ])));
-    }
-    Ok(removed)
+    Ok(out)
 }
 
 // 仅 Windows：此处在 Unix 上会有 world-writable 顾虑，本工具不支持 Unix。
@@ -485,6 +623,8 @@ pub struct MergeReport {
     /// 目标里已有、但比源旧，被覆盖的文件数。
     pub overwritten: u64,
     pub bytes: u64,
+    /// 尽力模式下读不了 / 拷不动的条目（严格模式永远为空）。
+    pub failed: Vec<SkippedEntry>,
 }
 
 /// 把 `src` 的内容合并进 `dst`（`dst` 可以非空，必须已存在）。
@@ -496,6 +636,16 @@ pub struct MergeReport {
 /// 注意这里的核对不变式比 `move_tree` 弱：只保证**源里的每个条目都在目标里存在过**，
 /// 不做字节级校验（合并本来就是有取舍的）。
 pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdResult<MergeReport> {
+    merge_into_ex(src, dst, false, sink)
+}
+
+/// [`merge_into`] 的尽力模式版本：单个条目失败只记录，不中断。
+pub fn merge_into_ex(
+    src: &Path,
+    dst: &Path,
+    best_effort: bool,
+    sink: &mut dyn FnMut(Progress),
+) -> TdResult<MergeReport> {
     let src_v = util::to_verbatim(src);
     let dst_v = util::to_verbatim(dst);
 
@@ -510,19 +660,33 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
         skipped: 0,
         overwritten: 0,
         bytes: 0,
+        failed: Vec::new(),
     };
+    // 记录失败条目对应的源绝对路径，核对不变式时要排除它们的整棵子树。
+    let mut failed_src: Vec<PathBuf> = Vec::new();
 
     for entry in WalkDir::new(&src_v)
         .follow_links(false)
         .sort_by_file_name()
         .into_iter()
     {
-        let entry = entry.map_err(|e| {
-            TdError::Other(tf("move.walk_failed", &[
-                ("err", &e.to_string()),
-                ("path", &src.display().to_string()),
-            ]))
-        })?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) if best_effort => {
+                failed_src.push(src_v.clone());
+                report.failed.push(SkippedEntry {
+                    path: util::simplify(src).display().to_string(),
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+            Err(e) => {
+                return Err(TdError::Other(tf("move.walk_failed", &[
+                    ("err", &e.to_string()),
+                    ("path", &src.display().to_string()),
+                ])))
+            }
+        };
         let rel = match entry.path().strip_prefix(&src_v) {
             Ok(r) => r.to_path_buf(),
             Err(_) => continue,
@@ -538,39 +702,63 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
                 report.skipped += 1;
                 continue;
             }
-            let tag = read_reparse_tag(entry.path())?;
-            let target = read_link_target(entry.path())?;
-            let target_v = util::to_verbatim(&target);
-            match tag {
-                Some(IO_REPARSE_TAG_MOUNT_POINT) => {
-                    // junction crate 的参数顺序是 (target, junction)
-                    junction::create(&target_v, &to).map_err(|e| {
-                        TdError::Other(tf("move.recreate_junction_failed_merge", &[
-                            ("err", &e.to_string()),
-                            ("to", &to.display().to_string()),
-                        ]))
-                    })?;
+            let result = (|| -> TdResult<()> {
+                let tag = read_reparse_tag(entry.path())?;
+                let target = read_link_target(entry.path())?;
+                let target_v = util::to_verbatim(&target);
+                match tag {
+                    Some(IO_REPARSE_TAG_MOUNT_POINT) => {
+                        // junction crate 的参数顺序是 (target, junction)
+                        junction::create(&target_v, &to).map_err(|e| {
+                            TdError::Other(tf("move.recreate_junction_failed_merge", &[
+                                ("err", &e.to_string()),
+                                ("to", &to.display().to_string()),
+                            ]))
+                        })?;
+                    }
+                    Some(IO_REPARSE_TAG_SYMLINK) => {
+                        std::os::windows::fs::symlink_dir(&target_v, &to).map_err(|e| {
+                            TdError::Other(tf("move.recreate_symlink_failed", &[
+                                ("err", &e.to_string()),
+                            ]))
+                        })?;
+                    }
+                    other => {
+                        return Err(TdError::SafetyBlocked(tf("move.unsupported_reparse", &[
+                            ("tag", &format!("{other:?}")),
+                            ("path", &entry.path().display().to_string()),
+                        ])));
+                    }
                 }
-                Some(IO_REPARSE_TAG_SYMLINK) => {
-                    std::os::windows::fs::symlink_dir(&target_v, &to).map_err(|e| {
-                        TdError::Other(tf("move.recreate_symlink_failed", &[
-                            ("err", &e.to_string()),
-                        ]))
-                    })?;
+                Ok(())
+            })();
+
+            match result {
+                Ok(()) => report.copied += 1,
+                Err(e) if best_effort => {
+                    failed_src.push(entry.path().to_path_buf());
+                    report.failed.push(SkippedEntry {
+                        path: util::simplify(entry.path()).display().to_string(),
+                        reason: e.to_string(),
+                    });
                 }
-                other => {
-                    return Err(TdError::SafetyBlocked(tf("move.unsupported_reparse", &[
-                        ("tag", &format!("{other:?}")),
-                        ("path", &entry.path().display().to_string()),
-                    ])));
-                }
+                Err(e) => return Err(e),
             }
-            report.copied += 1;
             continue;
         }
 
         if ft.is_dir() {
-            fs::create_dir_all(&to).map_err(|e| io_ctx(e, entry.path(), t("io.action.create_subdir")))?;
+            match fs::create_dir_all(&to) {
+                Ok(()) => {}
+                Err(e) if best_effort => {
+                    failed_src.push(entry.path().to_path_buf());
+                    report.failed.push(SkippedEntry {
+                        path: util::simplify(entry.path()).display().to_string(),
+                        reason: e.to_string(),
+                    });
+                }
+                Err(e) => return Err(io_ctx(e, entry.path(), t("io.action.create_subdir"))),
+            }
             continue;
         }
 
@@ -578,7 +766,7 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
             let src_md = entry.metadata().ok();
             let dst_md = fs::symlink_metadata(&to).ok();
 
-            if let Some(dm) = dst_md {
+            let was_overwrite = if let Some(dm) = dst_md {
                 let src_time = src_md
                     .as_ref()
                     .and_then(|m| m.modified().ok())
@@ -595,13 +783,28 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
                     report.skipped += 1;
                     continue;
                 }
+                true
+            } else {
+                false
+            };
+
+            let n = match fs::copy(entry.path(), &to) {
+                Ok(n) => n,
+                Err(e) if best_effort => {
+                    failed_src.push(entry.path().to_path_buf());
+                    report.failed.push(SkippedEntry {
+                        path: util::simplify(entry.path()).display().to_string(),
+                        reason: e.to_string(),
+                    });
+                    continue;
+                }
+                Err(e) => return Err(io_ctx(e, entry.path(), t("io.action.merge_file"))),
+            };
+            if was_overwrite {
                 report.overwritten += 1;
             } else {
                 report.copied += 1;
             }
-
-            let n = fs::copy(entry.path(), &to)
-                .map_err(|e| io_ctx(e, entry.path(), t("io.action.merge_file")))?;
             report.bytes += n;
 
             if let Some(md) = src_md {
@@ -632,6 +835,9 @@ pub fn merge_into(src: &Path, dst: &Path, sink: &mut dyn FnMut(Progress)) -> TdR
         }
         if entry.file_type().is_dir() {
             continue;
+        }
+        if failed_src.iter().any(|f| entry.path() == f || entry.path().starts_with(f)) {
+            continue; // 已经作为失败条目上报过，不再算"丢文件"
         }
         let rel = entry.path().strip_prefix(&src_v).unwrap_or(entry.path());
         if fs::symlink_metadata(dst_v.join(rel)).is_err() {
@@ -776,6 +982,63 @@ mod tests {
         fs::write(dst.join("occupied"), b"x").unwrap();
         let err = move_tree(&src, &dst, VerifyMode::CountAndSize, &mut noop).unwrap_err();
         assert!(matches!(err, TdError::SafetyBlocked(_)), "{err}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// 用不允许任何共享的句柄锁住文件，模拟"被别的程序打开"。
+    fn lock_no_share(path: &Path) -> windows_sys::Win32::Foundation::HANDLE {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::Storage::FileSystem::{CreateFileW, OPEN_EXISTING};
+        let wide = util::to_wide(&util::to_verbatim(path).to_string_lossy());
+        let h = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                0x8000_0000, // GENERIC_READ
+                0,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(h, INVALID_HANDLE_VALUE, "锁文件失败");
+        h
+    }
+
+    fn unlock(h: windows_sys::Win32::Foundation::HANDLE) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(h);
+        }
+    }
+
+    #[test]
+    fn best_effort_skips_locked_file_and_reports_leftovers() {
+        let base = fixture("best_effort");
+        let src = base.join("src");
+        let dst = base.join("dst");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("free.txt"), b"free").unwrap();
+        fs::write(src.join("busy.txt"), b"busy").unwrap();
+
+        let h = lock_no_share(&src.join("busy.txt"));
+
+        let out = copy_tree_ex(&src, &dst, true, &mut noop).unwrap();
+        assert_eq!(out.files, 1);
+        assert_eq!(out.skipped.len(), 1, "被锁文件应被跳过：{:?}", out.skipped);
+        assert!(dst.join("free.txt").exists());
+        assert!(!dst.join("busy.txt").exists());
+
+        // 严格模式不许带病复制
+        assert!(copy_tree(&src, &base.join("dst2"), &mut noop).is_err());
+
+        // 删源：删得掉的就删，删不掉的留在原处
+        let del = delete_tree_ex(&src, &mut noop).unwrap();
+        assert_eq!(del.removed, 1);
+        assert!(!del.failures.is_empty());
+        assert!(src.join("busy.txt").exists());
+        assert!(!src.join("free.txt").exists());
+
+        unlock(h);
         let _ = fs::remove_dir_all(&base);
     }
 }

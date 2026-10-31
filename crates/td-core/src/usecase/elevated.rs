@@ -32,6 +32,8 @@ pub fn run_elevated_job(
         dry_run: false,
         allow_merge: opts.allow_merge,
         sha256: opts.sha256,
+        best_effort: opts.best_effort,
+        boot_scope: String::new(),
         origin_pid: std::process::id(),
     };
     let job_path = worker::write_job(&job)?;

@@ -2,20 +2,30 @@
 
 use std::path::PathBuf;
 
+use td_core::boot::BootScope;
 use td_core::i18n::{t, tf};
 use td_core::usecase;
 use td_core::{TdError, TdResult};
 
 use crate::parse::Parsed;
 
+fn boot_scope(p: &Parsed) -> BootScope {
+    if p.has("elevated-only") {
+        BootScope::ElevatedOnly
+    } else if p.has("skip-elevated") {
+        BootScope::NonElevatedOnly
+    } else {
+        BootScope::All
+    }
+}
+
 pub(crate) fn cmd_boot_rebuild(store: &td_core::store::Store, p: &Parsed) -> TdResult<()> {
     println!("{}", t("cli.boot.start"));
+    let report = usecase::boot_rebuild_scoped(store, boot_scope(p))?;
     if p.json() {
-        let report = usecase::boot_rebuild(store)?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
-    let report = usecase::boot_rebuild(store)?;
     for r in &report.roots {
         let icon = if r.ready { "✅" } else { "❌" };
         let detail = if r.ready {
@@ -76,9 +86,33 @@ pub(crate) fn cmd_autostart(p: &Parsed) -> TdResult<()> {
                 println!("{}", t("cli.boot.trigger"));
                 println!("{}", t("cli.boot.note"));
             }
+            let e_icon = if st.elevated_registered {
+                t("cli.boot.autostart_registered")
+            } else {
+                t("cli.boot.autostart_unregistered")
+            };
+            println!(
+                "{}",
+                tf("cli.boot.autostart_status", &[
+                    ("icon", e_icon),
+                    ("name", st.elevated_task_name.as_str()),
+                ])
+            );
+            println!("   {}", st.elevated_message);
+            if st.elevated_registered {
+                println!("{}", t("cli.boot.trigger_elevated"));
+            }
+            if st.needs_update {
+                println!("{}", t("cli.boot.task_needs_update"));
+            }
             Ok(())
         }
         "enable" => {
+            if p.has("elevated") {
+                println!("{}", usecase::autostart_elevated_enable()?);
+                println!("{}", t("cli.boot.elevated_hint"));
+                return Ok(());
+            }
             // `--exe` 允许指定别的执行体（默认推荐 GUI 静默二进制），
             // 所以不走 usecase::autostart_enable 的固定版本。
             let exe = match p.value("exe") {
@@ -96,6 +130,10 @@ pub(crate) fn cmd_autostart(p: &Parsed) -> TdResult<()> {
             Ok(())
         }
         "disable" => {
+            if p.has("elevated") {
+                println!("{}", usecase::autostart_elevated_disable()?);
+                return Ok(());
+            }
             println!("{}", usecase::autostart_disable()?);
             Ok(())
         }

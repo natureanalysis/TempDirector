@@ -185,6 +185,10 @@ pub struct ApplyOpts {
     /// 跳过占用检测（危险）。
     #[serde(default)]
     pub skip_lock_check: bool,
+    /// 尽力模式：单条目失败不中断，删除不了的源条目留在原处并报错。
+    /// 只在提权执行时对 `C:\Windows\*` 这类源由上层自动打开。
+    #[serde(default)]
+    pub best_effort: bool,
     /// 逐文件 SHA-256（慢）。
     #[serde(default)]
     pub sha256: bool,
@@ -201,6 +205,7 @@ impl ApplyOpts {
             },
             skip_lock_check: self.skip_lock_check,
             allow_merge: self.allow_merge,
+            best_effort: self.best_effort,
         }
     }
 }
@@ -390,6 +395,13 @@ pub struct AutostartView {
     pub task_name: String,
     pub command: String,
     pub message: String,
+    /// 高权限登录任务（只处理 C:\Windows 等受保护源）。
+    pub elevated_registered: bool,
+    pub elevated_task_name: String,
+    pub elevated_command: String,
+    pub elevated_message: String,
+    /// 已注册任务的参数是旧版（没有 --skip-elevated / --elevated-only），建议重新启用。
+    pub needs_update: bool,
     /// 当前进程是否已提权（界面据此解释"为什么这次不用弹 UAC"）。
     pub elevated: bool,
     pub data_dir: String,

@@ -735,6 +735,18 @@ pub fn autostart_run_now() -> R<String> {
     api::autostart_run_now().map_err(map_err)
 }
 
+/// 注册"最高权限登录任务"（会弹一次 UAC）。
+#[tauri::command]
+pub fn autostart_elevated_enable() -> R<String> {
+    api::autostart_elevated_enable().map_err(map_err)
+}
+
+/// 取消"最高权限登录任务"（会弹一次 UAC）。
+#[tauri::command]
+pub fn autostart_elevated_disable() -> R<String> {
+    api::autostart_elevated_disable().map_err(map_err)
+}
+
 /// 走提权 worker 执行 apply / restore（会弹一次 UAC）。
 #[tauri::command]
 pub fn run_elevated_job(

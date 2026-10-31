@@ -2,6 +2,28 @@
 
 （按惯例用日期标题，不引入语义化版本号。）
 
+## 2026-11-01（受保护目录：尽力而为搬运 + 高权限登录重建任务）
+
+### 变更
+
+* 提权执行改为「尽力而为」：受保护位置（`C:\Windows`、Program Files、ProgramData 下）的规则在管理员进程里搬运时，被独占打开的文件逐个跳过并记录，不再整条失败。只要源目录里还有删不掉的条目就**不建链**，已复制的数据留在目标目录；关闭占用程序后重试会按「新者优先」的合并规则续传，不会丢数据。
+* 搬运 / 合并 / 删除三层都支持该模式：`mover::move_tree_ex`、`merge_into_ex`、`delete_tree_ex` 返回跳过与残留清单，严格模式（默认）行为不变。交叉卷校验在存在跳过项时退化为「复制量与实到量一致」，不留半成品链接。
+* 开机重建按权限分层：普通登录任务固定传 `--skip-elevated`，只处理普通位置的规则；新增 `TempDirector-BootRebuild-Elevated`（`HighestAvailable`，注册时弹一次 UAC），只处理受保护位置的规则，传 `--elevated-only`。两份报告分别写 `last_boot_report` 与 `last_boot_report_elevated`，概览横幅把两者的问题合并展示。
+* `boot-rebuild` 新增 `--elevated-only` / `--skip-elevated`，无参数时保持 `all`；提权任务通过一次性 worker 注册（任务里只有任务种别，可执行文件与数据目录由 worker 自身推导，不接受外部路径）。
+* 设置页「开机自启」分区显示两个任务的状态与触发按钮；`needs_update` 会把「已注册但缺少 scope 参数」的旧任务标出来。
+* CLI 同步：`apply --best-effort`、`autostart enable --elevated` / `autostart disable --elevated`，`autostart status` 打印两个任务与更新提示。
+
+### 升级须知
+
+* 留意旧版本注册的 `TempDirector-BootRebuild` 没有 scope 参数——在设置页（或 `autostart status` 看到 `needs_update`）重新点一次「启用」即可写入 `--skip-elevated`。
+* 受保护位置的规则要开机自动重建，需要单独启用高权限任务；不启用时这些规则只会在手动执行时处理。
+
+### 验证
+
+* `scripts\cargo.cmd test -p td-core`（203 通过）、`-p td-cli`（11 通过）、`-p td-gui`（8 + 2 通过）。
+* 新增单测：`mover::tests::best_effort_skips_locked_file_and_reports_leftovers`（独占句柄下跳过 1 个文件、严格模式报错、删除只移除可用项）、`boot::rebuild::tests::scope_splits_protected_and_normal_rules`、`autostart::tests::elevated_task_uses_highest_available_and_only_protected_scope`。
+* `node --check`（app.js / i18n.js）通过。未在本机真实注册计划任务（避免改动系统状态），任务 XML 与状态解析用单测覆盖。
+
 ## 2026-11-01（预设：移除错误条目「VS 设置日志」）
 
 ### 修正

@@ -10,7 +10,8 @@
 //!   而且 windowed 子系统不会有控制台闪一下。
 //!
 //! 结果不靠 stdout 传递：登录任务是静默跑的，所以重建报告会落库
-//! （`settings.last_boot_report`），界面下次启动时在顶部提示。
+//! （普通任务写 `settings.last_boot_report`，高权限任务写
+//! `settings.last_boot_report_elevated`），界面下次启动时在顶部提示。
 
 use std::path::{Path, PathBuf};
 
@@ -30,7 +31,7 @@ pub fn dispatch(args: &[String]) -> Option<i32> {
     apply_data_dir_override(args);
 
     match cmd {
-        "boot-rebuild" => Some(run_boot_rebuild()),
+        "boot-rebuild" => Some(run_boot_rebuild(args)),
         "elevated" => {
             let job = args.get(1).map(String::as_str).unwrap_or("");
             if job.is_empty() {
@@ -61,7 +62,17 @@ fn apply_data_dir_override(args: &[String]) {
 }
 
 /// 静默执行一次开机重建。退出码：0 正常 / 2 有告警或失败 / 1 致命。
-fn run_boot_rebuild() -> i32 {
+///
+/// `--elevated-only` / `--skip-elevated` 由两个登录任务分别传入，
+/// 让普通权限任务别再为受保护目录报一堆"无权限"。
+fn run_boot_rebuild(args: &[String]) -> i32 {
+    let scope = if args.iter().any(|a| a == "--elevated-only") {
+        td_core::boot::BootScope::ElevatedOnly
+    } else if args.iter().any(|a| a == "--skip-elevated") {
+        td_core::boot::BootScope::NonElevatedOnly
+    } else {
+        td_core::boot::BootScope::All
+    };
     if let Err(e) = paths::ensure_dirs() {
         eprintln!("创建数据目录失败：{e}");
         return 1;
@@ -76,7 +87,7 @@ fn run_boot_rebuild() -> i32 {
     // 上次崩溃留下的"进行中"流水先收尾，否则会一直挂在待修复列表里
     let _ = store.mark_stale_ops();
 
-    match td_core::boot::run_boot_rebuild(&store) {
+    match td_core::boot::run_boot_rebuild_scoped(&store, scope) {
         Ok(report) => {
             // 无控制台也要留个痕迹：写一份纯文本日志到 logs/
             let line = format!(
@@ -114,8 +125,11 @@ fn print_usage() {
     println!();
     println!("无界面模式：");
     println!(
-        "  tempdirector-gui boot-rebuild [--data-dir <路径>]    静默重建目标目录（登录任务用）"
+        "  tempdirector-gui boot-rebuild [--elevated-only|--skip-elevated] [--data-dir <路径>]"
     );
+    println!("                                                       静默重建目标目录（登录任务用）");
+    println!("      --elevated-only  只处理 C:\\Windows 等受保护源（高权限任务）");
+    println!("      --skip-elevated  只处理普通源（普通权限任务）");
     println!("  tempdirector-gui elevated <job.json>                 以管理员身份执行一份任务");
     println!();
     println!("日常命令行操作请用 tempdirector.exe（见其 help）。");

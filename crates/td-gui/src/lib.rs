@@ -119,6 +119,8 @@ pub fn run() {
             commands::autostart_enable,
             commands::autostart_disable,
             commands::autostart_run_now,
+            commands::autostart_elevated_enable,
+            commands::autostart_elevated_disable,
             commands::run_elevated_job,
             commands::export_config,
             commands::import_config,

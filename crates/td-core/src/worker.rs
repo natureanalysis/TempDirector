@@ -49,6 +49,13 @@ pub struct Job {
     pub allow_merge: bool,
     #[serde(default)]
     pub sha256: bool,
+    /// 尽力模式。worker 仍会逐条判断：只对 `safety::requires_elevation`
+    /// 为真的源（`C:\Windows` 等受保护前缀）打开，普通目录照旧严格搬运。
+    #[serde(default)]
+    pub best_effort: bool,
+    /// `boot_rebuild` 的分工范围：空 = 全部，`elevated_only` / `non_elevated_only`。
+    #[serde(default)]
+    pub boot_scope: String,
     /// 发起进程 pid，只用于日志。
     #[serde(default)]
     pub origin_pid: u32,
@@ -183,16 +190,17 @@ pub fn run_job(job_path: &Path) -> TdResult<JobResult> {
 
     match job.kind.as_str() {
         "apply" | "restore" => {
-            let opts = ApplyOptions {
+            let base_opts = ApplyOptions {
                 dry_run: job.dry_run,
                 verify: if job.sha256 {
                     VerifyMode::Sha256
                 } else {
                     VerifyMode::CountAndSize
                 },
-                // 提权不做占用检测豁免：源目录正被写入时照样拒绝
+                // 提权本身不免除占用检测；只有受保护源在 best_effort 下才放宽
                 skip_lock_check: false,
                 allow_merge: job.allow_merge,
+                best_effort: false,
             };
             for id in &job.rules {
                 let rule = match store.get_rule(*id) {
@@ -209,6 +217,13 @@ pub fn run_job(job_path: &Path) -> TdResult<JobResult> {
                         continue;
                     }
                 };
+                let mut opts = base_opts.clone();
+                if job.best_effort {
+                    // 尽力模式只给"确实需要提权"的源用：普通目录没理由放弃严格校验
+                    if let Ok(r) = engine::resolve(&store, &rule) {
+                        opts.best_effort = crate::safety::requires_elevation(&r.source);
+                    }
+                }
                 let mut noop = |_: Progress| {};
                 let outcome = if job.kind == "apply" {
                     engine::apply_rule(&store, &rule, &opts, &mut noop)
@@ -235,17 +250,56 @@ pub fn run_job(job_path: &Path) -> TdResult<JobResult> {
                 }
             }
         }
-        "boot_rebuild" => match crate::boot::run_boot_rebuild(&store) {
-            Ok(report) => items.push(JobItem {
-                rule_id: 0,
-                name: crate::i18n::t("worker.boot_rebuild").into(),
-                ok: !report.has_problem(),
-                action: "boot_rebuild".into(),
-                message: report.one_line(),
-                elapsed_ms: report.elapsed_ms,
-            }),
-            Err(e) => hard_error = Some(e.to_string()),
-        },
+        "boot_rebuild" => {
+            let scope = match crate::boot::BootScope::parse(&job.boot_scope) {
+                Some(s) => s,
+                None => {
+                    return Err(TdError::InvalidPath(tf("worker.unknown_boot_scope", &[
+                        ("scope", &job.boot_scope),
+                    ])))
+                }
+            };
+            match crate::boot::run_boot_rebuild_scoped(&store, scope) {
+                Ok(report) => items.push(JobItem {
+                    rule_id: 0,
+                    name: crate::i18n::t("worker.boot_rebuild").into(),
+                    ok: !report.has_problem(),
+                    action: "boot_rebuild".into(),
+                    message: report.one_line(),
+                    elapsed_ms: report.elapsed_ms,
+                }),
+                Err(e) => hard_error = Some(e.to_string()),
+            }
+        }
+        "autostart_elevated_enable" | "autostart_elevated_disable" => {
+            // exe 与数据目录都不从 job 里取：用 worker 自己的位置和继承来的环境，
+            // 这样 job 依旧不需要（也不能）携带任何路径。
+            let enable = job.kind == "autostart_elevated_enable";
+            let label = if enable {
+                crate::i18n::t("worker.autostart_enable")
+            } else {
+                crate::i18n::t("worker.autostart_disable")
+            };
+            let outcome = if enable {
+                crate::autostart::enable_elevated(
+                    &crate::autostart::preferred_exe(),
+                    &crate::autostart::extra_args_from_env(),
+                )
+            } else {
+                crate::autostart::disable_elevated()
+            };
+            match outcome {
+                Ok(msg) => items.push(JobItem {
+                    rule_id: 0,
+                    name: label.into(),
+                    ok: true,
+                    action: job.kind.clone(),
+                    message: msg,
+                    elapsed_ms: 0,
+                }),
+                Err(e) => hard_error = Some(e.to_string()),
+            }
+        }
         other => {
             return Err(TdError::InvalidPath(tf("worker.unknown_kind", &[
                 ("kind", other),
@@ -339,6 +393,8 @@ mod tests {
             dry_run: false,
             allow_merge: false,
             sha256: false,
+            best_effort: false,
+            boot_scope: String::new(),
             origin_pid: 42,
         };
         let json = serde_json::to_string(&job).unwrap();

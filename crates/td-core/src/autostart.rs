@@ -30,6 +30,62 @@ use crate::i18n::{t, tf};
 /// 任务名（平铺，不带文件夹 —— 避免 `schtasks` 里 `\` 路径的引号地狱）。
 pub const TASK_NAME: &str = "TempDirector-BootRebuild";
 
+/// 高权限登录任务：只重建 `C:\Windows` 这接受保护前缀下的链接。
+///
+/// 普通任务跑在 `LeastPrivilege` 下，碰不到这些目录；而 `HighestAvailable`
+/// 只有在用户属于 Administrators 组时才会真正提权，否则退化为普通权限
+/// （重建结果里会明确告警，见 `boot.not_elevated`）。
+pub const ELEVATED_TASK_NAME: &str = "TempDirector-BootRebuild-Elevated";
+
+/// 登录任务种类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskKind {
+    /// 普通权限任务：处理普通源（参数带 `--skip-elevated`）。
+    Normal,
+    /// 最高权限任务：只处理受保护源（参数带 `--elevated-only`）。
+    Elevated,
+}
+
+impl TaskKind {
+    pub const ALL: [Self; 2] = [Self::Normal, Self::Elevated];
+
+    pub fn task_name(self) -> &'static str {
+        match self {
+            Self::Normal => TASK_NAME,
+            Self::Elevated => ELEVATED_TASK_NAME,
+        }
+    }
+
+    fn run_level(self) -> &'static str {
+        match self {
+            Self::Normal => "LeastPrivilege",
+            Self::Elevated => "HighestAvailable",
+        }
+    }
+
+    /// 追加在 `boot-rebuild` 之后的分工参数。
+    fn boot_flag(self) -> &'static str {
+        match self {
+            Self::Normal => "--skip-elevated",
+            Self::Elevated => "--elevated-only",
+        }
+    }
+
+    fn desc(self) -> String {
+        match self {
+            Self::Normal => t("autostart.task_desc").to_string(),
+            Self::Elevated => t("autostart.task_desc_elevated").to_string(),
+        }
+    }
+
+    fn xml_name(self) -> &'static str {
+        match self {
+            Self::Normal => "boot-rebuild.task.xml",
+            Self::Elevated => "boot-rebuild-elevated.task.xml",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AutostartStatus {
     pub registered: bool,
@@ -37,6 +93,13 @@ pub struct AutostartStatus {
     /// 从任务里读回来的命令行（`<Command>` + `<Arguments>`）。
     pub command: String,
     pub message: String,
+    /// 高权限登录任务（只处理受保护源）。
+    pub elevated_registered: bool,
+    pub elevated_task_name: String,
+    pub elevated_command: String,
+    pub elevated_message: String,
+    /// 已注册任务的参数与当前版本不一致（旧版没有分工参数），建议重新启用。
+    pub needs_update: bool,
 }
 
 fn no_window(cmd: &mut Command) -> &mut Command {
@@ -99,8 +162,8 @@ fn xml_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// 生成任务 XML。`extra_args` 会追加在 `boot-rebuild` 之后（用于便携模式带上数据目录）。
-fn task_xml(exe: &Path, extra_args: &str) -> TdResult<String> {
+/// 生成任务 XML。`extra_args` 会追加在 `boot-rebuild <分工参数>` 之后（便携模式带数据目录）。
+fn task_xml(exe: &Path, extra_args: &str, kind: TaskKind) -> TdResult<String> {
     let exe_s = exe.to_string_lossy();
     if exe_s.trim().is_empty() {
         return Err(TdError::InvalidPath(t("autostart.need_exe").into()));
@@ -110,11 +173,11 @@ fn task_xml(exe: &Path, extra_args: &str) -> TdResult<String> {
         Some(u) => format!("<UserId>{}</UserId>", xml_escape(u)),
         None => String::new(),
     };
-    let args = if extra_args.trim().is_empty() {
-        "boot-rebuild".to_string()
-    } else {
-        format!("boot-rebuild {}", extra_args.trim())
-    };
+    let mut args = format!("boot-rebuild {}", kind.boot_flag());
+    if !extra_args.trim().is_empty() {
+        args.push(' ');
+        args.push_str(extra_args.trim());
+    }
     Ok(format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -132,7 +195,7 @@ fn task_xml(exe: &Path, extra_args: &str) -> TdResult<String> {
     <Principal id="Author">
       {user_el}
       <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
+      <RunLevel>{run_level}</RunLevel>
     </Principal>
   </Principals>
   <Settings>
@@ -159,22 +222,30 @@ fn task_xml(exe: &Path, extra_args: &str) -> TdResult<String> {
 </Task>
 "#,
         author = xml_escape(&user.clone().unwrap_or_else(|| "-".into())),
-        desc = xml_escape(t("autostart.task_desc")),
+        desc = xml_escape(&kind.desc()),
+        run_level = kind.run_level(),
         exe = xml_escape(&exe_s),
         args = xml_escape(&args),
     ))
 }
 
-/// 查询当前是否已注册。
-pub fn status() -> AutostartStatus {
-    let mut st = AutostartStatus {
+/// 单个任务的注册状态。
+#[derive(Debug, Clone)]
+struct TaskStatus {
+    registered: bool,
+    command: String,
+    message: String,
+}
+
+fn task_status(kind: TaskKind) -> TaskStatus {
+    let name = kind.task_name();
+    let mut st = TaskStatus {
         registered: false,
-        task_name: TASK_NAME.to_string(),
         command: String::new(),
         message: String::new(),
     };
 
-    let (code, _) = match schtasks(&["/Query", "/TN", TASK_NAME]) {
+    let (code, _) = match schtasks(&["/Query", "/TN", name]) {
         Ok(v) => v,
         Err(e) => {
             st.message = e.to_string();
@@ -188,7 +259,7 @@ pub fn status() -> AutostartStatus {
     st.registered = true;
 
     // 用 /XML 取命令行：不依赖系统语言（文本查询的字段名是本地化的）
-    if let Ok((0, xml)) = schtasks(&["/Query", "/TN", TASK_NAME, "/XML"]) {
+    if let Ok((0, xml)) = schtasks(&["/Query", "/TN", name, "/XML"]) {
         let cmd = extract_tag(&xml, "Command").unwrap_or_default();
         let args = extract_tag(&xml, "Arguments").unwrap_or_default();
         st.command = format!("{} {}", cmd, args).trim().to_string();
@@ -201,6 +272,25 @@ pub fn status() -> AutostartStatus {
     st
 }
 
+/// 查询两个登录任务当前是否已注册。
+pub fn status() -> AutostartStatus {
+    let normal = task_status(TaskKind::Normal);
+    let elevated = task_status(TaskKind::Elevated);
+    let needs_update = (normal.registered && !normal.command.contains(TaskKind::Normal.boot_flag()))
+        || (elevated.registered && !elevated.command.contains(TaskKind::Elevated.boot_flag()));
+    AutostartStatus {
+        registered: normal.registered,
+        task_name: TaskKind::Normal.task_name().to_string(),
+        command: normal.command,
+        message: normal.message,
+        elevated_registered: elevated.registered,
+        elevated_task_name: TaskKind::Elevated.task_name().to_string(),
+        elevated_command: elevated.command,
+        elevated_message: elevated.message,
+        needs_update,
+    }
+}
+
 fn extract_tag(xml: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -209,18 +299,27 @@ fn extract_tag(xml: &str, tag: &str) -> Option<String> {
     Some(xml[start..end].trim().to_string())
 }
 
-/// 注册（幂等覆盖）。`extra_args` 追加在 `boot-rebuild` 之后（便携模式带数据目录用）。
-/// 返回注册后的命令行描述。
+/// 注册（幂等覆盖）。`extra_args` 追加在 `boot-rebuild --skip-elevated` 之后
+/// （便携模式带数据目录用）。返回注册后的命令行描述。
 pub fn enable(exe: &Path, extra_args: &str) -> TdResult<String> {
+    enable_kind(TaskKind::Normal, exe, extra_args)
+}
+
+/// 注册高权限登录任务（只处理受保护源）。需要管理员权限。
+pub fn enable_elevated(exe: &Path, extra_args: &str) -> TdResult<String> {
+    enable_kind(TaskKind::Elevated, exe, extra_args)
+}
+
+fn enable_kind(kind: TaskKind, exe: &Path, extra_args: &str) -> TdResult<String> {
     crate::paths::ensure_dirs()
         .map_err(|e| TdError::Other(tf("autostart.mkdir_failed", &[("err", &e.to_string())])))?;
-    let xml = task_xml(exe, extra_args)?;
-    let xml_path = crate::paths::data_dir().join("boot-rebuild.task.xml");
+    let xml = task_xml(exe, extra_args, kind)?;
+    let xml_path = crate::paths::data_dir().join(kind.xml_name());
     std::fs::write(&xml_path, encode_utf16le_bom(&xml))
         .map_err(|e| TdError::Other(tf("autostart.write_xml_failed", &[("err", &e.to_string())])))?;
 
     let xml_arg = xml_path.to_string_lossy().to_string();
-    let (code, text) = schtasks(&["/Create", "/TN", TASK_NAME, "/XML", &xml_arg, "/F"])?;
+    let (code, text) = schtasks(&["/Create", "/TN", kind.task_name(), "/XML", &xml_arg, "/F"])?;
     let _ = std::fs::remove_file(&xml_path);
 
     if code != 0 {
@@ -229,16 +328,26 @@ pub fn enable(exe: &Path, extra_args: &str) -> TdResult<String> {
             ("text", text.trim()),
         ])));
     }
-    Ok(if extra_args.trim().is_empty() {
-        format!("{} boot-rebuild", exe.display())
-    } else {
-        format!("{} boot-rebuild {}", exe.display(), extra_args.trim())
-    })
+    let mut line = format!("{} boot-rebuild {}", exe.display(), kind.boot_flag());
+    if !extra_args.trim().is_empty() {
+        line.push(' ');
+        line.push_str(extra_args.trim());
+    }
+    Ok(line)
 }
 
-/// 取消注册。
+/// 取消注册（普通任务）。
 pub fn disable() -> TdResult<String> {
-    let (code, text) = schtasks(&["/Delete", "/TN", TASK_NAME, "/F"])?;
+    disable_kind(TaskKind::Normal)
+}
+
+/// 取消注册高权限任务。需要管理员权限。
+pub fn disable_elevated() -> TdResult<String> {
+    disable_kind(TaskKind::Elevated)
+}
+
+fn disable_kind(kind: TaskKind) -> TdResult<String> {
+    let (code, text) = schtasks(&["/Delete", "/TN", kind.task_name(), "/F"])?;
     if code != 0 {
         // 本来就不存在也算成功（幂等）
         if text.contains("cannot find") || text.contains("找不到") {
@@ -254,7 +363,11 @@ pub fn disable() -> TdResult<String> {
 
 /// 立刻手动触发一次（等价于"登录时那次"），用于验证任务是否配好。
 pub fn run_now() -> TdResult<String> {
-    let (code, text) = schtasks(&["/Run", "/TN", TASK_NAME])?;
+    run_now_kind(TaskKind::Normal)
+}
+
+fn run_now_kind(kind: TaskKind) -> TdResult<String> {
+    let (code, text) = schtasks(&["/Run", "/TN", kind.task_name()])?;
     if code != 0 {
         return Err(TdError::Other(tf("autostart.trigger_failed", &[
             ("code", &code.to_string()),
@@ -298,35 +411,48 @@ mod tests {
 
     #[test]
     fn task_xml_contains_logon_trigger_and_action() {
-        let xml =
-            task_xml(Path::new(r"C:\Program Files\TempDirector\tempdirector-gui.exe"), "").unwrap();
+        let xml = task_xml(
+            Path::new(r"C:\Program Files\TempDirector\tempdirector-gui.exe"),
+            "",
+            TaskKind::Normal,
+        )
+        .unwrap();
         assert!(xml.contains("<LogonTrigger>"));
         assert!(xml.contains("<LogonType>InteractiveToken</LogonType>"));
         assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
         assert!(xml.contains(r"<Command>C:\Program Files\TempDirector\tempdirector-gui.exe</Command>"));
-        assert!(xml.contains("<Arguments>boot-rebuild</Arguments>"));
+        assert!(xml.contains("<Arguments>boot-rebuild --skip-elevated</Arguments>"), "{xml}");
+    }
+
+    #[test]
+    fn elevated_task_uses_highest_available_and_only_protected_scope() {
+        let xml = task_xml(Path::new(r"C:\x\gui.exe"), "", TaskKind::Elevated).unwrap();
+        assert!(xml.contains("<RunLevel>HighestAvailable</RunLevel>"), "{xml}");
+        assert!(xml.contains("<Arguments>boot-rebuild --elevated-only</Arguments>"), "{xml}");
+        assert!(!xml.contains("LeastPrivilege"), "{xml}");
     }
 
     #[test]
     fn task_xml_appends_extra_args() {
-        let xml = task_xml(Path::new(r"C:\x\gui.exe"), r#"--data-dir "D:\portable""#).unwrap();
+        let xml = task_xml(Path::new(r"C:\x\gui.exe"), r#"--data-dir "D:\portable""#, TaskKind::Normal)
+            .unwrap();
         // 引号在 XML 元素内容里不需要转义，schtasks 会原样作为命令行交给程序
         assert!(
-            xml.contains(r#"<Arguments>boot-rebuild --data-dir "D:\portable"</Arguments>"#),
+            xml.contains(r#"<Arguments>boot-rebuild --skip-elevated --data-dir "D:\portable"</Arguments>"#),
             "{xml}"
         );
     }
 
     #[test]
     fn task_xml_escapes_ampersand() {
-        let xml = task_xml(Path::new(r"C:\A & B\gui.exe"), "").unwrap();
+        let xml = task_xml(Path::new(r"C:\A & B\gui.exe"), "", TaskKind::Normal).unwrap();
         assert!(xml.contains("A &amp; B"), "{xml}");
         assert!(!xml.contains("A & B\\gui.exe"));
     }
 
     #[test]
     fn xml_is_valid_utf16_with_bom() {
-        let xml = task_xml(Path::new(r"C:\x\gui.exe"), "").unwrap();
+        let xml = task_xml(Path::new(r"C:\x\gui.exe"), "", TaskKind::Normal).unwrap();
         let bytes = encode_utf16le_bom(&xml);
         assert_eq!(&bytes[..2], &[0xFF, 0xFE]);
         assert_eq!(decode(&bytes), xml);
@@ -344,5 +470,6 @@ mod tests {
     fn status_does_not_panic() {
         let st = status();
         assert_eq!(st.task_name, TASK_NAME);
+        assert_eq!(st.elevated_task_name, ELEVATED_TASK_NAME);
     }
 }

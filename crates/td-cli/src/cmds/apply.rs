@@ -24,6 +24,7 @@ pub(crate) fn cmd_apply(store: &Store, p: &Parsed) -> TdResult<()> {
         },
         skip_lock_check: p.has("skip-lock-check"),
         allow_merge: p.has("merge"),
+        best_effort: p.has("best-effort"),
     };
 
     let ids = collect_target_ids(store, p, "apply")?;
@@ -97,6 +98,7 @@ pub(crate) fn cmd_restore(store: &Store, p: &Parsed) -> TdResult<()> {
         },
         skip_lock_check: true,
         allow_merge: true,
+        best_effort: p.has("best-effort"),
     };
     let ids = collect_target_ids(store, p, "restore")?;
     let mut noop = |_p: td_core::fsops::mover::Progress| {};

@@ -64,15 +64,20 @@ fn print_help_zh() {
           --from <时> --to <时>          指定时间段 [from,to)，如 --from 7d --to 1d
           --keep <MB>                    按空间：从最旧删起，直到目录占用不高于该水位下限（MB），
                                          保留时间最近的 <MB>；始终至少保留最新 1 个文件
-  apply <id...|--all> [--dry-run] [--merge] [--sha256] [--skip-lock-check]
-  restore <id...|--all> [--dry-run] [--sha256]
+  apply <id...|--all> [--dry-run] [--merge] [--sha256] [--skip-lock-check] [--best-effort]
+  restore <id...|--all> [--dry-run] [--sha256] [--best-effort]
   relink <id>                                只重建链接（不动数据）
+  --best-effort                              尽力模式：单条目读/拷失败就跳过；删不掉的源条目
+                                             会报错并保留已复制的数据（受保护目录配合提权使用）
 
 === 开机重建 ===
-  boot-rebuild [--json]
-  autostart status                           查看"登录时自动重建"任务是否已注册
+  boot-rebuild [--json] [--elevated-only|--skip-elevated]
+                                             重建目标目录并修复链接；--elevated-only 只处理
+                                             受保护源（C:\Windows 等），--skip-elevated 相反
+  autostart status                           查看"登录时自动重建"任务是否已注册（含高权限任务）
   autostart enable [--exe <路径>]            注册（用户级，不需要管理员权限）
-  autostart disable
+  autostart enable --elevated                注册高权限登录任务（只重建受保护目录，会弹 UAC）
+  autostart disable [--elevated]             取消注册（--elevated 取消高权限任务，会弹 UAC）
   autostart run                              立刻手动触发一次，验证配置
 
 === 提权 worker（一般不需要手动调）===
@@ -160,15 +165,22 @@ Global options:
           --from <time> --to <time>      Time range [from,to), e.g. --from 7d --to 1d
           --keep <MB>                    By space: delete oldest first until the folder usage is at or
                                          below this floor (MB); always keeps at least the newest file
-  apply <id...|--all> [--dry-run] [--merge] [--sha256] [--skip-lock-check]
-  restore <id...|--all> [--dry-run] [--sha256]
+  apply <id...|--all> [--dry-run] [--merge] [--sha256] [--skip-lock-check] [--best-effort]
+  restore <id...|--all> [--dry-run] [--sha256] [--best-effort]
   relink <id>                                Rebuild link only (no data movement)
+  --best-effort                              Best effort: skip entries that cannot be read/copied;
+                                             if source entries cannot be deleted, report and keep the
+                                             copied data (use with elevation for protected folders)
 
 === Boot rebuild ===
-  boot-rebuild [--json]
-  autostart status                           Check whether the "rebuild at logon" task is registered
+  boot-rebuild [--json] [--elevated-only|--skip-elevated]
+                                             Rebuild target dirs and repair links; --elevated-only
+                                             handles protected sources only (C:\Windows, ...),
+                                             --skip-elevated does the opposite
+  autostart status                           Check the "rebuild at logon" tasks (normal + elevated)
   autostart enable [--exe <path>]            Register (user-level, no administrator required)
-  autostart disable
+  autostart enable --elevated                Register the elevated task (protected folders only, UAC)
+  autostart disable [--elevated]             Unregister (--elevated removes the elevated task, UAC)
   autostart run                              Trigger manually once to verify configuration
 
 === Elevated worker (usually not called manually) ===
