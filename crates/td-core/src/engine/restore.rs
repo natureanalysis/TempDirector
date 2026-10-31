@@ -174,12 +174,36 @@ pub fn restore_rule(
     ))
 }
 
-/// 只重建链接，不搬运数据。用于「目标目录已就绪，但链接被软件更新弄丢了」。
+/// 只重建链接，不搬运数据。用于「目标目录已就绪，但链接被软件更新弄丢了」，
+/// 也用于修复「登记的 target 被改过、链接还指向旧目标」。
 pub fn relink_rule(store: &Store, rule: &Rule) -> TdResult<Outcome> {
     let started = Instant::now();
     let r = resolve(store, rule)?;
     let lt = rule_link_type(rule)?;
     let state = detect_link(&r.source, Some(&r.target));
+
+    // 链接指向与登记目标不一致：不是"已经好了"，要拆掉旧链接重指向。
+    // 复用 `retarget_rule_link` —— 它自带"建链失败就把旧链接建回去"的回滚。
+    let repoint = matches!(
+        &state,
+        LinkState::LinkOk {
+            target_mismatch: true,
+            ..
+        }
+    );
+    if repoint {
+        return match retarget_rule_link(store, rule)? {
+            Some(o) => Ok(o),
+            None => Ok(outcome(
+                rule,
+                "already_ok",
+                t("restore.relink_already").into(),
+                None,
+                started,
+                false,
+            )),
+        };
+    }
 
     if state.is_managed_link() {
         return Ok(outcome(
@@ -228,4 +252,86 @@ pub fn relink_rule(store: &Store, rule: &Rule) -> TdResult<Outcome> {
         started,
         false,
     ))
+}
+
+/// 目标 / 链接类型被修改后，把源路径上已有的托管链接重建到新目标。
+///
+/// 只处理源路径**已经是本工具建立的链接**的情况（Junction / 目录符号链接，
+/// 含目标暂时不可达的死链）。源不是链接时返回 `None` —— 那种情况要走
+/// `apply_rule`（可能涉及搬运数据），不能在保存表单时静默做。
+///
+/// 旧目标里的内容不会被删除：`remove_dir_link` 只删链接条目，绝不递归。
+/// 建链失败会自动把旧链接恢复回去，避免源路径留下一个空洞。
+pub fn retarget_rule_link(store: &Store, rule: &Rule) -> TdResult<Option<Outcome>> {
+    let started = Instant::now();
+    let r = resolve(store, rule)?;
+    let lt = rule_link_type(rule)?;
+    let state = detect_link(&r.source, None);
+    if !state.is_managed_link() {
+        return Ok(None);
+    }
+
+    // 目标根可能随 RAM 盘重启消失，和应用路径一样先把它建出来。
+    crate::boot::ensure_root_dir(&r.root.resolved_path().0)?;
+    crate::safety::preflight_pair(&r.source, &r.target)?;
+    ensure_dir(&r.target)?;
+
+    let old_type = state.link_type().unwrap_or(lt);
+    let old_target = remove_dir_link(&r.source)?;
+
+    if let Err(e) = create_dir_link(&r.source, &r.target, lt) {
+        // 回滚：把旧链接建回去，绝不让源路径变成一个空洞。
+        match create_dir_link(&r.source, &old_target, old_type) {
+            Ok(()) => {
+                let _ = store.set_rule_state(rule.id, "link_ok", Some(&e.to_string()));
+                let _ = store.log_event(
+                    Some(rule.id),
+                    "error",
+                    "retarget_failed",
+                    &tf("restore.retarget_rollback_ok", &[("e", &e.to_string())]),
+                );
+            }
+            Err(rb) => {
+                let _ = store.log_event(
+                    Some(rule.id),
+                    "error",
+                    "needs_manual",
+                    &tf("restore.retarget_rollback_fail", &[
+                        ("e", &e.to_string()),
+                        ("rb", &rb.to_string()),
+                        ("src", &r.source.display().to_string()),
+                        ("target", &old_target.display().to_string()),
+                    ]),
+                );
+            }
+        }
+        return Err(e);
+    }
+
+    let has_content = dir_has_content(&r.target);
+    store.set_rule_state(
+        rule.id,
+        if has_content { "link_ok" } else { "link_ok_empty" },
+        None,
+    )?;
+    store.log_event(
+        Some(rule.id),
+        "info",
+        "retargeted",
+        &tf("restore.retarget_log", &[
+            ("name", &rule.name),
+            ("target", &r.target.display().to_string()),
+        ]),
+    )?;
+    Ok(Some(outcome(
+        rule,
+        "retargeted",
+        tf("restore.retarget_done", &[
+            ("src", &r.source.display().to_string()),
+            ("target", &r.target.display().to_string()),
+        ]),
+        None,
+        started,
+        false,
+    )))
 }

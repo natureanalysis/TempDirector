@@ -23,7 +23,7 @@
 //! - `resolve`：规则 → 源/目标路径（展开环境变量、安全预检、清理目标判定）
 //! - `status`：体检（`RuleStatus`、批量扫描、写库的状态机键）
 //! - `apply`：应用（搬运/合并 → 建链，失败回滚）
-//! - `restore`：恢复（拆链搬回）与只重建链接（relink）
+//! - `restore`：恢复（拆链搬回）、只重建链接（relink）、改目标后重指向（retarget）
 
 mod apply;
 mod resolve;
@@ -35,5 +35,5 @@ mod tests;
 
 pub use apply::{apply_rule, ApplyOptions, Outcome};
 pub use resolve::{clean_dir_for_rule, resolve, rule_link_type, Resolved};
-pub use restore::{relink_rule, restore_rule};
+pub use restore::{relink_rule, restore_rule, retarget_rule_link};
 pub use status::{rule_status, state_key, status_all, RuleStatus};

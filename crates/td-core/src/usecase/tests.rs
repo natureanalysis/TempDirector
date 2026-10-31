@@ -165,6 +165,57 @@ fn add_rule_then_apply_then_restore_through_api() {
     let _ = fs::remove_dir_all(&env.base);
 }
 
+#[test]
+fn update_rule_retargets_managed_link() {
+    use crate::link::detect::{detect_link, LinkState};
+    use crate::util;
+
+    let env = setup("retarget");
+    let id = add_rule(&env.store, &form(&env, "改目标", "dev\\old")).unwrap();
+    let res = apply_rules(&env.store, &[id], &ApplyOpts::default(), &mut |_, _, _, _| {});
+    assert!(res[0].ok, "{}", res[0].message);
+    let old_target = env.ram.join("dev").join("old");
+    assert!(old_target.join("a.bin").exists());
+
+    // 只改 target：列表保存后应立即删掉源路径上的旧链接并重指向新目标。
+    update_rule(&env.store, id, &form(&env, "改目标", "dev\\new")).unwrap();
+
+    let new_target = env.ram.join("dev").join("new");
+    assert!(new_target.is_dir(), "新目标目录应被创建");
+    match detect_link(&env.source, Some(&new_target)) {
+        LinkState::LinkOk {
+            target,
+            target_mismatch,
+            ..
+        } => {
+            assert!(util::path_eq(&target, &new_target), "实际指向 {target:?}");
+            assert!(!target_mismatch);
+        }
+        other => panic!("期望链接已重建到新目标，实际 {other:?}"),
+    }
+    // 拆链只删链接条目：旧目标里的内容必须原封不动。
+    assert!(old_target.join("a.bin").exists(), "旧目标数据必须保留");
+    assert_eq!(env.store.get_rule(id).unwrap().target_subpath, "dev\\new");
+
+    // 改回旧目标：链接重新指回去，又能看到旧数据。
+    update_rule(&env.store, id, &form(&env, "改目标", "dev\\old")).unwrap();
+    assert_eq!(fs::read(env.source.join("a.bin")).unwrap().len(), 1024);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn update_rule_without_link_only_saves_target() {
+    let env = setup("retarget_plain");
+    let id = add_rule(&env.store, &form(&env, "未链接", "dev\\old")).unwrap();
+    update_rule(&env.store, id, &form(&env, "未链接", "dev\\new")).unwrap();
+
+    assert_eq!(env.store.get_rule(id).unwrap().target_subpath, "dev\\new");
+    // 源还是真实目录，也没有凭空建出新目标 —— 之后走「应用」时才会搬运。
+    assert!(fs::symlink_metadata(&env.source).unwrap().is_dir());
+    assert!(!env.ram.join("dev").join("new").exists());
+    let _ = fs::remove_dir_all(&env.base);
+}
+
 /// 同一测试里加多条规则时，源路径必须互不相同 —— 规则库对 `source_norm`
 /// 有 UNIQUE 约束（同一个缓存目录配两条规则是错的），这是有意的。
 fn form_at(env: &Env, name: &str, src: &str, sub: &str) -> RuleForm {

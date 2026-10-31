@@ -265,6 +265,76 @@ fn relink_works_on_empty_source_shell() {
 }
 
 #[test]
+fn relink_repairs_target_mismatch() {
+    let env = setup("relinkmismatch");
+    let rule = env.store.get_rule(env.rule_id).unwrap();
+    apply_rule(&env.store, &rule, &ApplyOptions::default(), &mut noop).unwrap();
+
+    // 模拟旧版本留下的状态：链接还在，但指向的不是登记的目标。
+    let other = env.base.join("other");
+    fs::create_dir_all(&other).unwrap();
+    let old = crate::link::create::remove_dir_link(&env.source).unwrap();
+    assert!(crate::util::path_eq(&old, &env.target));
+    crate::link::create::create_dir_link(&env.source, &other, LinkType::Junction).unwrap();
+    assert!(matches!(
+        rule_status(&env.store, &rule).unwrap().state,
+        LinkState::LinkOk {
+            target_mismatch: true,
+            ..
+        }
+    ));
+
+    // 「重建链接」应该拆掉错指向的链接，并重新指回登记目标。
+    let out = relink_rule(&env.store, &rule).unwrap();
+    assert_eq!(out.action, "retargeted");
+    assert!(matches!(
+        rule_status(&env.store, &rule).unwrap().state,
+        LinkState::LinkOk {
+            target_mismatch: false,
+            ..
+        }
+    ));
+    assert_eq!(fs::read(env.source.join("a.txt")).unwrap(), b"aaa");
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
+fn retarget_rebuilds_link_and_keeps_old_target_data() {
+    let env = setup("retarget");
+    let rule = env.store.get_rule(env.rule_id).unwrap();
+    apply_rule(&env.store, &rule, &ApplyOptions::default(), &mut noop).unwrap();
+    assert!(env.target.join("a.txt").exists());
+
+    let new_target = env.base.join("ram").join("dev").join("moved-cache");
+    let mut next = rule.clone();
+    next.target_subpath = "dev\\moved-cache".into();
+
+    let out = retarget_rule_link(&env.store, &next).unwrap().expect("托管链接应被重建");
+    assert_eq!(out.action, "retargeted");
+    match rule_status(&env.store, &next).unwrap().state {
+        LinkState::LinkOk {
+            target,
+            target_mismatch,
+            ..
+        } => {
+            assert!(crate::util::path_eq(&target, &new_target));
+            assert!(!target_mismatch);
+        }
+        other => panic!("期望链接已重指向，实际 {other:?}"),
+    }
+    // 旧目标数据没被删（拆链绝不递归）。
+    assert!(env.target.join("a.txt").exists());
+    assert_eq!(fs::read(env.target.join("a.txt")).unwrap(), b"aaa");
+
+    // 源不是链接时不做任何事（交给 apply 处理搬运）。
+    let plain = setup("retargetplain");
+    let plain_rule = plain.store.get_rule(plain.rule_id).unwrap();
+    assert!(retarget_rule_link(&plain.store, &plain_rule).unwrap().is_none());
+    let _ = fs::remove_dir_all(&plain.base);
+    let _ = fs::remove_dir_all(&env.base);
+}
+
+#[test]
 fn rejected_apply_does_not_touch_anything() {
     let env = setup("reject");
     // 把目标根指向一个不存在的盘

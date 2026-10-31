@@ -41,8 +41,9 @@ launch defaults to English, and the choice is remembered.
   top of the list; click any cell of an existing rule to edit it in place — name, category,
   link type, source, target root + subpath, flags, auto-clean policy, capacity limit,
   excludes and notes. Enter or blur saves, Esc reverts. Source paths are expanded and validated
-  inline; protected paths are marked and blocked. Changing source / target / link type on a
-  linked rule prompts you to re-apply. Clicking a built-in template’s name pre-fills the draft row
+  inline; protected paths are marked and blocked. Changing target root / subpath / link type on a
+  linked rule removes the old source link and rebuilds it at the new target when saving; only a
+  source change prompts you to re-apply. Clicking a built-in template’s name pre-fills the draft row
   instead; ticking it still creates and applies in one step. Clicking another cell while editing
   saves the old cell and opens the new one, and scroll position / focus survive the refresh.
   Low-frequency columns can be hidden under “More → Columns”; the choice is remembered locally.

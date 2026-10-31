@@ -2401,9 +2401,17 @@ function isLinkedRule(rule) {
   return rule.badge === '✅' || rule.badge === '⚠️';
 }
 
+/** 改源路径后必须由用户重新应用（可能涉及搬运数据，不能静默做）。 */
 function needsReapply(rule, patch) {
   if (!isLinkedRule(rule)) return false;
-  return ['source_template', 'target_root_id', 'target_subpath', 'link_type'].some(function (k) {
+  return patch.source_template !== undefined && !sameRuleValue(rule.source_template, patch.source_template);
+}
+
+/** 改目标 / 链接类型：后端会自动删掉源路径上的旧链接，并按新目标重建。 */
+function autoRetargets(rule, patch) {
+  if (!isLinkedRule(rule)) return false;
+  if (patch.source_template !== undefined && !sameRuleValue(rule.source_template, patch.source_template)) return false;
+  return ['target_root_id', 'target_subpath', 'link_type'].some(function (k) {
     return patch[k] !== undefined && !sameRuleValue(rule[k], patch[k]);
   });
 }
@@ -2417,10 +2425,12 @@ async function saveRulePatch(rule, patch) {
     return false;
   }
   const reapply = needsReapply(rule, patch);
+  const retarget = !reapply && autoRetargets(rule, patch);
   inlineSaving = true;
   try {
     await invoke('update_rule', { id: rule.id, form: form });
     if (reapply) toast(t('toast.reapply_title'), t('toast.reapply_msg'), 'warn');
+    else if (retarget) toast(t('toast.retargeted_title'), t('toast.retargeted_msg'), 'ok');
     else toast(t('common.saved'), form.name || ('#' + rule.id), 'ok');
     await refresh(true);
     return true;

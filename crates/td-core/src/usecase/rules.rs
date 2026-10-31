@@ -36,7 +36,29 @@ pub fn add_rule(store: &Store, form: &RuleForm) -> TdResult<i64> {
 
 pub fn update_rule(store: &Store, id: i64, form: &RuleForm) -> TdResult<()> {
     validate_form(form)?;
-    store.update_rule(id, &form.to_new_rule())
+    let old = store.get_rule(id)?;
+    let next = form.to_new_rule();
+
+    // 目标（或链接类型）改了、源模板没动：源路径上已有的托管链接必须同步重建，
+    // 否则它会继续指向旧目标 —— 之后「应用」会因为 target_mismatch 直接报错，
+    // 「重建链接」与开机重建也会因为"链接有效"而放过它。
+    //
+    // 源模板也变了的话，旧链接挂在另一条路径上，这里不能擅自猜，仍交给用户重新应用。
+    let retarget = old.source_template == next.source_template
+        && (old.target_root_id != next.target_root_id
+            || old.target_subpath != next.target_subpath
+            || old.link_type != next.link_type);
+    if retarget {
+        let mut candidate = old.clone();
+        candidate.target_root_id = next.target_root_id;
+        candidate.target_subpath = next.target_subpath.clone();
+        candidate.link_type = next.link_type.clone();
+        // 重建失败会让整个保存失败 —— 数据库保持旧值，链接也回滚到旧目标，
+        // 不会出现"配置已改、链接还指着别处"的中间态。
+        engine::retarget_rule_link(store, &candidate)?;
+    }
+
+    store.update_rule(id, &next)
 }
 
 pub(crate) fn validate_form(form: &RuleForm) -> TdResult<()> {
